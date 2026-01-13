@@ -1,11 +1,23 @@
-# FaraCore
+# Faramesh
 
-**Governance and approval system for AI agent actions**
+**Execution gatekeeper for AI agents**
 
-FaraCore provides policy-driven governance, risk scoring, and human-in-the-loop approval for AI agent tool calls. Built for production use with a modern web UI, comprehensive CLI, and SDK integrations.
+Faramesh Core is an open-core execution governor that provides policy-driven governance, risk scoring, and human-in-the-loop approval for AI agent tool calls. Built for production use with a modern web UI, comprehensive CLI, and SDK integrations.
+
+## Faramesh Cloud Products
+
+### Faramesh Nexus (hosted control plane)
+
+Faramesh Nexus is our fully-managed SaaS offering that provides instant onboarding with no deployments required. Nexus includes a fully-managed core service, automatic upgrades, usage tracking and metrics, API keys and secrets management, and approval routing via Slack and email. Ideal for startups and small teams who want to get started quickly without infrastructure management.
+
+### Faramesh Horizon (enterprise/on-prem)
+
+Faramesh Horizon is an enterprise-grade deployment of Faramesh that runs inside your VPC or Kubernetes cluster. Horizon supports SSO, RBAC, multi-org management, audit exports with long-term retention, and optional air-gap compatibility for security-critical environments. Perfect for organizations that need full control over their governance infrastructure.
+
+Faramesh OSS is the engine, Nexus and Horizon are the accelerators.
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-Elastic%202.0-orange.svg)](LICENSE)
 
 ## Features
 
@@ -20,28 +32,19 @@ FaraCore provides policy-driven governance, risk scoring, and human-in-the-loop 
 - **SDK Integration**: Python and Node.js SDKs for easy agent integration
 - **LangChain Support**: Drop-in wrapper for LangChain tools
 
-### 🚀 Quick Start
+### 🚀 Quick Start (TL;DR)
 
 ```bash
-# Install
-pip install -e .
-
-# Start server
-faracore serve
-
-# Access UI
-open http://127.0.0.1:8000
+pip install faramesh
+faramesh serve
 ```
 
-### 📦 Docker Quick Start
+SDKs:
 
-```bash
-# Start with demo data
-docker compose up
+- Python: `pip install faramesh`
+- Node: `npm install @faramesh/sdk`
 
-# Access UI
-open http://localhost:8000
-```
+See `docs/Quickstart.md` for a step‑by‑step guide.
 
 ## Table of Contents
 
@@ -60,6 +63,7 @@ open http://localhost:8000
 - [Examples](#examples)
 - [Architecture](#architecture)
 - [Contributing](#contributing)
+- [Governance](#governance)
 
 ## Installation
 
@@ -72,8 +76,8 @@ open http://localhost:8000
 ### Install from Source
 
 ```bash
-git clone https://github.com/yourorg/faracore.git
-cd faracore
+git clone https://github.com/yourorg/faramesh.git
+cd faramesh
 pip install -e .
 ```
 
@@ -97,7 +101,7 @@ This installs:
 ### 1. Start the Server
 
 ```bash
-faracore serve
+faramesh serve
 ```
 
 Server starts on `http://127.0.0.1:8000` by default.
@@ -117,14 +121,14 @@ The UI provides:
 
 **Python SDK:**
 ```python
-from faracore.sdk.client import ExecutionGovernorClient
+from faramesh.sdk.client import ExecutionGovernorClient
 
 client = ExecutionGovernorClient("http://127.0.0.1:8000")
 
 action = client.submit_action(
     tool="shell",
     operation="run",
-    params={"cmd": "echo 'Hello FaraCore'"},
+    params={"cmd": "echo 'Hello Faramesh'"},
     context={"agent_id": "my-agent"}
 )
 
@@ -149,22 +153,22 @@ curl -X POST http://127.0.0.1:8000/v1/actions \
 **CLI:**
 ```bash
 # List all actions (color-coded)
-faracore list
+faramesh list
 
 # List with full UUIDs
-faracore list --full
+faramesh list --full
 
 # Explain why action was allowed/denied
-faracore explain <action-id>
+faramesh explain <action-id>
 
 # Get specific action
-faracore get <action-id>
+faramesh get <action-id>
 
 # View event timeline
-faracore events <action-id>
+faramesh events <action-id>
 
 # Stream live actions
-faracore tail
+faramesh tail
 ```
 
 **Web UI:**
@@ -201,7 +205,7 @@ Risk scoring runs independently of policy rules. Risk rules can trigger automati
 
 ## Policy Configuration
 
-Policies are defined in YAML files. By default, FaraCore looks for `policies/default.yaml`.
+Policies are defined in YAML files. By default, Faramesh looks for `policies/default.yaml`.
 
 ### Basic Policy Structure
 
@@ -334,81 +338,81 @@ Risk rules use the same match conditions as policy rules. The first matching ris
 
 ### High-Risk Auto-Approval
 
-If an action has `risk_level: high` and a policy rule would `allow` it, FaraCore automatically changes the decision to `require_approval` for safety.
+If an action has `risk_level: high` and a policy rule would `allow` it, Faramesh automatically changes the decision to `require_approval` for safety.
 
 ## CLI Usage
 
-FaraCore provides a powerful CLI for managing actions and policies.
+Faramesh provides a powerful CLI for managing actions and policies.
 
 ### Basic Commands
 
 ```bash
 # Start server
-faracore serve
+faramesh serve
 
 # Start with policy hot-reload (local mode only)
-faracore serve --hot-reload
+faramesh serve --hot-reload
 # Or use environment variable:
-# FARACORE_HOT_RELOAD=1 faracore serve
+# FARAMESH_HOT_RELOAD=1 faramesh serve
 # Note: If policy reload fails, previous valid policy stays active
 
 # List actions (truncated IDs, color-coded)
-faracore list
+faramesh list
 
 # List with full UUIDs
-faracore list --full
+faramesh list --full
 
 # JSON output (for scripting)
-faracore list --json
+faramesh list --json
 
 # Get specific action (supports prefix matching)
-faracore get 2755d4a8
-faracore get 2755d4a8-1000-47e6-873c-b9fd535234ad
+faramesh get 2755d4a8
+faramesh get 2755d4a8-1000-47e6-873c-b9fd535234ad
 
 # Explain why action was allowed/denied
-faracore explain 2755d4a8
+faramesh explain 2755d4a8
 
 # View event timeline
-faracore events 2755d4a8
+faramesh events 2755d4a8
 
 # Approve action
-faracore approve 2755d4a8
+faramesh approve 2755d4a8
 # or
-faracore allow 2755d4a8
+faramesh allow 2755d4a8
 
 # Deny action
-faracore deny 2755d4a8
+faramesh deny 2755d4a8
 
 # Replay an action
-faracore replay 2755d4a8
+faramesh replay 2755d4a8
 
 # Get ready-to-copy curl commands
-faracore curl 2755d4a8
+faramesh curl 2755d4a8
 
 # Stream live actions (SSE, like kubectl logs)
-faracore tail
+faramesh tail
 
 # Show status transitions
-faracore logs 2755d4a8
+faramesh logs 2755d4a8
 ```
 
 ### DX Commands
 
 ```bash
 # Scaffold starter layout
-faracore init
+faramesh init
 
 # Build web UI
-faracore build-ui
+faramesh build-ui
 
 # Sanity check environment
-faracore doctor
+faramesh doctor
 
 # Compare policy files
-faracore policy-diff old.yaml new.yaml
+faramesh policy-diff old.yaml new.yaml
 
 # Generate Docker files
-faracore init-docker
+faramesh init-docker
 ```
 
 ### Prefix Matching
@@ -417,30 +421,30 @@ All commands that take an action ID support **prefix matching**. Use the first 8
 
 ```bash
 # These are equivalent:
-faracore get 2755d4a8
-faracore get 2755d4a8-1000-47e6-873c-b9fd535234ad
+faramesh get 2755d4a8
+faramesh get 2755d4a8-1000-47e6-873c-b9fd535234ad
 ```
 
-If multiple actions match, FaraCore will warn you and list all matches.
+If multiple actions match, Faramesh will warn you and list all matches.
 
 ### Global Options
 
 ```bash
 # Specify API host/port
-faracore --host 0.0.0.0 --port 9000 list
+faramesh --host 0.0.0.0 --port 9000 list
 
 # Override auth token
-faracore --token my-token list
+faramesh --token my-token list
 
 # JSON output
-faracore --json get <id>
+faramesh --json get <id>
 ```
 
 ### Command Examples
 
 **List actions with risk levels (color-coded):**
 ```bash
-$ faracore list
+$ faramesh list
 ┌────────────┬──────────────────┬────────┬────────────┬──────────────┬──────────────────────────────────────┬─────────────────────┐
 │ ID         │ Status           │ Risk   │ Tool       │ Operation    │ Params                               │ Created             │
 ├────────────┼──────────────────┼────────┼────────────┼──────────────┼──────────────────────────────────────┼─────────────────────┤
@@ -451,7 +455,7 @@ $ faracore list
 
 **Explain why action was allowed/denied:**
 ```bash
-$ faracore explain 2755d4a8
+$ faramesh explain 2755d4a8
 Action Explanation: 2755d4a8
 
 Status: pending_approval
@@ -469,7 +473,7 @@ Params: {"cmd": "rm -rf /tmp"}
 
 **View event timeline:**
 ```bash
-$ faracore events 2755d4a8
+$ faramesh events 2755d4a8
 Event Timeline - 2755d4a8
 ┌─────────────────────┬──────────────────────┬─────────────────────────────┐
 │ Time                │ Event                │ Details                     │
@@ -484,7 +488,7 @@ Event Timeline - 2755d4a8
 
 **Stream live actions (SSE):**
 ```bash
-$ faracore tail
+$ faramesh tail
 Streaming actions (press CTRL+C to stop)...
 
 [10:00:15] pending_approval  2755d4a8 | shell      | run
@@ -494,7 +498,7 @@ Streaming actions (press CTRL+C to stop)...
 
 **Get curl commands:**
 ```bash
-$ faracore curl 2755d4a8
+$ faramesh curl 2755d4a8
 # Action: 2755d4a8-1000-47e6-873c-b9fd535234ad
 # Status: pending_approval
 
@@ -512,7 +516,7 @@ curl -X POST http://127.0.0.1:8000/v1/actions/2755d4a8-.../approval \
 **DX Commands:**
 ```bash
 # Initialize project
-$ faracore init
+$ faramesh init
 ✓ Created starter files:
   • policies/
   • policies/default.yaml
@@ -521,10 +525,10 @@ $ faracore init
 Next steps:
   1. Review policies/default.yaml
   2. Copy .env.example to .env and customize
-  3. Run: faracore serve
+  3. Run: faramesh serve
 
 # Check environment
-$ faracore doctor
+$ faramesh doctor
 ✓ Python 3.11.0
 ✓ Database exists and is writable
 ✓ Policy file exists: policies/default.yaml
@@ -532,7 +536,7 @@ $ faracore doctor
 ✓ UI assets found
 
 # Compare policies
-$ faracore policy-diff old.yaml new.yaml
+$ faramesh policy-diff old.yaml new.yaml
 Policy Differences:
 
 Old: old.yaml
@@ -547,7 +551,7 @@ Added rules:
 
 ## Web UI
 
-The FaraCore web UI provides a modern, real-time dashboard for monitoring and managing actions.
+The Faramesh web UI provides a modern, real-time dashboard for monitoring and managing actions.
 
 ### Features
 
@@ -563,7 +567,7 @@ The FaraCore web UI provides a modern, real-time dashboard for monitoring and ma
 
 ### Accessing the UI
 
-1. Start the server: `faracore serve`
+1. Start the server: `faramesh serve`
 2. Open `http://127.0.0.1:8000` in your browser
 
 ### UI Workflow
@@ -596,7 +600,7 @@ Each event includes:
 ### Python SDK
 
 ```python
-from faracore.sdk.client import ExecutionGovernorClient
+from faramesh.sdk.client import ExecutionGovernorClient
 
 # Initialize client
 client = ExecutionGovernorClient("http://127.0.0.1:8000")
@@ -635,7 +639,7 @@ client.report_result(
 ### Node.js SDK
 
 ```javascript
-const { ExecutionGovernorClient } = require('@faracore/sdk');
+const { ExecutionGovernorClient } = require('@faramesh/sdk');
 
 const client = new ExecutionGovernorClient('http://127.0.0.1:8000');
 
@@ -657,16 +661,16 @@ console.log(`Event count: ${events.length}`);
 
 ## LangChain Integration
 
-FaraCore provides a drop-in wrapper for LangChain tools that automatically enforces governance.
+Faramesh provides a drop-in wrapper for LangChain tools that automatically enforces governance.
 
 ### Basic Usage
 
 ```python
 from langchain.tools import ShellTool
-from faracore.sdk.client import ExecutionGovernorClient
-from faracore.integrations.langchain.governed_tool import GovernedTool
+from faramesh.sdk.client import ExecutionGovernorClient
+from faramesh.integrations.langchain.governed_tool import GovernedTool
 
-# Create FaraCore client
+# Create Faramesh client
 client = ExecutionGovernorClient("http://127.0.0.1:8000")
 
 # Wrap LangChain tool
@@ -701,17 +705,17 @@ agent = initialize_agent(
     verbose=True
 )
 
-# Agent tool calls are now governed by FaraCore
+# Agent tool calls are now governed by Faramesh
 response = agent.run("List files in /tmp and fetch a URL")
 ```
 
 ### How It Works
 
 1. **Intercept**: GovernedTool intercepts tool calls before execution
-2. **Submit**: Submits to FaraCore for policy evaluation
+2. **Submit**: Submits to Faramesh for policy evaluation
 3. **Wait**: If pending approval, polls until approved/denied
 4. **Execute**: Only executes if allowed/approved
-5. **Report**: Reports result back to FaraCore
+5. **Report**: Reports result back to Faramesh
 
 See `examples/langchain/` for complete examples.
 
@@ -731,37 +735,37 @@ open http://localhost:8000
 
 ```bash
 # Build image
-docker build -t faracore .
+docker build -t faramesh .
 
 # Run with custom config
 docker run -p 8000:8000 \
-  -e FARACORE_DEMO=1 \
-  -e FARACORE_ENABLE_CORS=1 \
-  -e FARACORE_HOST=0.0.0.0 \
-  -e FARACORE_PORT=8000 \
+  -e FARAMESH_DEMO=1 \
+  -e FARAMESH_ENABLE_CORS=1 \
+  -e FARAMESH_HOST=0.0.0.0 \
+  -e FARAMESH_PORT=8000 \
   -v $(pwd)/policies:/app/policies \
   -v $(pwd)/data:/app/data \
-  faracore
+  faramesh
 ```
 
 ### Docker Compose
 
 The `docker-compose.yaml` includes:
 
-- **faracore**: Main server
+- **faramesh**: Main server
 - **demo-agent**: Example agent that submits actions
 
 Edit `docker-compose.yaml` to customize:
 
 ```yaml
 services:
-  faracore:
+  faramesh:
     build: .
     ports:
       - "8000:8000"
     environment:
-      - FARACORE_DEMO=1
-      - FARACORE_ENABLE_CORS=1
+      - FARAMESH_DEMO=1
+      - FARAMESH_ENABLE_CORS=1
     volumes:
       - ./data:/app/data
       - ./policies:/app/policies
@@ -867,11 +871,11 @@ Returns Prometheus metrics.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FARACORE_HOST` | `127.0.0.1` | Server bind address |
-| `FARACORE_PORT` | `8000` | Server port |
-| `FARACORE_TOKEN` | - | Auth token (overrides `FARA_AUTH_TOKEN`) |
-| `FARACORE_ENABLE_CORS` | `1` | Enable CORS (`1`=enabled, `0`=disabled) |
-| `FARACORE_DEMO` | - | Demo mode (`1`=seed demo data if DB empty) |
+| `FARAMESH_HOST` | `127.0.0.1` | Server bind address |
+| `FARAMESH_PORT` | `8000` | Server port |
+| `FARAMESH_TOKEN` | - | Auth token (overrides `FARA_AUTH_TOKEN`) |
+| `FARAMESH_ENABLE_CORS` | `1` | Enable CORS (`1`=enabled, `0`=disabled) |
+| `FARAMESH_DEMO` | - | Demo mode (`1`=seed demo data if DB empty) |
 
 ### Policy & Database
 
@@ -884,21 +888,21 @@ Returns Prometheus metrics.
 
 ### Legacy Variables
 
-These are still supported but `FARACORE_*` variants take precedence:
+These are still supported but `FARAMESH_*` variants take precedence:
 
-- `FARA_API_HOST` → `FARACORE_HOST`
-- `FARA_API_PORT` → `FARACORE_PORT`
-- `FARA_AUTH_TOKEN` → `FARACORE_TOKEN`
+- `FARA_API_HOST` → `FARAMESH_HOST`
+- `FARA_API_PORT` → `FARAMESH_PORT`
+- `FARA_AUTH_TOKEN` → `FARAMESH_TOKEN`
 
 ### Quick Reference
 
 **All configurable via environment variables:**
 ```bash
 # Server
-export FARACORE_HOST=0.0.0.0
-export FARACORE_PORT=9000
-export FARACORE_TOKEN=my-secret-token
-export FARACORE_ENABLE_CORS=1
+export FARAMESH_HOST=0.0.0.0
+export FARAMESH_PORT=9000
+export FARAMESH_TOKEN=my-secret-token
+export FARAMESH_ENABLE_CORS=1
 
 # Policy
 export FARA_POLICY_FILE=policies/custom.yaml
@@ -908,7 +912,7 @@ export FARA_DB_BACKEND=sqlite
 export FARA_SQLITE_PATH=data/actions.db
 
 # Demo Mode
-export FARACORE_DEMO=1
+export FARAMESH_DEMO=1
 ```
 
 **Or use `.env` file:**
@@ -917,7 +921,7 @@ export FARACORE_DEMO=1
 cp .env.example .env
 
 # Edit .env with your settings
-# FaraCore automatically reads .env if python-dotenv is installed
+# Faramesh automatically reads .env if python-dotenv is installed
 ```
 
 ## Examples
@@ -925,7 +929,7 @@ cp .env.example .env
 ### Example 1: Basic Agent Integration
 
 ```python
-from faracore.sdk.client import ExecutionGovernorClient
+from faramesh.sdk.client import ExecutionGovernorClient
 
 client = ExecutionGovernorClient("http://127.0.0.1:8000")
 
@@ -1010,13 +1014,13 @@ risk:
 version: '3.8'
 
 services:
-  faracore:
+  faramesh:
     build: .
     ports:
       - "8000:8000"
     environment:
-      - FARACORE_DEMO=1
-      - FARACORE_ENABLE_CORS=1
+      - FARAMESH_DEMO=1
+      - FARAMESH_ENABLE_CORS=1
       - FARA_POLICY_FILE=/app/policies/custom.yaml
     volumes:
       - ./policies:/app/policies
@@ -1025,40 +1029,27 @@ services:
 
 ## Architecture
 
-### Components
+High‑level data flow:
 
-- **Policy Engine**: YAML-based policy evaluation with risk scoring
-- **Storage Layer**: SQLite (default) or PostgreSQL for actions and events
-- **API Server**: FastAPI-based REST API with SSE support
-- **Web UI**: React/TypeScript dashboard with real-time updates
-- **CLI**: Command-line interface with rich formatting
-- **SDKs**: Python and Node.js client libraries
-
-### Data Flow
-
-1. **Agent** submits action via SDK
-2. **Policy Engine** evaluates action against rules
-3. **Risk Engine** computes risk level
-4. **Storage** saves action and creates events
-5. **API** returns decision (allow/deny/require_approval)
-6. **UI/CLI** displays action for human review
-7. **Human** approves/denies via UI or CLI
-8. **Executor** runs action if approved
-9. **Storage** records execution events
-10. **Agent** receives result
-
-### Event Timeline
-
-Every action has a complete event timeline:
-
-```
-created → decision_made → [approved|denied] → started → [succeeded|failed]
+```text
+┌─────────┐      submit        ┌─────────────┐        decision        ┌───────────────┐
+│ Agents  │ ─────────────────▶ │ Faramesh    │ ─────────────────────▶ │ Executors /   │
+│ (LLMs,  │                    │ API Server  │                        │ Tools         │
+└─────────┘                    │  / Policy   │                        └───────────────┘
+       ▲                       │  Engine     │                               │
+       │                       └─────────────┘                               │ report
+       │                              ▲                                      │ result
+       │                              │                                      ▼
+       │                        ┌─────────────┐                       ┌──────────────┐
+       │                        │ Web UI &   │◀──────────────────────▶│ Storage /    │
+       └──────────────────────▶ │ CLI (HITL) │        events / state   │ DB / Metrics │
+                                └─────────────┘                       └──────────────┘
 ```
 
-Events are stored in `action_events` table and accessible via:
-- API: `GET /v1/actions/{id}/events`
-- CLI: `faracore events <id>`
-- UI: Action detail drawer
+See also:
+
+- `Architecture.png` for a visual diagram.
+- `docs/API.md` for endpoint‑level details.
 
 ## Contributing
 
@@ -1068,20 +1059,20 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ```bash
 # Clone repository
-git clone https://github.com/yourorg/faracore.git
-cd faracore
+git clone https://github.com/yourorg/faramesh.git
+cd faramesh
 
 # Install in development mode
 pip install -e ".[dev,cli]"
 
 # Initialize project
-faracore init
+faramesh init
 
 # Run tests
 pytest
 
 # Start development server with hot-reload
-faracore serve --watch
+faramesh serve --watch
 
 # Build UI (if making UI changes)
 cd web && npm install && npm run build
@@ -1089,27 +1080,27 @@ cd web && npm install && npm run build
 
 ### DX Features
 
-FaraCore includes comprehensive developer experience features:
+Faramesh includes comprehensive developer experience features:
 
-- **`faracore init`** - Scaffold starter layout
-- **`faracore explain <id>`** - Explain policy decisions
-- **`faracore doctor`** - Environment sanity checks
-- **`faracore build-ui`** - Build web UI
-- **`faracore serve --hot-reload`** - Hot reload policy files (local mode only)
-- **`FARACORE_HOT_RELOAD=1`** - Enable hot reload via environment variable
+- **`faramesh init`** - Scaffold starter layout
+- **`faramesh explain <id>`** - Explain policy decisions
+- **`faramesh doctor`** - Environment sanity checks
+- **`faramesh build-ui`** - Build web UI
+- **`faramesh serve --hot-reload`** - Hot reload policy files (local mode only)
+- **`FARAMESH_HOT_RELOAD=1`** - Enable hot reload via environment variable
   - Note: If policy reload fails, previous valid policy stays active
-- **`faracore replay <id>`** - Replay actions
-- **`faracore tail`** - Stream live actions (SSE)
-- **`faracore policy-diff`** - Compare policy files
-- **`faracore init-docker`** - Generate Docker config
+- **`faramesh replay <id>`** - Replay actions
+- **`faramesh tail`** - Stream live actions (SSE)
+- **`faramesh policy-diff`** - Compare policy files
+- **`faramesh init-docker`** - Generate Docker config
 
-See [DX_FEATURES.md](DX_FEATURES.md) for complete documentation.
+See `docs/CLI.md` and `docs/Policies.md` for complete DX and policy documentation.
 
 ### Project Structure
 
 ```
-faracore/
-├── src/faracore/
+faramesh/
+├── src/faramesh/
 │   ├── server/          # FastAPI server
 │   ├── sdk/            # Python SDK
 │   ├── cli.py          # CLI interface
@@ -1122,7 +1113,20 @@ faracore/
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Faramesh Core is made available under the **Elastic License 2.0**.
+
+- See [`LICENSE`](LICENSE) for the full text.
+- See [`NOTICE`](NOTICE) for additional attributions.
+
+You are free to use, modify, and integrate Faramesh Core in your own products and services, **except** you may not offer it as a competing hosted service where the primary value is Faramesh Core itself.
+
+## Governance
+
+- Code of Conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- Security policy: [`SECURITY.md`](SECURITY.md)
+- Changelog: [`CHANGELOG.md`](CHANGELOG.md)
+- Issues: GitHub Issues (bug/feature templates included)
+- Pull requests: See `.github/PULL_REQUEST_TEMPLATE.md`
 
 ## Troubleshooting
 
@@ -1133,9 +1137,284 @@ If installation fails, upgrade pip: `python3 -m pip install --upgrade pip`
 ## Support
 
 - **Documentation**: [docs/](docs/)
-- **Issues**: [GitHub Issues](https://github.com/yourorg/faracore/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourorg/faracore/discussions)
+- **Issues**: [GitHub Issues](https://github.com/yourorg/faramesh/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/yourorg/faramesh/discussions)
 
 ---
 
 **Built with ❤️ for safe AI agent operations**
+
+## Architecture Diagrams
+
+### 1. Core Runtime Flow
+
+The primary execution path from agent action submission through policy evaluation to final execution and logging.
+
+```
++--------+     +------+     +------------+     +--------+
+| Agent  | --> | SDK  | --> | Faramesh   | --> | Policy |
++--------+     +------+     | Core API   |     | Engine |
+                            +------------+     +--------+
+                                   |
+                                   v
+                            +-------------+
+                            | allow/deny/ |
+                            |  pending    |
+                            +-------------+
+                                   |
+                    +--------------+--------------+
+                    |                             |
+                    v                             v
+            +-------------+              +-------------+
+            |   Agent /   |              |  Dashboard  |
+            |  Executor   |              |   + Logs    |
+            +-------------+              +-------------+
+```
+
+### 2. Policy Evaluation Layer
+
+How YAML policies are loaded, matched against actions, and produce decisions.
+
+```
++-------------+
+| YAML Policy |
++-------------+
+      |
+      v
++-------------+
+| Load Policy |
++-------------+
+      |
+      v
++-------------+
+| Rule Match  |
+| (first wins)|
++-------------+
+      |
+      v
++-------------+
+|  Decision   |
+| allow/deny/ |
+|  pending    |
++-------------+
+      |
+      v
++-------------+
+| API Response|
++-------------+
+```
+
+### 3. Execution Decision Lifecycle
+
+The complete lifecycle of an action from creation through approval, execution, and final audit logging.
+
+```
++-------------+
+| Action      |
+| Created     |
++-------------+
+      |
+      v
++-------------+
+|  Pending    |
+|  Approval   |
++-------------+
+      |
+      v
++-------------+
+| Approve or  |
+|   Reject    |
++-------------+
+      |
+      +----> Deny --> Audit Log (Final)
+      |
+      v
++-------------+
+|  Execute    |
++-------------+
+      |
+      v
++-------------+
+| Audit Log   |
+|  (Final)    |
++-------------+
+```
+
+### 4. Integration Surface
+
+All integration points that connect to Faramesh Core and consume its outputs.
+
+```
++----------------------------------+
+|  Integration Layer               |
+|  +--------+  +--------+  +------+ |
+|  | SDKs   |  |  CLI   |  |Lang | |
+|  |(Py/JS) |  |        |  |Chain| |
+|  +--------+  +--------+  +------+ |
+|  +--------+                        |
+|  |CI Hooks|                        |
+|  +--------+                        |
++----------------------------------+
+            |
+            v
+    +---------------+
+    | Faramesh Core |
+    +---------------+
+            |
+    +-------+-------+
+    |               |
+    v               v
++----------+  +-----------+
+|Dashboard |  |   Logs    |
++----------+  +-----------+
+```
+
+### 5. Deployment Topologies
+
+Three common deployment patterns for Faramesh.
+
+**Single Binary (Local):**
+```
++------------------+
+|  Single Binary   |
+|  +------------+  |
+|  | Faramesh   |  |
+|  | Core + DB  |  |
+|  +------------+  |
++------------------+
+```
+
+**Docker Compose:**
+```
++------------------+     +------------+
+|  Faramesh Core   | <-> | PostgreSQL |
+|  (Container)     |     | (Container)|
++------------------+     +------------+
+```
+
+**Kubernetes:**
+```
++------------------+     +------------------+
+|  Faramesh Pods   | <-> | Persistent DB    |
+|  (Replicas)      |     | (StatefulSet)    |
++------------------+     +------------------+
+```
+
+### 6. OSS vs Cloud Features
+
+The open-source core and the hosted/enterprise feature layers.
+
+```
++----------------------------------------+
+|  Hosted/Enterprise Features (Nexus/   |
+|  Horizon): SSO, RBAC, Multi-org,      |
+|  Advanced Routing, ML Risk Scoring    |
++----------------------------------------+
+|                                        |
+|  +----------------------------------+  |
+|  |  Open Source Core                |  |
+|  |  Policy Engine, API, CLI, SDKs, |  |
+|  |  Web UI, Basic Auth             |  |
+|  +----------------------------------+  |
+|                                        |
++----------------------------------------+
+```
+
+### 7. Secure-by-Default Pattern
+
+The security model ensuring no side effects occur until approval.
+
+```
++-------------+
+|   Inputs    |
++-------------+
+      |
+      v
++-------------+
+| Policy Gate |
+| (no side    |
+|  effects)   |
++-------------+
+      |
+      +--> Deny --> Append-Only Log
+      |
+      v
++-------------+
+|  Approval   |
+|  Required?  |
++-------------+
+      |
+      +--> No --> Controlled Execution
+      |
+      v
++-------------+
+|   Human     |
+|  Approval   |
++-------------+
+      |
+      v
++-------------+
+| Controlled  |
+| Execution   |
++-------------+
+      |
+      v
++-------------+
+| Append-Only|
+|    Log     |
++-------------+
+```
+
+## FAQ
+
+### What is Faramesh?
+
+Faramesh is an execution gatekeeper for AI agents that intercepts tool calls before execution, evaluates them against configurable policies, requires human approval when necessary, and logs every decision for audit purposes.
+
+### How does Faramesh differ from other agent frameworks?
+
+Faramesh focuses specifically on governance and safety—it doesn't build agents, it governs them. It provides policy-driven control, risk scoring, and human-in-the-loop approval workflows that work with any agent framework.
+
+### Do I need to modify my existing agents?
+
+No. Faramesh integrates via SDKs that wrap your existing tools. Your agents call the SDK instead of tools directly, and Faramesh handles the governance layer transparently.
+
+### What happens if Faramesh is down?
+
+This depends on your integration pattern. The SDK can be configured to fail-open (allow actions) or fail-closed (deny actions) when Faramesh is unavailable. Production deployments should run Faramesh as a critical service with appropriate redundancy.
+
+### Can I use Faramesh in production?
+
+Yes. Faramesh Core is production-ready with PostgreSQL support, comprehensive APIs, web UI, and robust error handling. For enterprise features like SSO, RBAC, and advanced routing, consider Faramesh Horizon or Nexus.
+
+### How do policies work?
+
+Policies are YAML files that define rules evaluated in order (first-match-wins). Each rule can allow, deny, or require approval. If no rule matches, actions are denied by default (secure-by-default).
+
+### What's the difference between policy rules and risk scoring?
+
+Policy rules determine the decision (allow/deny/require_approval). Risk scoring provides an independent assessment (low/medium/high) that can automatically upgrade decisions—for example, high-risk actions automatically require approval even if a policy would allow them.
+
+### Can I integrate with CI/CD pipelines?
+
+Yes. Faramesh provides CLI tools and APIs that can be integrated into CI/CD workflows to govern automated actions and deployments.
+
+### Is there a hosted version?
+
+Yes. Faramesh Nexus provides a fully-managed SaaS offering, and Faramesh Horizon provides enterprise on-prem deployments. See the [Faramesh Cloud Products](#faramesh-cloud-products) section above.
+
+### What databases are supported?
+
+Faramesh supports SQLite (default, for development) and PostgreSQL (recommended for production). The database stores actions, events, and audit logs.
+
+### How do I handle approvals in automated workflows?
+
+For automated workflows, you can configure policies to allow low-risk actions automatically while requiring approval for high-risk operations. You can also integrate with approval systems via the API or use Faramesh Horizon/Nexus for advanced routing.
+
+### Can I export audit logs?
+
+Yes. All actions and events are stored in the database and can be exported via the API. Faramesh Horizon includes advanced audit export features with long-term retention.
+
+### What license is Faramesh under?
+
+Faramesh Core is available under the Elastic License 2.0. See the [License](#license) section for details.
