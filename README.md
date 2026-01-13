@@ -6,13 +6,13 @@ Faramesh Core is an open-core execution governor that provides policy-driven gov
 
 ## Faramesh Cloud Products
 
-### Faramesh Nexus (hosted control plane)
+### Faramesh Horizon (hosted control plane)
 
-Faramesh Nexus is our fully-managed SaaS offering that provides instant onboarding with no deployments required. Nexus includes a fully-managed core service, automatic upgrades, usage tracking and metrics, API keys and secrets management, and approval routing via Slack and email. Ideal for startups and small teams who want to get started quickly without infrastructure management.
+Faramesh Horizon is our fully-managed SaaS offering that provides instant onboarding with no deployments required. Horizon includes a fully-managed core service, automatic upgrades, usage tracking and metrics, API keys and secrets management, and approval routing via Slack and email. Ideal for startups and small teams who want to get started quickly without infrastructure management.
 
-### Faramesh Horizon (enterprise/on-prem)
+### Faramesh Nexus (enterprise/on-prem)
 
-Faramesh Horizon is an enterprise-grade deployment of Faramesh that runs inside your VPC or Kubernetes cluster. Horizon supports SSO, RBAC, multi-org management, audit exports with long-term retention, and optional air-gap compatibility for security-critical environments. Perfect for organizations that need full control over their governance infrastructure.
+Faramesh Nexus is an enterprise-grade deployment of Faramesh that runs inside your VPC or Kubernetes cluster. Nexus supports SSO, RBAC, multi-org management, audit exports with long-term retention, and optional air-gap compatibility for security-critical environments. Perfect for organizations that need full control over their governance infrastructure.
 
 Faramesh OSS is the engine, Nexus and Horizon are the accelerators.
 
@@ -1306,8 +1306,8 @@ The open-source core and the hosted/enterprise feature layers.
 
 ```
 +----------------------------------------+
-|  Hosted/Enterprise Features (Nexus/   |
-|  Horizon): SSO, RBAC, Multi-org,      |
+|  Hosted/Enterprise Features (Horizon/ |
+|  Nexus): SSO, RBAC, Multi-org,        |
 |  Advanced Routing, ML Risk Scoring    |
 +----------------------------------------+
 |                                        |
@@ -1385,7 +1385,7 @@ This depends on your integration pattern. The SDK can be configured to fail-open
 
 ### Can I use Faramesh in production?
 
-Yes. Faramesh Core is production-ready with PostgreSQL support, comprehensive APIs, web UI, and robust error handling. For enterprise features like SSO, RBAC, and advanced routing, consider Faramesh Horizon or Nexus.
+Yes. Faramesh Core is production-ready with PostgreSQL support, comprehensive APIs, web UI, and robust error handling. For enterprise features like SSO, RBAC, and advanced routing, consider Faramesh Nexus or Horizon.
 
 ### How do policies work?
 
@@ -1401,7 +1401,7 @@ Yes. Faramesh provides CLI tools and APIs that can be integrated into CI/CD work
 
 ### Is there a hosted version?
 
-Yes. Faramesh Nexus provides a fully-managed SaaS offering, and Faramesh Horizon provides enterprise on-prem deployments. See the [Faramesh Cloud Products](#faramesh-cloud-products) section above.
+Yes. Faramesh Horizon provides a fully-managed SaaS offering, and Faramesh Nexus provides enterprise on-prem deployments. See the [Faramesh Cloud Products](#faramesh-cloud-products) section above.
 
 ### What databases are supported?
 
@@ -1409,11 +1409,11 @@ Faramesh supports SQLite (default, for development) and PostgreSQL (recommended 
 
 ### How do I handle approvals in automated workflows?
 
-For automated workflows, you can configure policies to allow low-risk actions automatically while requiring approval for high-risk operations. You can also integrate with approval systems via the API or use Faramesh Horizon/Nexus for advanced routing.
+For automated workflows, you can configure policies to allow low-risk actions automatically while requiring approval for high-risk operations. You can also integrate with approval systems via the API or use Faramesh Nexus/Horizon for advanced routing.
 
 ### Can I export audit logs?
 
-Yes. All actions and events are stored in the database and can be exported via the API. Faramesh Horizon includes advanced audit export features with long-term retention.
+Yes. All actions and events are stored in the database and can be exported via the API. Faramesh Nexus includes advanced audit export features with long-term retention.
 
 ### What license is Faramesh under?
 
