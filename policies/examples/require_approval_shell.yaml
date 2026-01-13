@@ -1,0 +1,19 @@
+rules:
+  - match:
+      tool: "http"
+      op: "*"
+    allow: true
+    description: "Allow HTTP"
+
+  - match:
+      tool: "shell"
+      op: "*"
+    require_approval: true
+    description: "Shell requires approval"
+    risk: "medium"
+
+  - match:
+      tool: "*"
+      op: "*"
+    deny: true
+    description: "Default deny (first-match wins)"

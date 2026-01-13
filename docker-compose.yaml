@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  faracore:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - FARACORE_HOST=0.0.0.0
+      - FARACORE_PORT=8000
+      - FARACORE_ENABLE_CORS=1
+      - FARACORE_DEMO=1
+      - FARA_POLICY_FILE=policies/default.yaml
+    volumes:
+      - ./data:/app/data
+      - ./policies:/app/policies
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  demo-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.demo
+    depends_on:
+      - faracore
+    environment:
+      - FARA_API_BASE=http://faracore:8000
+      - FARA_AGENT_ID=demo-agent
+    command: python /app/demo_agent.py

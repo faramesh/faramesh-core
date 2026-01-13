@@ -1,0 +1,21 @@
+rules:
+  - match:
+      tool: "stripe"
+      op: "refund"
+      amount_gt: 1000
+    require_approval: true
+    description: "Large refunds require approval"
+    risk: "medium"
+
+  - match:
+      tool: "stripe"
+      op: "*"
+    allow: true
+    description: "Allow other Stripe operations"
+    risk: "low"
+
+  - match:
+      tool: "*"
+      op: "*"
+    deny: true
+    description: "Default deny"

@@ -1,0 +1,12 @@
+rules:
+  - match:
+      tool: "trusted_tool"
+      op: "*"
+    allow: true
+    description: "Allow trusted tool"
+
+  - match:
+      tool: "*"
+      op: "*"
+    deny: true
+    description: "Deny everything else (default deny)"

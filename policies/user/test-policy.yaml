@@ -1,0 +1,36 @@
+# Policy: test-policy
+# Custom policy rules for test-policy
+
+rules:
+  # Example: Allow HTTP GET requests
+  - match:
+      tool: http
+      op: get
+    allow: true
+    description: "Allow HTTP GET requests"
+    risk: low
+
+  # Example: Require approval for shell commands
+  - match:
+      tool: shell
+      op: "*"
+    require_approval: true
+    description: "Require approval for shell commands"
+    risk: high
+
+  # Default deny (should be last)
+  - match:
+      tool: "*"
+      op: "*"
+    deny: true
+    description: "Default deny - deny unknown actions"
+    risk: high
+
+# Optional: Risk scoring rules
+# risk:
+#   rules:
+#     - name: dangerous_patterns
+#       when:
+#         tool: shell
+#         pattern: "rm -rf|shutdown|reboot"
+#       risk_level: high

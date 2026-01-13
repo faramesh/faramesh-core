@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FaraCore — Agent Action Governor</title>
+    <script>
+      window.FARACORE_CONFIG = {
+        apiBase: window.location.origin,
+        eventsEndpoint: "/v1/events",
+      };
+    </script>
+    <script type="module" crossorigin src="/app/assets/main-CwtbgZUl.js"></script>
+    <link rel="stylesheet" crossorigin href="/app/assets/main-DPz2AN4M.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="fc-custom-ui"></div>
+    <style>
+      #fc-custom-ui {
+        font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        padding: 24px;
+        max-width: 1200px;
+        margin: 0 auto;
+      }
+      #fc-custom-ui h1 {
+        margin-bottom: 12px;
+      }
+      #fc-custom-ui .fc-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      #fc-custom-ui table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      #fc-custom-ui th,
+      #fc-custom-ui td {
+        border: 1px solid #e5e7eb;
+        padding: 8px;
+        text-align: left;
+        font-size: 14px;
+      }
+      #fc-custom-ui th {
+        background: #f8fafc;
+        font-weight: 600;
+      }
+      #fc-custom-ui button {
+        cursor: pointer;
+        border: 1px solid #d0d7de;
+        background: #fff;
+        border-radius: 6px;
+        padding: 4px 8px;
+        font-size: 12px;
+      }
+      #fc-custom-ui .fc-tag {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 6px;
+        font-size: 12px;
+        color: #0f172a;
+        background: #e2e8f0;
+      }
+      #fc-custom-ui .fc-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.5);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+      }
+      #fc-custom-ui .fc-modal {
+        background: #fff;
+        border-radius: 10px;
+        padding: 20px;
+        width: min(980px, 90vw);
+        max-height: 90vh;
+        overflow: auto;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+      }
+      #fc-custom-ui .fc-modal form {
+        display: grid;
+        gap: 12px;
+      }
+      #fc-custom-ui .fc-modal label {
+        font-weight: 600;
+        margin-bottom: 4px;
+        display: block;
+      }
+      #fc-custom-ui .fc-modal input,
+      #fc-custom-ui .fc-modal select,
+      #fc-custom-ui .fc-modal textarea {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #d0d7de;
+        border-radius: 6px;
+        font-size: 14px;
+      }
+      #fc-custom-ui .fc-modal textarea {
+        min-height: 120px;
+        font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+      }
+      #fc-custom-ui .fc-modal .fc-actions-row {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 8px;
+      }
+      #fc-custom-ui pre {
+        background: #0f172a;
+        color: #e2e8f0;
+        padding: 12px;
+        border-radius: 8px;
+        overflow: auto;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      #fc-custom-ui .fc-row {
+        cursor: pointer;
+      }
+      #fc-custom-ui .fc-row:hover {
+        background: #f8fafc;
+      }
+      #fc-custom-ui .fc-copy {
+        margin-left: 6px;
+      }
+      #fc-custom-ui .fc-flex {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #fc-custom-ui .fc-actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 12px;
+      }
+      #fc-custom-ui .fc-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: #e0f2fe;
+        color: #075985;
+        border: 1px solid #bae6fd;
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 12px;
+      }
+    </style>
+    <script>
+      // Lightweight overlay UI to expose IDs, copy helpers, and detail modal without approval tokens.
+      (function () {
+        const apiBase = (window.FARACORE_CONFIG && window.FARACORE_CONFIG.apiBase) || window.location.origin;
+        const rootApp = document.getElementById("root");
+        const host = document.getElementById("fc-custom-ui");
+        if (rootApp) rootApp.style.display = "none"; // keep existing app untouched but hidden
+
+        const el = (tag, props = {}, children = []) => {
+          const node = document.createElement(tag);
+          Object.entries(props).forEach(([k, v]) => {
+            if (k === "class") node.className = v;
+            else if (k === "text") node.textContent = v;
+            else node.setAttribute(k, v);
+          });
+          (Array.isArray(children) ? children : [children]).forEach((child) => {
+            if (!child) return;
+            node.appendChild(typeof child === "string" ? document.createTextNode(child) : child);
+          });
+          return node;
+        };
+
+        const copyToClipboard = async (text) => {
+          try {
+            await navigator.clipboard.writeText(text);
+          } catch (err) {
+            console.error("Copy failed", err);
+            alert("Copy failed, please copy manually.");
+          }
+        };
+
+        const sanitizeAction = (action) => {
+          if (!action) return action;
+          const clone = { ...action };
+          delete clone.approval_token;
+          return clone;
+        };
+
+        const buildCurl = (id, path, body) => {
+          const url = `${apiBase}/v1/actions/${id}/${path}`;
+          if (!body) return `curl -X POST ${url}`;
+          return `curl -X POST ${url} \\\n  -H "Content-Type: application/json" \\\n  -d '${JSON.stringify(body)}'`;
+        };
+
+        const modalBackdrop = el("div", { class: "fc-modal-backdrop", id: "fc-modal" });
+        const modal = el("div", { class: "fc-modal" });
+        modalBackdrop.appendChild(modal);
+        host.appendChild(modalBackdrop);
+
+        const closeModal = () => {
+          modalBackdrop.style.display = "none";
+          modal.innerHTML = "";
+        };
+        modalBackdrop.addEventListener("click", (e) => {
+          if (e.target === modalBackdrop) closeModal();
+        });
+
+        const renderModal = (action) => {
+          const safeAction = sanitizeAction(action);
+          const id = safeAction.id;
+          modal.innerHTML = "";
+
+          const header = el("div", { class: "fc-flex", style: "justify-content: space-between;" }, [
+            el("div", {}, [
+              el("h3", { text: "Action Details" }),
+              el("div", { class: "fc-flex" }, [
+                el("strong", { text: "ID:" }),
+                el("span", { text: id }),
+                el("button", { class: "fc-copy", type: "button" }, "Copy ID"),
+              ]),
+            ]),
+            el("button", { type: "button" }, "Close"),
+          ]);
+
+          header.querySelector("button.fc-copy").onclick = () => copyToClipboard(id);
+          header.querySelector("button[type='button']:not(.fc-copy)").onclick = closeModal;
+
+          const jsonBlock = el("div", {}, [
+            el("h4", { text: "Full Action JSON (tokens hidden)" }),
+            el("pre", {}, JSON.stringify(safeAction, null, 2)),
+          ]);
+
+          const curlBlock = el("div", {}, [
+            el("h4", { text: "cURL Helpers" }),
+            el("div", { class: "fc-actions" }, [
+              (() => {
+                const cmd = buildCurl(id, "start");
+                return el("div", {}, [
+                  el("div", { class: "fc-flex" }, [
+                    el("strong", { text: "/start" }),
+                    el("button", { type: "button" }, "Copy"),
+                  ]),
+                  el("pre", {}, cmd),
+                  el("button", { type: "button" }, "Copy Command"),
+                ]);
+              })(),
+              (() => {
+                const cmd = buildCurl(id, "succeed", { output: "..." });
+                return el("div", {}, [
+                  el("div", { class: "fc-flex" }, [
+                    el("strong", { text: "/succeed" }),
+                    el("button", { type: "button" }, "Copy"),
+                  ]),
+                  el("pre", {}, cmd),
+                  el("button", { type: "button" }, "Copy Command"),
+                ]);
+              })(),
+              (() => {
+                const cmd = buildCurl(id, "fail", { error: "reason" });
+                return el("div", {}, [
+                  el("div", { class: "fc-flex" }, [
+                    el("strong", { text: "/fail" }),
+                    el("button", { type: "button" }, "Copy"),
+                  ]),
+                  el("pre", {}, cmd),
+                  el("button", { type: "button" }, "Copy Command"),
+                ]);
+              })(),
+            ]),
+          ]);
+
+          // Wire copy buttons
+          curlBlock.querySelectorAll("div").forEach((block) => {
+            const pre = block.querySelector("pre");
+            const btns = block.querySelectorAll("button");
+            btns.forEach((b) => {
+              b.onclick = () => copyToClipboard(pre.textContent);
+            });
+          });
+
+          // Inline follow-up buttons (approve/start) when possible without showing token
+          const actionsRow = el("div", { class: "fc-actions-row" });
+          const status = safeAction.status;
+          if (status === "pending_approval") {
+            const approveBtn = el("button", { type: "button" }, "Approve");
+            const denyBtn = el("button", { type: "button" }, "Deny");
+            approveBtn.onclick = async () => {
+              try {
+                const full = action; // original with approval_token
+                if (!full.approval_token) {
+                  alert("Approval token not available in UI response");
+                  return;
+                }
+                const res = await fetch(`${apiBase}/v1/actions/${id}/approval`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ token: full.approval_token, approve: true }),
+                });
+                if (!res.ok) throw new Error(await res.text());
+                alert("Approved. You can now start the action.");
+                closeModal();
+                fetchActions();
+              } catch (err) {
+                alert("Approve failed: " + err);
+              }
+            };
+            denyBtn.onclick = async () => {
+              try {
+                const full = action;
+                if (!full.approval_token) {
+                  alert("Approval token not available in UI response");
+                  return;
+                }
+                const res = await fetch(`${apiBase}/v1/actions/${id}/approval`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ token: full.approval_token, approve: false }),
+                });
+                if (!res.ok) throw new Error(await res.text());
+                alert("Denied.");
+                closeModal();
+                fetchActions();
+              } catch (err) {
+                alert("Deny failed: " + err);
+              }
+            };
+            actionsRow.appendChild(approveBtn);
+            actionsRow.appendChild(denyBtn);
+          } else if (status === "allowed" || status === "approved") {
+            const startBtn = el("button", { type: "button" }, "Start");
+            startBtn.onclick = async () => {
+              try {
+                const res = await fetch(`${apiBase}/v1/actions/${id}/start`, { method: "POST" });
+                if (!res.ok) throw new Error(await res.text());
+                alert("Started.");
+                closeModal();
+                fetchActions();
+              } catch (err) {
+                alert("Start failed: " + err);
+              }
+            };
+            actionsRow.appendChild(startBtn);
+          }
+
+          modal.appendChild(header);
+          modal.appendChild(jsonBlock);
+          modal.appendChild(curlBlock);
+          if (actionsRow.childElementCount > 0) {
+            modal.appendChild(el("h4", { text: "Inline actions" }));
+            modal.appendChild(actionsRow);
+          }
+
+          modalBackdrop.style.display = "flex";
+        };
+
+        const table = el("table");
+        const thead = el("thead");
+        const headerRow = el("tr");
+        ["Action ID", "Status", "Tool", "Operation", "Params"].forEach((h) => {
+          headerRow.appendChild(el("th", { text: h }));
+        });
+        thead.appendChild(headerRow);
+        const tbody = el("tbody");
+        table.appendChild(thead);
+        table.appendChild(tbody);
+
+        const refreshBtn = el("button", { type: "button" }, "Refresh");
+        const statusText = el("span", { text: "Loading actions…" });
+
+        const fetchActions = async () => {
+          statusText.textContent = "Loading actions…";
+          try {
+            const res = await fetch(`${apiBase}/v1/actions`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const actions = Array.isArray(data) ? data : data.items || [];
+            tbody.innerHTML = "";
+            actions.forEach((action) => {
+              const safeAction = sanitizeAction(action);
+              const tr = el("tr", { class: "fc-row" });
+              const idCell = el("td", {}, [
+                el("span", { text: safeAction.id }),
+                el("button", { class: "fc-copy", type: "button" }, "Copy"),
+              ]);
+              idCell.querySelector("button").onclick = (e) => {
+                e.stopPropagation();
+                copyToClipboard(safeAction.id);
+              };
+
+              tr.appendChild(idCell);
+              tr.appendChild(el("td", {}, el("span", { class: "fc-tag", text: safeAction.status || "unknown" })));
+              tr.appendChild(el("td", { text: safeAction.tool || "" }));
+              tr.appendChild(el("td", { text: safeAction.operation || "" }));
+              tr.appendChild(el("td", { text: JSON.stringify(safeAction.params || {}) }));
+
+              tr.onclick = () => renderModal(safeAction);
+              tbody.appendChild(tr);
+            });
+            statusText.textContent = `Loaded ${tbody.children.length} actions`;
+          } catch (err) {
+            console.error(err);
+            statusText.textContent = "Failed to load actions";
+          }
+        };
+
+        // New Action composer modal
+        const composerBackdrop = el("div", { class: "fc-modal-backdrop", id: "fc-composer" });
+        const composerModal = el("div", { class: "fc-modal" });
+        composerBackdrop.appendChild(composerModal);
+        host.appendChild(composerBackdrop);
+
+        const closeComposer = () => {
+          composerBackdrop.style.display = "none";
+          composerModal.innerHTML = "";
+        };
+        composerBackdrop.addEventListener("click", (e) => {
+          if (e.target === composerBackdrop) closeComposer();
+        });
+
+        const openComposer = () => {
+          composerModal.innerHTML = "";
+          const form = el("form");
+          const statusLine = el("div", { class: "fc-flex", style: "gap:6px;" });
+
+          const agentInput = el("input", { type: "text", value: "web-user", required: "true" });
+          const toolSelect = el("select", {}, [
+            el("option", { value: "shell", text: "shell" }),
+            el("option", { value: "http", text: "http" }),
+            el("option", { value: "stripe", text: "stripe" }),
+            el("option", { value: "github", text: "github" }),
+          ]);
+          const opInput = el("input", { type: "text", value: "run", required: "true" });
+          const paramsInput = el("textarea", {}, '{\n  "cmd": "echo hello"\n}');
+          const contextInput = el("textarea", {}, "{}");
+
+          form.appendChild(el("div", {}, [el("label", { text: "Agent ID" }), agentInput]));
+          form.appendChild(el("div", {}, [el("label", { text: "Tool" }), toolSelect]));
+          form.appendChild(el("div", {}, [el("label", { text: "Operation" }), opInput]));
+          form.appendChild(
+            el("div", {}, [el("label", { text: "Params (JSON)" }), paramsInput])
+          );
+          form.appendChild(
+            el("div", {}, [el("label", { text: "Context (JSON, optional)" }), contextInput])
+          );
+
+          const submitBtn = el("button", { type: "submit" }, "Submit");
+          const cancelBtn = el("button", { type: "button" }, "Cancel");
+          cancelBtn.onclick = (e) => {
+            e.preventDefault();
+            closeComposer();
+          };
+
+          form.appendChild(el("div", { class: "fc-actions-row" }, [submitBtn, cancelBtn]));
+          form.appendChild(statusLine);
+
+          form.onsubmit = async (e) => {
+            e.preventDefault();
+            statusLine.textContent = "Submitting…";
+            try {
+              const params = JSON.parse(paramsInput.value || "{}");
+              const context = JSON.parse(contextInput.value || "{}");
+              const res = await fetch(`${apiBase}/v1/actions`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  agent_id: agentInput.value,
+                  tool: toolSelect.value,
+                  operation: opInput.value,
+                  params,
+                  context,
+                }),
+              });
+              const action = await res.json();
+              if (!res.ok) throw new Error(action.detail || JSON.stringify(action));
+              statusLine.innerHTML = `<span class="fc-badge">Submitted</span> ${action.id} (${action.status})`;
+              // Inline follow-up buttons
+              if (action.status === "pending_approval" && action.approval_token) {
+                const approveBtn = el("button", { type: "button" }, "Approve now");
+                approveBtn.onclick = async () => {
+                  try {
+                    const r = await fetch(`${apiBase}/v1/actions/${action.id}/approval`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ token: action.approval_token, approve: true }),
+                    });
+                    if (!r.ok) throw new Error(await r.text());
+                    statusLine.innerHTML = `<span class="fc-badge">Approved</span> ${action.id}`;
+                    fetchActions();
+                  } catch (err2) {
+                    alert("Approve failed: " + err2);
+                  }
+                };
+                statusLine.appendChild(approveBtn);
+              }
+              if (action.status === "allowed" || action.status === "approved") {
+                const startBtn = el("button", { type: "button" }, "Start now");
+                startBtn.onclick = async () => {
+                  try {
+                    const r = await fetch(`${apiBase}/v1/actions/${action.id}/start`, {
+                      method: "POST",
+                    });
+                    if (!r.ok) throw new Error(await r.text());
+                    statusLine.innerHTML = `<span class="fc-badge">Started</span> ${action.id}`;
+                    fetchActions();
+                  } catch (err2) {
+                    alert("Start failed: " + err2);
+                  }
+                };
+                statusLine.appendChild(startBtn);
+              }
+              fetchActions();
+            } catch (err) {
+              statusLine.innerHTML = `<span class="fc-badge" style="background:#fee2e2;color:#991b1b;border-color:#fecaca;">Error</span> ${err}`;
+            }
+          };
+
+          composerModal.appendChild(el("h3", { text: "New Action" }));
+          composerModal.appendChild(form);
+          composerBackdrop.style.display = "flex";
+        };
+
+        const newActionBtn = el("button", { type: "button" }, "New Action");
+
+        const toolbar = el("div", { class: "fc-toolbar" }, [
+          el("h1", { text: "FaraCore Actions" }),
+          newActionBtn,
+          refreshBtn,
+          statusText,
+        ]);
+
+        host.appendChild(toolbar);
+        host.appendChild(table);
+
+        newActionBtn.onclick = openComposer;
+        refreshBtn.onclick = fetchActions;
+        fetchActions();
+      })();
+    </script>
+  </body>
+</html>

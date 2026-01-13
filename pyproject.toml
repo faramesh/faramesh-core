@@ -1,0 +1,55 @@
+[project]
+name = "faracore"
+version = "0.1.0"
+description = "FaraCore — Minimal open-core agent action governor"
+requires-python = ">=3.9"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+
+authors = [
+  { name = "FaraCore Contributors" }
+]
+
+dependencies = [
+    "fastapi >= 0.103",
+    "uvicorn[standard] >= 0.23",
+    "pydantic >= 2.0",
+    "pydantic-settings >= 2.0",
+    "pyyaml >= 6.0",
+    "requests >= 2.31",
+    "psycopg2-binary>=2.9",
+    "alembic >= 1.13",
+    "prometheus-client >= 0.19",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest >= 7.4",
+    "pytest-asyncio >= 0.21",
+    "pytest-cov >= 4.1",
+    "httpx >= 0.25",
+]
+dev = [
+    "ruff >= 0.3",
+    "flake8 >= 6.0",
+]
+cli = [
+    "rich >= 13.0",
+    "tabulate >= 0.9.0",
+    "watchdog >= 3.0",
+    "sseclient >= 0.0.27",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+faracore = "faracore.cli:main"
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

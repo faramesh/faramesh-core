@@ -1,0 +1,58 @@
+# Test policy for bonus scenarios
+# This policy demonstrates:
+# - Require approval for kubernetes operations
+# - Deny dangerous shell commands (rm -rf pattern)
+# - Deny unknown tools by default
+
+rules:
+  # Deny dangerous shell commands
+  - match:
+      tool: "shell"
+      op: "*"
+      pattern: "rm -rf|shutdown|reboot|mkfs|format"
+    deny: true
+    description: "Deny dangerous shell commands"
+
+  # Require approval for shell commands (safe ones)
+  - match:
+      tool: "shell"
+      op: "*"
+    require_approval: true
+    description: "Shell commands require approval"
+
+  # Require approval for kubernetes operations
+  - match:
+      tool: "kubernetes"
+      op: "*"
+    require_approval: true
+    description: "Kubernetes operations require approval"
+
+  # Allow safe read operations
+  - match:
+      tool: "http"
+      op: "get"
+    allow: true
+    description: "Allow HTTP GET requests"
+
+  # Deny all other actions by default (deny-by-default, must be last)
+  - match:
+      tool: "*"
+      op: "*"
+    deny: true
+    description: "Default deny rule"
+
+# Risk scoring rules
+risk:
+  rules:
+    - name: dangerous_shell
+      when:
+        tool: shell
+        operation: run
+        pattern: "rm -rf|shutdown|reboot|mkfs"
+      risk_level: high
+    - name: kubernetes_prod
+      when:
+        tool: kubernetes
+        operation: deploy
+        contains: "prod"
+      risk_level: high

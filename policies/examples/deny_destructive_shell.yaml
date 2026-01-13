@@ -1,0 +1,14 @@
+rules:
+  - match:
+      tool: "shell"
+      op: "*"
+      pattern: "rm -rf|shutdown|reboot|mkfs|:(){:|:&};:"
+    deny: true
+    description: "Block destructive shell commands"
+    risk: "high"
+
+  - match:
+      tool: "*"
+      op: "*"
+    deny: true
+    description: "Default deny"

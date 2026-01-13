@@ -1,0 +1,45 @@
+# FaraCore Default Policy
+# This is a simple example policy file
+# Rules are evaluated in order - first match wins
+
+rules:
+  # Allow safe read operations (most specific first)
+  - match:
+      tool: "http"
+      op: "get"
+    allow: true
+    description: "Allow HTTP GET requests"
+    risk: "low"
+
+  # Require approval for shell commands
+  - match:
+      tool: "shell"
+      op: "*"
+    require_approval: true
+    description: "Shell commands require approval"
+    risk: "medium"
+
+  # Deny all other actions by default (deny-by-default, must be last)
+  - match:
+      tool: "*"
+      op: "*"
+    deny: true
+    description: "Default deny rule"
+    risk: "high"
+
+# Optional: Risk scoring rules
+# These rules compute risk_level independently of policy rules
+risk:
+  rules:
+    - name: dangerous_shell
+      when:
+        tool: shell
+        operation: run
+        pattern: "rm -rf|shutdown|reboot|mkfs"
+      risk_level: high
+    - name: large_payments
+      when:
+        tool: stripe
+        operation: refund
+        amount_gt: 1000
+      risk_level: medium
