@@ -69,8 +69,8 @@ def _print_json(obj: Any) -> None:
 def _print_error(msg: str) -> None:
     """Print error message."""
     if HAS_RICH:
-        console = Console()
-        console.print(f"[red]❌ Error:[/red] {msg}", err=True)
+        console = Console(file=sys.stderr)
+        console.print(f"[red]❌ Error:[/red] {msg}")
     else:
         print(f"❌ Error: {msg}", file=sys.stderr)
 
