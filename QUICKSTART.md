@@ -1,9 +1,9 @@
-# FaraCore Quick Start
+# Faramesh Quick Start
 
 ## Installation
 
 ```bash
-cd fara-core
+cd faramesh-core
 pip install -e .
 
 # Optional: Install CLI enhancements for better output
@@ -14,7 +14,7 @@ pip install -e ".[cli]"
 
 ```bash
 # Scaffold starter layout (creates policies/ and .env.example)
-faracore init
+faramesh init
 
 # Review and customize policies/default.yaml
 # Copy .env.example to .env if needed
@@ -24,12 +24,12 @@ faracore init
 
 ```bash
 # Basic start
-faracore serve
+faramesh serve
 
 # With policy hot-reload (auto-reloads policy on file changes)
-faracore serve --hot-reload
+faramesh serve --hot-reload
 # Or use environment variable:
-# FARACORE_HOT_RELOAD=1 faracore serve
+# FARAMESH_HOT_RELOAD=1 faramesh serve
 
 # Note: Hot reload only works for local policy files. If policy reload fails,
 # the previous valid policy stays active to prevent service disruption.
@@ -53,15 +53,33 @@ The UI features:
 
 ### 1. Submit an Action (Python)
 
+**Modern Functional API:**
 ```python
-from faracore.sdk import ExecutionGovernorClient
+from faramesh import configure, submit_action
+
+configure(base_url="http://127.0.0.1:8000")
+
+response = submit_action(
+    agent_id="test-agent",
+    tool="shell",
+    operation="run",
+    params={"cmd": "echo 'Hello Faramesh'"}
+)
+
+print(f"Action ID: {response['id']}")
+print(f"Status: {response['status']}")
+```
+
+**Class-based API (Alternative):**
+```python
+from faramesh.sdk.client import ExecutionGovernorClient
 
 client = ExecutionGovernorClient("http://127.0.0.1:8000")
 
 response = client.submit_action(
     tool="shell",
     operation="run",
-    params={"cmd": "echo 'Hello FaraCore'"},
+    params={"cmd": "echo 'Hello Faramesh'"},
     context={"agent_id": "test-agent"}
 )
 
@@ -93,53 +111,53 @@ curl -X POST http://127.0.0.1:8000/v1/actions \
 
 ```bash
 # List actions (color-coded, shows risk levels)
-faracore list
-faracore list --full  # Show full UUIDs
-faracore list --json  # JSON output
+faramesh list
+faramesh list --full  # Show full UUIDs
+faramesh list --json  # JSON output
 
 # Get specific action (supports prefix matching)
-faracore get 2755d4a8
-faracore get 2755d4a8 --json
+faramesh get 2755d4a8
+faramesh get 2755d4a8 --json
 
 # Explain why action was allowed/denied
-faracore explain 2755d4a8
+faramesh explain 2755d4a8
 
 # View event timeline
-faracore events 2755d4a8
+faramesh events 2755d4a8
 
 # Approve/deny action (supports prefix matching)
-faracore approve 2755d4a8
-faracore deny 2755d4a8
+faramesh approve 2755d4a8
+faramesh deny 2755d4a8
 # Aliases:
-faracore allow 2755d4a8  # Same as approve
+faramesh allow 2755d4a8  # Same as approve
 
 # Replay an action
-faracore replay 2755d4a8
+faramesh replay 2755d4a8
 
 # Get curl commands
-faracore curl 2755d4a8
+faramesh curl 2755d4a8
 
 # Stream live actions (SSE)
-faracore tail
+faramesh tail
 ```
 
 ### 5. DX Commands
 
 ```bash
 # Initialize project structure
-faracore init
+faramesh init
 
 # Build web UI
-faracore build-ui
+faramesh build-ui
 
 # Check environment
-faracore doctor
+faramesh doctor
 
 # Compare policies
-faracore policy-diff old.yaml new.yaml
+faramesh policy-diff old.yaml new.yaml
 
 # Generate Docker setup
-faracore init-docker
+faramesh init-docker
 ```
 
 ## Policy Configuration
@@ -168,7 +186,7 @@ risk:
 
 Refresh policy:
 ```bash
-faracore policy-refresh
+faramesh policy-refresh
 ```
 
 ## Event Timeline
@@ -176,7 +194,7 @@ faracore policy-refresh
 View the complete event history for any action:
 
 ```bash
-faracore events <action-id>
+faramesh events <action-id>
 ```
 
 Or in the UI: Click any action row to see the event timeline in the detail drawer.
@@ -202,7 +220,7 @@ This tests:
 Start with demo data:
 
 ```bash
-FARACORE_DEMO=1 faracore serve
+FARAMESH_DEMO=1 faramesh serve
 ```
 
 This seeds the database with 5 sample actions if empty, making the UI immediately useful for demos.
@@ -217,42 +235,42 @@ Access UI at http://localhost:8000
 
 ## LangChain Integration
 
-See `examples/langchain/` for how to wrap LangChain tools with FaraCore governance.
+See `examples/langchain/` for how to wrap LangChain tools with Faramesh governance.
 
 ## DX Commands
 
-FaraCore includes powerful developer experience commands:
+Faramesh includes powerful developer experience commands:
 
 ```bash
 # Initialize project structure
-faracore init
+faramesh init
 
 # Check your environment
-faracore doctor
+faramesh doctor
 
 # Explain why action was allowed/denied
-faracore explain <action-id>
+faramesh explain <action-id>
 
 # Build web UI
-faracore build-ui
+faramesh build-ui
 
 # Compare policy files
-faracore policy-diff old.yaml new.yaml
+faramesh policy-diff old.yaml new.yaml
 
 # Generate Docker setup
-faracore init-docker
+faramesh init-docker
 
 # Start server with policy hot-reload
-faracore serve --watch
+faramesh serve --watch
 
 # Stream live actions
-faracore tail
+faramesh tail
 
 # Replay an action
-faracore replay <action-id>
+faramesh replay <action-id>
 ```
 
-See [DX_FEATURES.md](DX_FEATURES.md) for complete documentation.
+See `docs/CLI.md` and `docs/Policies.md` for full DX and policy details.
 
 ## Next Steps
 
@@ -263,8 +281,8 @@ See [DX_FEATURES.md](DX_FEATURES.md) for complete documentation.
 5. Use the UI to monitor and approve actions
 6. Check `/metrics` for Prometheus metrics
 7. View event timelines for audit trails
-8. Use `faracore doctor` to verify your setup
-9. Use `faracore explain` to understand policy decisions
+8. Use `faramesh doctor` to verify your setup
+9. Use `faramesh explain` to understand policy decisions
 
 ## Troubleshooting
 
@@ -279,5 +297,5 @@ See [DX_FEATURES.md](DX_FEATURES.md) for complete documentation.
 
 **Policy not working:**
 - Verify `policies/default.yaml` exists
-- Run `faracore policy-refresh`
+- Run `faramesh policy-refresh`
 - Check policy YAML syntax

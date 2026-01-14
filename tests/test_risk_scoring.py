@@ -1,7 +1,7 @@
 """Tests for risk scoring functionality."""
 
 import pytest
-from faracore.server.policy_engine import PolicyEngine
+from faramesh.server.policy_engine import PolicyEngine
 from pathlib import Path
 import tempfile
 import yaml

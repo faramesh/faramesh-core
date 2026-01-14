@@ -3,8 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Copy SDK files
-COPY src/faracore/sdk/ ./src/faracore/sdk/
-COPY src/faracore/__init__.py ./src/faracore/
+COPY src/faramesh/sdk/ ./src/faramesh/sdk/
+COPY src/faramesh/__init__.py ./src/faramesh/
 COPY pyproject.toml ./
 
 # Install minimal dependencies

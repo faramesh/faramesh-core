@@ -1,0 +1,50 @@
+name: Auto Sync Versions on Release
+
+on:
+  release:
+    types: [published]
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
+
+jobs:
+  sync-versions:
+    name: Auto Sync Versions
+    runs-on: ubuntu-latest
+    if: github.event.release.tag_name != '' || github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Extract version from release
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+            VERSION=${VERSION#v}
+          else
+            # Extract from workflow run (get tag from release workflow)
+            VERSION=$(echo "${{ github.event.workflow_run.head_branch }}" | sed 's/v//')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Trigger version sync
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'version-sync.yml',
+              ref: 'main',
+              inputs: {
+                version: '${{ steps.version.outputs.version }}',
+                repos: 'python-sdk,node-sdk'
+              }
+            })

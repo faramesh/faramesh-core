@@ -1,0 +1,31 @@
+# CODEOWNERS file for Faramesh Core
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Core maintainers - review all PRs
+* @faramesh/maintainers
+
+# Server and API
+/src/faramesh/server/ @faramesh/core-team
+
+# Policy engine
+/src/faramesh/server/policy_engine.py @faramesh/core-team
+/src/faramesh/server/models.py @faramesh/core-team
+
+# Integrations
+/src/faramesh/integrations/ @faramesh/integrations-team
+
+# CLI
+/src/faramesh/cli*.py @faramesh/core-team
+
+# Configuration files
+/pyproject.toml @faramesh/core-team
+/.github/ @faramesh/core-team
+/Dockerfile @faramesh/core-team
+
+# Documentation
+/docs/ @faramesh/docs-team
+/README.md @faramesh/core-team
+/CHANGELOG.md @faramesh/core-team
+
+# Tests
+/tests/ @faramesh/core-team

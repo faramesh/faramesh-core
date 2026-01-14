@@ -1,0 +1,9 @@
+Placeholder architecture diagram for Faramesh Core.
+
+Replace this file with a real diagram (PNG) showing:
+- Agents / SDKs
+- Faramesh API + Policy engine
+- Storage (DB + metrics)
+- Web UI / CLI (human-in-the-loop)
+- Executors / tools
+

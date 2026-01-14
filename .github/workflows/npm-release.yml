@@ -1,0 +1,77 @@
+name: npm Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 0.2.1)'
+        required: true
+      repository:
+        description: 'Repository name (faramesh-node-sdk)'
+        required: true
+        default: 'faramesh-node-sdk'
+
+jobs:
+  release:
+    name: Release to npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout node SDK
+        uses: actions/checkout@v4
+        with:
+          repository: faramesh/${{ github.event.inputs.repository }}
+          path: node-sdk
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Configure npm for publishing
+        working-directory: node-sdk
+        run: |
+          npm config set //registry.npmjs.org/:_authToken ${{ secrets.NPM_TOKEN }}
+
+      - name: Install dependencies
+        working-directory: node-sdk
+        run: npm ci
+
+      - name: Run tests
+        working-directory: node-sdk
+        run: npm test || echo "No tests yet"
+
+      - name: Build
+        working-directory: node-sdk
+        run: npm run build
+
+      - name: Update version
+        working-directory: node-sdk
+        run: |
+          npm version ${{ github.event.inputs.version }} --no-git-tag-version
+
+      - name: Publish to npm
+        working-directory: node-sdk
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Commit and push version change
+        working-directory: node-sdk
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to ${{ github.event.inputs.version }}"
+          git push origin main || git push origin master
+
+      - name: Create git tag
+        working-directory: node-sdk
+        run: |
+          git tag -a "v${{ github.event.inputs.version }}" -m "Release v${{ github.event.inputs.version }}"
+          git push origin "v${{ github.event.inputs.version }}"

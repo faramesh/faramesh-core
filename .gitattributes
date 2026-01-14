@@ -1,0 +1,5 @@
+* text=auto eol=lf
+
+# Ensure shell scripts are treated as text
+*.sh text eol=lf
+

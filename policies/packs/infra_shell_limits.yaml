@@ -1,0 +1,47 @@
+# Infrastructure Shell Limits Policy Pack
+# Use this policy for infrastructure automation where you want to allow safe commands
+# but block destructive operations and require approval for risky ones.
+
+rules:
+  # Block destructive commands completely
+  - match:
+      tool: "shell"
+      op: "*"
+      pattern: "rm -rf|shutdown|reboot|mkfs|dd if=|format"
+    deny: true
+    description: "Block destructive commands"
+    risk: "high"
+
+  # Require approval for commands that modify system state
+  - match:
+      tool: "shell"
+      op: "*"
+      pattern: "apt install|yum install|pip install|npm install|systemctl|service"
+    require_approval: true
+    description: "System modifications require approval"
+    risk: "medium"
+
+  # Allow safe read-only commands
+  - match:
+      tool: "shell"
+      op: "*"
+      pattern: "ls|cat|grep|find|ps|df|free|uptime|date|echo"
+    allow: true
+    description: "Safe read-only commands"
+    risk: "low"
+
+  # Require approval for other shell commands
+  - match:
+      tool: "shell"
+      op: "*"
+    require_approval: true
+    description: "Unknown shell commands require approval"
+    risk: "medium"
+
+  # Default deny
+  - match:
+      tool: "*"
+      op: "*"
+    deny: true
+    description: "Default deny - unknown operations"
+    risk: "high"

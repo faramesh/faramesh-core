@@ -1,15 +1,15 @@
 version: '3.8'
 
 services:
-  faracore:
+  faramesh:
     build: .
     ports:
       - "8000:8000"
     environment:
-      - FARACORE_HOST=0.0.0.0
-      - FARACORE_PORT=8000
-      - FARACORE_ENABLE_CORS=1
-      - FARACORE_DEMO=1
+      - FARAMESH_HOST=0.0.0.0
+      - FARAMESH_PORT=8000
+      - FARAMESH_ENABLE_CORS=1
+      - FARAMESH_DEMO=1
       - FARA_POLICY_FILE=policies/default.yaml
     volumes:
       - ./data:/app/data
@@ -25,8 +25,8 @@ services:
       context: .
       dockerfile: Dockerfile.demo
     depends_on:
-      - faracore
+      - faramesh
     environment:
-      - FARA_API_BASE=http://faracore:8000
+      - FARA_API_BASE=http://faramesh:8000
       - FARA_AGENT_ID=demo-agent
     command: python /app/demo_agent.py

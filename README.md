@@ -18,6 +18,10 @@ Faramesh OSS is the engine, Nexus and Horizon are the accelerators.
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-Elastic%202.0-orange.svg)](LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/faramesh.svg)](https://pypi.org/project/faramesh/)
+[![CI](https://github.com/faramesh/faramesh-core/workflows/CI/badge.svg)](https://github.com/faramesh/faramesh-core/actions)
+[![codecov](https://codecov.io/gh/faramesh/faramesh-core/branch/main/graph/badge.svg)](https://codecov.io/gh/faramesh/faramesh-core)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io%2Ffaramesh%2Ffaramesh--core-blue)](https://github.com/faramesh/faramesh-core/pkgs/container/faramesh-core)
 
 ## Features
 
@@ -41,8 +45,10 @@ faramesh serve
 
 SDKs:
 
-- Python: `pip install faramesh`
-- Node: `npm install @faramesh/sdk`
+- **Python SDK**: `pip install faramesh-sdk` (optional - for advanced SDK features)
+- **Node SDK**: `npm install @faramesh/sdk` (optional - for Node.js/TypeScript)
+
+**Note:** Framework integrations work with just `pip install faramesh` - no SDK package needed!
 
 See `docs/Quickstart.md` for a step‑by‑step guide.
 
@@ -56,7 +62,7 @@ See `docs/Quickstart.md` for a step‑by‑step guide.
 - [CLI Usage](#cli-usage)
 - [Web UI](#web-ui)
 - [SDK Integration](#sdk-integration)
-- [LangChain Integration](#langchain-integration)
+- [Framework Integrations](#framework-integrations)
 - [Docker Deployment](#docker-deployment)
 - [API Reference](#api-reference)
 - [Environment Variables](#environment-variables)
@@ -76,7 +82,7 @@ See `docs/Quickstart.md` for a step‑by‑step guide.
 ### Install from Source
 
 ```bash
-git clone https://github.com/yourorg/faramesh.git
+git clone https://github.com/faramesh/faramesh-core.git
 cd faramesh
 pip install -e .
 ```
@@ -120,6 +126,25 @@ The UI provides:
 ### 3. Submit Your First Action
 
 **Python SDK:**
+```python
+from faramesh import configure, submit_action
+
+# Configure client (or use environment variables)
+configure(base_url="http://127.0.0.1:8000")
+
+# Submit action
+action = submit_action(
+    agent_id="my-agent",
+    tool="shell",
+    operation="run",
+    params={"cmd": "echo 'Hello Faramesh'"}
+)
+
+print(f"Status: {action['status']}")
+print(f"Risk Level: {action.get('risk_level')}")
+```
+
+**Alternative (Class-based API):**
 ```python
 from faramesh.sdk.client import ExecutionGovernorClient
 
@@ -599,13 +624,44 @@ Each event includes:
 
 ### Python SDK
 
+**Modern Functional API:**
+```python
+from faramesh import configure, submit_action, get_action, start_action, wait_for_completion
+
+# Configure client
+configure(base_url="http://127.0.0.1:8000")
+
+# Submit action
+action = submit_action(
+    agent_id="my-agent",
+    tool="shell",
+    operation="run",
+    params={"cmd": "echo 'Hello World'"}
+)
+
+# Check status
+print(f"Status: {action['status']}")
+print(f"Risk Level: {action.get('risk_level')}")
+print(f"Decision: {action.get('decision')}")
+
+# If pending approval, wait for completion
+if action['status'] == 'pending_approval':
+    final = wait_for_completion(action['id'])
+    print(f"Final status: {final['status']}")
+
+# Start execution and wait for result
+if action['status'] in ('allowed', 'approved'):
+    start_action(action['id'])
+    result = wait_for_completion(action['id'])
+    print(f"Execution result: {result.get('result')}")
+```
+
+**Class-based API (Legacy):**
 ```python
 from faramesh.sdk.client import ExecutionGovernorClient
 
-# Initialize client
 client = ExecutionGovernorClient("http://127.0.0.1:8000")
 
-# Submit action
 action = client.submit_action(
     tool="shell",
     operation="run",
@@ -615,10 +671,8 @@ action = client.submit_action(
 
 # Check status
 print(f"Status: {action['status']}")
-print(f"Risk Level: {action.get('risk_level')}")
-print(f"Decision: {action.get('decision')}")
 
-# If pending approval, wait and check
+# Wait for approval if needed
 if action['status'] == 'pending_approval':
     import time
     while True:
@@ -629,11 +683,7 @@ if action['status'] == 'pending_approval':
     print(f"Final status: {updated['status']}")
 
 # Report result
-client.report_result(
-    action['id'],
-    success=True,
-    error=None
-)
+client.report_result(action['id'], success=True, error=None)
 ```
 
 ### Node.js SDK
@@ -717,7 +767,7 @@ response = agent.run("List files in /tmp and fetch a URL")
 4. **Execute**: Only executes if allowed/approved
 5. **Report**: Reports result back to Faramesh
 
-See `examples/langchain/` for complete examples.
+See [`examples/langchain/`](examples/langchain/) for a complete runnable demo with HTTP and shell tools.
 
 ## Docker Deployment
 
@@ -924,7 +974,20 @@ cp .env.example .env
 # Faramesh automatically reads .env if python-dotenv is installed
 ```
 
-## Examples
+## Examples & Starter Kits
+
+### Quick Links
+
+- **[Framework Integrations](docs/INTEGRATIONS.md)** - One-line governance for LangChain, CrewAI, AutoGen, MCP, LangGraph, LlamaIndex
+- **[LangChain Integration Demo](examples/langchain/)** - Runnable demo showing how to wrap LangChain tools with Faramesh governance
+- **[CrewAI Integration](examples/crewai/)** - One-line governance for CrewAI agents
+- **[AutoGen Integration](examples/autogen/)** - One-line governance for AutoGen function calling
+- **[MCP Integration](examples/mcp/)** - One-line governance for MCP tools
+- **[LangGraph Integration](examples/langgraph/)** - Simple graph nodes with Faramesh governance
+- **[LlamaIndex Integration](examples/llamaindex/)** - Tool wrapping for LlamaIndex agents
+- **[Docker Compose with Demo Agent](docker-compose.yaml)** - One-click setup with continuous demo agent
+- **[Policy Packs](policies/packs/)** - Ready-to-use policy templates for common scenarios
+- **[Govern Your Own Tool Tutorial](docs/govern-your-own-tool.md)** - Step-by-step guide to wrapping custom tools
 
 ### Example 1: Basic Agent Integration
 
@@ -1059,7 +1122,7 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 
 ```bash
 # Clone repository
-git clone https://github.com/yourorg/faramesh.git
+git clone https://github.com/faramesh/faramesh-core.git
 cd faramesh
 
 # Install in development mode
@@ -1137,8 +1200,8 @@ If installation fails, upgrade pip: `python3 -m pip install --upgrade pip`
 ## Support
 
 - **Documentation**: [docs/](docs/)
-- **Issues**: [GitHub Issues](https://github.com/yourorg/faramesh/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourorg/faramesh/discussions)
+- **Issues**: [GitHub Issues](https://github.com/faramesh/faramesh-core/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/faramesh/faramesh-core/discussions)
 
 ---
 
@@ -1378,6 +1441,8 @@ Faramesh focuses specifically on governance and safety—it doesn't build agents
 ### Do I need to modify my existing agents?
 
 No. Faramesh integrates via SDKs that wrap your existing tools. Your agents call the SDK instead of tools directly, and Faramesh handles the governance layer transparently.
+
+See [Govern Your Own Tool](docs/govern-your-own-tool.md) for a step-by-step tutorial on wrapping custom tools.
 
 ### What happens if Faramesh is down?
 

@@ -1,6 +1,6 @@
 import pytest
 
-from faracore.server.policy_engine import PolicyEngine
+from faramesh.server.policy_engine import PolicyEngine
 
 
 def test_policy_validation_rejects_bad_structure(tmp_path):

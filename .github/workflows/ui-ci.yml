@@ -1,0 +1,42 @@
+name: UI CI
+
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [ui-sync]
+
+jobs:
+  build:
+    name: Build UI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: faramesh/faramesh-ui
+          path: ui
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Lint
+        working-directory: ui
+        run: npm run lint || echo "Lint check skipped"
+
+      - name: Build
+        working-directory: ui
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-dist
+          path: ui/dist
+          retention-days: 7

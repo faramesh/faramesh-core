@@ -1,0 +1,105 @@
+name: Version Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to sync (e.g., 0.2.1)'
+        required: true
+      repos:
+        description: 'Comma-separated list of repos to update (python-sdk,node-sdk,ui)'
+        required: true
+        default: 'python-sdk,node-sdk'
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  sync-versions:
+    name: Sync Versions Across Repos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout core
+        uses: actions/checkout@v4
+        with:
+          path: faramesh-core
+
+      - name: Extract version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            echo "repos=${{ github.event.inputs.repos }}" >> $GITHUB_OUTPUT
+          else
+            # Extract from tag (e.g., v0.2.1 -> 0.2.1)
+            VERSION=${GITHUB_REF#refs/tags/v}
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "repos=python-sdk,node-sdk" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Parse inputs
+        id: parse
+        run: |
+          echo "version=${{ steps.version.outputs.version }}" >> $GITHUB_OUTPUT
+          echo "repos=${{ steps.version.outputs.repos }}" >> $GITHUB_OUTPUT
+
+      - name: Update Python SDK version
+        if: contains(github.event.inputs.repos, 'python-sdk')
+        uses: actions/checkout@v4
+        with:
+          repository: faramesh/faramesh-python-sdk
+          path: faramesh-python-sdk
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Node SDK version
+        if: contains(steps.parse.outputs.repos, 'node-sdk')
+        uses: actions/checkout@v4
+        with:
+          repository: faramesh/faramesh-node-sdk
+          path: faramesh-node-sdk
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update Python SDK pyproject.toml
+        if: contains(github.event.inputs.repos, 'python-sdk')
+        working-directory: faramesh-python-sdk
+        run: |
+          sed -i 's/^version = ".*"/version = "${{ github.event.inputs.version }}"/' pyproject.toml
+          sed -i 's/^__version__ = ".*"/__version__ = "${{ github.event.inputs.version }}"/' faramesh/__init__.py || true
+
+      - name: Update Node SDK package.json
+        if: contains(github.event.inputs.repos, 'node-sdk')
+        working-directory: faramesh-node-sdk
+        run: |
+          npm version ${{ github.event.inputs.version }} --no-git-tag-version
+
+      - name: Create PR for Python SDK
+        if: contains(github.event.inputs.repos, 'python-sdk')
+        working-directory: faramesh-python-sdk
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b sync-version-${{ github.event.inputs.version }}
+          git add pyproject.toml faramesh/__init__.py
+          git commit -m "chore: sync version to ${{ github.event.inputs.version }}"
+          git push origin sync-version-${{ github.event.inputs.version }}
+          gh pr create --title "Sync version to ${{ github.event.inputs.version }}" --body "Automated version sync from faramesh-core" --base main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create PR for Node SDK
+        if: contains(github.event.inputs.repos, 'node-sdk')
+        working-directory: faramesh-node-sdk
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b sync-version-${{ github.event.inputs.version }}
+          git add package.json package-lock.json
+          git commit -m "chore: sync version to ${{ github.event.inputs.version }}"
+          git push origin sync-version-${{ github.event.inputs.version }}
+          gh pr create --title "Sync version to ${{ github.event.inputs.version }}" --body "Automated version sync from faramesh-core" --base main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

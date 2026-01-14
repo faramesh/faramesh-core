@@ -1,0 +1,49 @@
+name: Policy Validation
+
+on:
+  pull_request:
+    branches: [ main, master ]
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'policies/**'
+      - '.github/workflows/faramesh-policy-check.yml'
+
+jobs:
+  validate-policies:
+    name: Validate Policy Files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Faramesh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[cli]"
+
+      - name: Validate default policy
+        run: |
+          if [ -f "policies/default.yaml" ]; then
+            faramesh policy-validate policies/default.yaml
+          else
+            echo "Warning: policies/default.yaml not found"
+          fi
+
+      - name: Validate all policy files
+        run: |
+          echo "Validating all YAML files in policies/..."
+          find policies -name "*.yaml" -o -name "*.yml" | while read policy_file; do
+            echo "Validating: $policy_file"
+            if ! faramesh policy-validate "$policy_file"; then
+              echo "❌ Validation failed for $policy_file"
+              exit 1
+            fi
+          done
+          echo "✅ All policy files validated successfully"

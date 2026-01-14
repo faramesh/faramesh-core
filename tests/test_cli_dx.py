@@ -10,7 +10,7 @@ import sys
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from faracore.cli import (
+from faramesh.cli import (
     cmd_init,
     cmd_explain,
     cmd_build_ui,
@@ -23,7 +23,7 @@ from faracore.cli import (
 
 
 def test_init_command(tmp_path, monkeypatch):
-    """Test faracore init command."""
+    """Test faramesh init command."""
     monkeypatch.chdir(tmp_path)
     
     # Create args
@@ -46,7 +46,7 @@ def test_init_command(tmp_path, monkeypatch):
 
 
 def test_init_with_force(tmp_path, monkeypatch):
-    """Test faracore init --force overwrites existing files."""
+    """Test faramesh init --force overwrites existing files."""
     monkeypatch.chdir(tmp_path)
     
     # Create existing file
@@ -65,7 +65,7 @@ def test_init_with_force(tmp_path, monkeypatch):
 
 
 def test_doctor_command_success(monkeypatch, tmp_path):
-    """Test faracore doctor with good environment."""
+    """Test faramesh doctor with good environment."""
     # Mock good environment
     import sys as sys_module
     monkeypatch.setattr(sys_module, "version_info", (3, 9, 0))
@@ -153,7 +153,7 @@ def test_policy_diff_different(tmp_path):
 
 
 def test_init_docker(tmp_path, monkeypatch):
-    """Test faracore init-docker command."""
+    """Test faramesh init-docker command."""
     monkeypatch.chdir(tmp_path)
     
     class Args:
@@ -168,8 +168,8 @@ def test_init_docker(tmp_path, monkeypatch):
     
     # Verify content
     compose_content = (tmp_path / "docker-compose.yaml").read_text()
-    assert "faracore:" in compose_content
-    assert "FARACORE_DEMO" in compose_content
+    assert "faramesh:" in compose_content
+    assert "FARAMESH_DEMO" in compose_content
 
 
 def test_cli_parser_includes_new_commands():
@@ -217,7 +217,7 @@ def test_token_commands(tmp_path):
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     
-    from faracore.cli_token import cmd_token_create, cmd_token_list, cmd_token_revoke, _load_tokens
+    from faramesh.cli_token import cmd_token_create, cmd_token_list, cmd_token_revoke, _load_tokens
     
     # Create a test token
     class CreateArgs:
@@ -252,7 +252,7 @@ def test_policy_commands(tmp_path):
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     
-    from faracore.cli import cmd_policy_validate, cmd_policy_test
+    from faramesh.cli import cmd_policy_validate, cmd_policy_test
     
     # Create a valid policy file
     policy_file = tmp_path / "test_policy.yaml"
@@ -304,7 +304,7 @@ def test_policy_new_command(tmp_path, monkeypatch):
     
     monkeypatch.chdir(tmp_path)
     
-    from faracore.cli import cmd_policy_new
+    from faramesh.cli import cmd_policy_new
     
     # Create policies/user directory structure
     (tmp_path / "policies").mkdir()

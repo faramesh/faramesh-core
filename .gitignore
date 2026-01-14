@@ -1,14 +1,57 @@
+# Python
 __pycache__/
-.pytest_cache/
-.venv/
-.venv.backup/
 *.pyc
-*.pyo
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Specific egg-info directories
+src/faracore.egg-info/
+src/faramesh.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Environment / secrets
+.env
+.env.*
 *.log
+
+# Database
 *.sqlite
 *.db
 data/
+
+# Node.js (if any)
 node_modules/
-dist/
-build/
-*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Internal development
+offline/
+*.tmp
+*.bak
+

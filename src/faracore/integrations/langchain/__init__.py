@@ -1,1 +1,0 @@
-# LangChain integration for FaraCore

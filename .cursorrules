@@ -1,0 +1,34 @@
+# Cursor Rules for Faramesh Core
+
+## Git Operations
+
+When the user asks to commit, push, or release:
+
+1. **Quick Push**: Use `./scripts/quick-push.sh "message"` or `make push MSG="message"`
+2. **Quick Release**: Use `./scripts/quick-release.sh VERSION "notes"` or `make release VERSION=x.y.z`
+3. **Always check status first**: `make status` or `git status`
+
+## Code Style
+
+- Use ruff for linting and formatting
+- Follow PEP 8 with 100 char line length
+- Use type hints where possible
+- Run `make lint` before committing
+
+## Testing
+
+- Run `make test` before pushing
+- Write tests for new features
+- Keep test coverage high
+
+## Commits
+
+- Use conventional commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`
+- Write clear, descriptive commit messages
+- Keep commits focused (one logical change per commit)
+
+## Releases
+
+- Use semantic versioning (MAJOR.MINOR.PATCH)
+- Update CHANGELOG.md with release notes
+- Tag releases with `v` prefix (e.g., `v0.2.1`)

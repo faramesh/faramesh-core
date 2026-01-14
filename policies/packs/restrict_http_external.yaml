@@ -1,0 +1,45 @@
+# Restrict HTTP External Policy Pack
+# Use this policy to allow internal API calls but require approval for external HTTP requests.
+# Useful for preventing data exfiltration or unauthorized API usage.
+
+rules:
+  # Allow internal/localhost requests automatically
+  - match:
+      tool: "http"
+      op: "*"
+      path_contains: "localhost"
+    allow: true
+    description: "Internal requests are safe"
+    risk: "low"
+
+  - match:
+      tool: "http"
+      op: "*"
+      path_contains: "127.0.0.1"
+    allow: true
+    description: "Local requests are safe"
+    risk: "low"
+
+  - match:
+      tool: "http"
+      op: "*"
+      path_contains: "internal"
+    allow: true
+    description: "Internal domain requests"
+    risk: "low"
+
+  # Require approval for external HTTP requests
+  - match:
+      tool: "http"
+      op: "*"
+    require_approval: true
+    description: "External HTTP requests require approval"
+    risk: "medium"
+
+  # Default deny
+  - match:
+      tool: "*"
+      op: "*"
+    deny: true
+    description: "Default deny - unknown operations"
+    risk: "high"

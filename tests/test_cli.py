@@ -10,7 +10,7 @@ from conftest import run_server
 
 def _run_cli(args, env, cwd):
     result = subprocess.run(
-        ["python3", "-m", "faracore.cli", *args],
+        ["python3", "-m", "faramesh.cli", *args],
         env=env,
         cwd=cwd,
         capture_output=True,

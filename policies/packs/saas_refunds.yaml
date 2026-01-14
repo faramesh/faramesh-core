@@ -1,0 +1,37 @@
+# SaaS Refunds Policy Pack
+# Use this policy when your agent handles refunds, cancellations, or payment operations.
+# Requires approval for refunds over $100, allows smaller refunds automatically.
+
+rules:
+  # Require approval for large refunds
+  - match:
+      tool: "stripe"
+      op: "refund"
+      amount_gt: 100
+    require_approval: true
+    description: "Large refunds require approval"
+    risk: "high"
+
+  # Allow small refunds automatically
+  - match:
+      tool: "stripe"
+      op: "refund"
+      amount_lte: 100
+    allow: true
+    description: "Small refunds are safe"
+    risk: "low"
+
+  # Allow other Stripe operations
+  - match:
+      tool: "stripe"
+      op: "*"
+    allow: true
+    risk: "low"
+
+  # Default deny
+  - match:
+      tool: "*"
+      op: "*"
+    deny: true
+    description: "Default deny - unknown operations"
+    risk: "high"

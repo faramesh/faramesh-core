@@ -1,13 +1,13 @@
 [project]
-name = "faracore"
-version = "0.1.0"
-description = "FaraCore — Minimal open-core agent action governor"
+name = "faramesh"
+version = "0.2.0"
+description = "Faramesh — Minimal open-core agent action governor"
 requires-python = ">=3.9"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = { text = "Elastic License 2.0" }
 
 authors = [
-  { name = "FaraCore Contributors" }
+  { name = "Faramesh Contributors" }
 ]
 
 dependencies = [
@@ -32,6 +32,8 @@ test = [
 dev = [
     "ruff >= 0.3",
     "flake8 >= 6.0",
+    "mypy >= 1.0",
+    "types-requests",
 ]
 cli = [
     "rich >= 13.0",
@@ -44,7 +46,7 @@ cli = [
 where = ["src"]
 
 [project.scripts]
-faracore = "faracore.cli:main"
+faramesh = "faramesh.cli:main"
 
 [build-system]
 requires = ["setuptools>=64", "wheel"]
@@ -53,3 +55,30 @@ build-backend = "setuptools.build_meta"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+addopts = "--cov=src/faramesh --cov-report=xml --cov-report=term"
+
+[tool.coverage.run]
+source = ["src/faramesh"]
+omit = ["*/tests/*", "*/test_*.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

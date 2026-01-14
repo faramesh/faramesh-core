@@ -1,0 +1,84 @@
+Elastic License 2.0
+
+Copyright (c) 2024 Faramesh Contributors
+
+This Elastic License 2.0 (the "License") sets forth the terms on which the
+software identified above ("Software") may be used. Any use of the Software
+other than as expressly set forth herein is prohibited.
+
+1. Grant of Rights
+
+   Subject to the terms of this License, you are granted a non-exclusive,
+   non-transferable, non-sublicensable, limited license to use, copy,
+   distribute, make available, and prepare derivative works of the Software,
+   in each case solely for your internal business purposes or for the purpose
+   of developing, testing, or running your applications and services.
+
+2. Restrictions
+
+   You may not:
+
+   (a) provide the Software to third parties as a managed, hosted, or
+       network-accessible service where the primary value of the service is
+       the Software itself;
+
+   (b) sell, offer for sale, or otherwise make the Software available as a
+       product or service that competes with the Software or any substantially
+       similar product or service offered by the licensor; or
+
+   (c) remove, obscure, or alter any copyright, trademark, or other
+       proprietary notices contained in the Software.
+
+3. Compliance with Laws
+
+   You must comply with all applicable laws and regulations, including export
+   control laws and regulations of the United States and other relevant
+   jurisdictions, in your use of the Software.
+
+4. No Trademark License
+
+   This License does not grant you any right in or to any trademarks, service
+   marks, or trade names of the licensor or its affiliates.
+
+5. Disclaimer of Warranty
+
+   THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTY OF ANY KIND, WHETHER
+   EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE, INCLUDING WITHOUT LIMITATION ANY
+   WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, OR
+   NON-INFRINGEMENT. THE ENTIRE RISK ARISING OUT OF THE USE OR PERFORMANCE OF
+   THE SOFTWARE REMAINS WITH YOU.
+
+6. Limitation of Liability
+
+   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
+   LICENSOR OR ITS AFFILIATES BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
+   SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS OR
+   REVENUE, ARISING OUT OF OR IN CONNECTION WITH THIS LICENSE OR THE USE OR
+   INABILITY TO USE THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+   DAMAGES.
+
+7. Termination
+
+   This License is effective until terminated. Your rights under this License
+   will terminate automatically without notice if you fail to comply with any
+   term(s) of this License. Upon termination, you must cease all use of the
+   Software and destroy all copies in your possession or control.
+
+8. Third-Party Components
+
+   The Software may include or be distributed with third-party software
+   components that are separately licensed. Your use of such components is
+   subject to the terms and conditions of the applicable third-party licenses.
+
+9. Governing Law
+
+   This License shall be governed by and construed in accordance with the
+   laws of the State of California, without regard to its conflict of laws
+   principles.
+
+10. Entire Agreement
+
+   This License constitutes the entire agreement between you and the licensor
+   with respect to the Software and supersedes all prior or contemporaneous
+   understandings regarding such subject matter.
+

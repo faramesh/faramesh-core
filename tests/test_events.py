@@ -1,8 +1,8 @@
 """Tests for event ledger functionality."""
 
 import pytest
-from faracore.server.storage import SQLiteStore
-from faracore.server.models import Action, Status, Decision
+from faramesh.server.storage import SQLiteStore
+from faramesh.server.models import Action, Status, Decision
 from datetime import datetime
 import uuid
 

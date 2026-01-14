@@ -1,6 +1,6 @@
-# FaraCore Integration Guide
+# Faramesh Integration Guide
 
-Complete guide for integrating FaraCore v0.2 features into your AI agent workflows.
+Complete guide for integrating Faramesh v0.2 features into your AI agent workflows.
 
 ## Table of Contents
 
@@ -15,9 +15,9 @@ Complete guide for integrating FaraCore v0.2 features into your AI agent workflo
 
 ## Quick Integration Checklist
 
-- [ ] Install FaraCore: `pip install -e .`
+- [ ] Install Faramesh: `pip install -e .`
 - [ ] Configure policy with risk rules
-- [ ] Start server: `faracore serve`
+- [ ] Start server: `faramesh serve`
 - [ ] Integrate SDK into agent code
 - [ ] Test with sample actions
 - [ ] Verify events are created
@@ -51,7 +51,7 @@ risk:
 ### 2. Check Risk Level in Code
 
 ```python
-from faracore.sdk.client import ExecutionGovernorClient
+from faramesh.sdk.client import ExecutionGovernorClient
 
 client = ExecutionGovernorClient("http://127.0.0.1:8000")
 
@@ -73,8 +73,8 @@ if risk_level == "high":
 ### 3. Display in UI
 
 Risk levels are automatically displayed in:
-- Action table (CLI: `faracore list`)
-- Action details (CLI: `faracore get <id>`)
+- Action table (CLI: `faramesh list`)
+- Action details (CLI: `faramesh get <id>`)
 - Web UI action detail drawer
 
 ## Event Timeline Integration
@@ -106,10 +106,10 @@ for event in events:
 
 ```bash
 # View event timeline
-faracore events <action-id>
+faramesh events <action-id>
 
 # JSON output
-faracore events <action-id> --json
+faramesh events <action-id> --json
 ```
 
 ### 4. Access Events via UI
@@ -153,28 +153,28 @@ The UI is built with React/TypeScript. To customize:
 
 1. **Risk Level in List**
    ```bash
-   faracore list
+   faramesh list
    # Shows: ID | Status | Risk | Tool | Operation | Params | Created
    ```
 
 2. **Risk Level in Get**
    ```bash
-   faracore get <id>
+   faramesh get <id>
    # Shows risk_level field
    ```
 
 3. **Event Timeline**
    ```bash
-   faracore events <id>
+   faramesh events <id>
    # Pretty-printed timeline
    ```
 
 4. **Prefix Matching**
    ```bash
    # All commands support 8+ char prefixes
-   faracore get 2755d4a8
-   faracore events 2755d4a8
-   faracore approve 2755d4a8
+   faramesh get 2755d4a8
+   faramesh events 2755d4a8
+   faramesh approve 2755d4a8
    ```
 
 ### CLI Output Examples
@@ -208,8 +208,8 @@ Event Timeline - 2755d4a8
 
 ```python
 from langchain.tools import ShellTool
-from faracore.sdk.client import ExecutionGovernorClient
-from faracore.integrations.langchain.governed_tool import GovernedTool
+from faramesh.sdk.client import ExecutionGovernorClient
+from faramesh.integrations.langchain.governed_tool import GovernedTool
 
 # Initialize
 client = ExecutionGovernorClient("http://127.0.0.1:8000")
@@ -251,7 +251,7 @@ response = agent.run("List files and fetch a URL")
 ### How It Works
 
 1. Tool call intercepted
-2. Submitted to FaraCore
+2. Submitted to Faramesh
 3. Policy evaluated + risk computed
 4. If pending approval, polls until resolved
 5. Executes only if allowed/approved
@@ -275,15 +275,15 @@ Edit `docker-compose.yaml`:
 
 ```yaml
 services:
-  faracore:
+  faramesh:
     build: .
     ports:
       - "8000:8000"
     environment:
-      - FARACORE_DEMO=1          # Seed demo data
-      - FARACORE_ENABLE_CORS=1    # Enable CORS
-      - FARACORE_HOST=0.0.0.0     # Bind address
-      - FARACORE_PORT=8000        # Port
+      - FARAMESH_DEMO=1          # Seed demo data
+      - FARAMESH_ENABLE_CORS=1    # Enable CORS
+      - FARAMESH_HOST=0.0.0.0     # Bind address
+      - FARAMESH_PORT=8000        # Port
       - FARA_POLICY_FILE=/app/policies/custom.yaml
     volumes:
       - ./policies:/app/policies  # Mount custom policies
@@ -293,11 +293,11 @@ services:
 ### Build Custom Image
 
 ```bash
-docker build -t my-faracore .
+docker build -t my-faramesh .
 docker run -p 8000:8000 \
-  -e FARACORE_DEMO=1 \
+  -e FARAMESH_DEMO=1 \
   -v $(pwd)/policies:/app/policies \
-  my-faracore
+  my-faramesh
 ```
 
 ## Testing Your Integration
@@ -333,7 +333,7 @@ assert events[0]['event_type'] == 'created'
 
 ### 3. Test UI
 
-1. Start server: `faracore serve`
+1. Start server: `faramesh serve`
 2. Open `http://127.0.0.1:8000`
 3. Submit action via SDK
 4. Verify:
@@ -346,15 +346,15 @@ assert events[0]['event_type'] == 'created'
 
 ```bash
 # List actions
-faracore list
+faramesh list
 # Verify risk column appears
 
 # Get action
-faracore get <id>
+faramesh get <id>
 # Verify risk_level field
 
 # View events
-faracore events <id>
+faramesh events <id>
 # Verify timeline displayed
 ```
 
@@ -384,7 +384,7 @@ except PermissionError as e:
 
 - Check policy has risk rules defined
 - Verify risk rule conditions match your actions
-- Check policy file is loaded: `faracore policy-validate policies/default.yaml`
+- Check policy file is loaded: `faramesh policy-validate policies/default.yaml`
 
 ### UI Not Updating
 
@@ -394,8 +394,8 @@ except PermissionError as e:
 
 ### CLI Not Showing Risk
 
-- Update FaraCore: `pip install -e . --upgrade`
-- Check action has risk_level: `faracore get <id> --json`
+- Update Faramesh: `pip install -e . --upgrade`
+- Check action has risk_level: `faramesh get <id> --json`
 
 ## Next Steps
 

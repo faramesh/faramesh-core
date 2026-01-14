@@ -1,34 +1,49 @@
+# Multi-stage Dockerfile for Faramesh Core
+FROM python:3.11-slim as builder
+
+WORKDIR /build
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python dependencies
+COPY pyproject.toml ./
+RUN pip install --no-cache-dir build wheel && \
+    python -m pip install --upgrade pip
+
+# Copy source and build package
+COPY . .
+RUN python -m build && \
+    pip install --no-cache-dir dist/*.whl
+
+# Runtime stage
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy project files
-COPY pyproject.toml ./
-COPY src/ ./src/
-COPY policies/ ./policies/
-COPY alembic.ini ./
-COPY alembic/ ./alembic/
+# Copy installed package from builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -e .
+# Create non-root user
+RUN useradd -m -u 1000 faramesh && \
+    chown -R faramesh:faramesh /app
 
-# Create data directory
-RUN mkdir -p /app/data
+USER faramesh
 
 # Expose port
 EXPOSE 8000
 
-# Set environment variables with defaults
-ENV FARACORE_HOST=0.0.0.0
-ENV FARACORE_PORT=8000
-ENV FARACORE_ENABLE_CORS=1
-ENV FARA_DB_BACKEND=sqlite
-ENV FARA_SQLITE_PATH=/app/data/actions.db
+# Health check (using /metrics endpoint as health check)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/metrics', timeout=2)" || exit 1
 
-# Run migrations and start server
-CMD ["sh", "-c", "faracore migrate && faracore serve --host ${FARACORE_HOST} --port ${FARACORE_PORT}"]
+# Default command
+CMD ["faramesh", "serve", "--host", "0.0.0.0", "--port", "8000"]

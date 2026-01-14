@@ -1,0 +1,58 @@
+# Marketing Bot Policy Pack
+# Use this policy for marketing automation agents that need to post content,
+# send emails, or update social media. Requires approval for sensitive operations.
+
+rules:
+  # Allow read-only operations
+  - match:
+      tool: "http"
+      op: "get"
+    allow: true
+    description: "HTTP GET requests are safe"
+    risk: "low"
+
+  # Require approval for posting/updating content
+  - match:
+      tool: "http"
+      op: "post"
+    require_approval: true
+    description: "Content posting requires approval"
+    risk: "medium"
+
+  - match:
+      tool: "http"
+      op: "put"
+    require_approval: true
+    description: "Content updates require approval"
+    risk: "medium"
+
+  - match:
+      tool: "http"
+      op: "patch"
+    require_approval: true
+    description: "Content modifications require approval"
+    risk: "medium"
+
+  # Block deletions
+  - match:
+      tool: "http"
+      op: "delete"
+    deny: true
+    description: "Content deletion is blocked"
+    risk: "high"
+
+  # Allow email sending with approval
+  - match:
+      tool: "email"
+      op: "*"
+    require_approval: true
+    description: "Email sending requires approval"
+    risk: "medium"
+
+  # Default deny
+  - match:
+      tool: "*"
+      op: "*"
+    deny: true
+    description: "Default deny - unknown operations"
+    risk: "high"

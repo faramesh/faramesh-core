@@ -30,7 +30,7 @@ def _wait_for_ready(base_url: str, timeout: float = 15.0) -> None:
 
 @contextmanager
 def run_server(tmp_path: Path, policy_text: str, auth_token: Optional[str] = None):
-    """Run the FaraCore server in a subprocess for integration tests."""
+    """Run the Faramesh server in a subprocess for integration tests."""
     policy_file = tmp_path / "policy.yaml"
     policy_file.write_text(policy_text)
     db_path = tmp_path / "actions.db"
@@ -54,7 +54,7 @@ def run_server(tmp_path: Path, policy_text: str, auth_token: Optional[str] = Non
         "python3",
         "-m",
         "uvicorn",
-        "faracore.server.main:app",
+        "faramesh.server.main:app",
         "--host",
         "127.0.0.1",
         "--port",
