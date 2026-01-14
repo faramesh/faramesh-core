@@ -2,25 +2,28 @@
 
 from __future__ import annotations
 
-import argparse
 import json
-import os
 import sys
-from typing import Any, Optional, Dict
-
-import requests
+from typing import Any, Dict
 
 from .cli import (
-    _get_base_url, _get_auth_token, _make_request, _print_error, 
-    _print_success, _truncate_uuid, _find_action_by_prefix, _handle_request_error,
-    _format_table, _print_json, HAS_RICH, HAS_TABULATE
+    HAS_RICH,
+    _find_action_by_prefix,
+    _get_auth_token,
+    _get_base_url,
+    _handle_request_error,
+    _make_request,
+    _print_error,
+    _print_json,
+    _print_success,
+    _truncate_uuid,
 )
 
 if HAS_RICH:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.panel import Panel
     from rich import box
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
 
 
 def _parse_params(params_list: list[str]) -> Dict[str, Any]:
@@ -190,7 +193,7 @@ def cmd_action_approve(args):
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
         action_id = args.id
-    except:
+    except Exception:
         matches = _find_action_by_prefix(base_url, args.id, token)
         if len(matches) == 0:
             _print_error(f"No action found matching '{args.id}'")
@@ -251,7 +254,7 @@ def cmd_action_deny(args):
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
         action_id = args.id
-    except:
+    except Exception:
         matches = _find_action_by_prefix(base_url, args.id, token)
         if len(matches) == 0:
             _print_error(f"No action found matching '{args.id}'")
@@ -310,7 +313,7 @@ def cmd_action_start(args):
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
         action_id = args.id
-    except:
+    except Exception:
         matches = _find_action_by_prefix(base_url, args.id, token)
         if len(matches) == 0:
             _print_error(f"No action found matching '{args.id}'")
@@ -349,7 +352,7 @@ def cmd_action_replay(args):
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
         action_id = args.id
-    except:
+    except Exception:
         matches = _find_action_by_prefix(base_url, args.id, token)
         if len(matches) == 0:
             _print_error(f"No action found matching '{args.id}'")

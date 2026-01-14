@@ -8,7 +8,7 @@ submits them to Faramesh for governance, and waits for approval before execution
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Optional, Callable
+from typing import Any, Dict
 
 # Use minimal client from integrations module (no external SDK needed)
 from .._client import ExecutionGovernorClient

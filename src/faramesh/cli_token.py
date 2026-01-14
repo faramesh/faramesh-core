@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import argparse
 import secrets
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from .cli import _print_error, _print_success, HAS_RICH
+from .cli import HAS_RICH, _print_error, _print_success
 
 if HAS_RICH:
+    from rich import box
     from rich.console import Console
     from rich.table import Table
-    from rich import box
 
 
 # Simple file-based token storage (can be replaced with DB later)
@@ -100,7 +99,7 @@ def cmd_token_create(args):
         console = Console()
         console.print(f"\n[bold]Token ID:[/bold] {token_id}")
         console.print(f"[bold]Token:[/bold] {token}")
-        console.print(f"\n[cyan]Export:[/cyan]")
+        console.print("\n[cyan]Export:[/cyan]")
         console.print(f"export FARAMESH_TOKEN={token}")
         if expires_at:
             console.print(f"\n[yellow]Expires:[/yellow] {expires_at.isoformat()}")
@@ -145,7 +144,7 @@ def cmd_token_list(args):
                     exp_dt = datetime.fromisoformat(expires)
                     if datetime.utcnow() > exp_dt:
                         status = "Expired"
-                except:
+                except Exception:
                     pass
             
             table.add_row(

@@ -1,9 +1,9 @@
 # src/faramesh/server/auth.py
 from __future__ import annotations
 
+from fastapi import Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
-from fastapi import Request, status
 
 from .settings import get_settings
 

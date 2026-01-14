@@ -1,16 +1,14 @@
 """Tests for event ledger functionality."""
 
-import pytest
+
+from faramesh.server.models import Action
 from faramesh.server.storage import SQLiteStore
-from faramesh.server.models import Action, Status, Decision
-from datetime import datetime
-import uuid
 
 
 def test_create_event():
     """Test creating an event."""
-    import tempfile
     import os
+    import tempfile
     
     # Use temp file instead of :memory: to ensure persistence
     with tempfile.NamedTemporaryFile(delete=False, suffix='.db') as f:
@@ -43,8 +41,8 @@ def test_create_event():
 
 def test_multiple_events():
     """Test multiple events for an action."""
-    import tempfile
     import os
+    import tempfile
     
     # Use temp file instead of :memory: to ensure persistence
     with tempfile.NamedTemporaryFile(delete=False, suffix='.db') as f:

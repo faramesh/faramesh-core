@@ -3,7 +3,6 @@ import time
 from uuid import uuid4
 
 import httpx
-import pytest
 
 
 def test_health_ready(server):

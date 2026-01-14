@@ -36,19 +36,19 @@ _autogen_available = False
 _mcp_available = False
 
 try:
-    import crewai
+    import crewai  # noqa: F401
     _crewai_available = True
 except ImportError:
     pass
 
 try:
-    import autogen
+    import autogen  # noqa: F401
     _autogen_available = True
 except ImportError:
     pass
 
 try:
-    import mcp
+    import mcp  # noqa: F401
     _mcp_available = True
 except ImportError:
     pass
@@ -271,8 +271,8 @@ def govern_autogen_function(
             "AutoGen not installed. Install with: pip install pyautogen"
         )
     
-    import time
     import functools
+    import time
     
     client = _get_client(base_url)
     tool_name = tool_name or func.__name__

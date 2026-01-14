@@ -4,11 +4,11 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
 import yaml
 
 from .models import Decision
-from .settings import get_settings
 
 
 class PolicyEngine:

@@ -3,8 +3,8 @@ import socket
 import subprocess
 import time
 from contextlib import contextmanager
-from typing import Optional
 from pathlib import Path
+from typing import Optional
 
 import httpx
 import pytest
