@@ -1,10 +1,11 @@
 """Tests for risk scoring functionality."""
 
-import pytest
-from faramesh.server.policy_engine import PolicyEngine
-from pathlib import Path
 import tempfile
+from pathlib import Path
+
 import yaml
+
+from faramesh.server.policy_engine import PolicyEngine
 
 
 def test_risk_scoring_basic():

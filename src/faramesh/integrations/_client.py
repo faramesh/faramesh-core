@@ -9,8 +9,9 @@ For full SDK features, install: pip install faramesh-sdk
 
 from __future__ import annotations
 
-import requests
 from typing import Any, Dict, Optional
+
+import requests
 
 
 class ExecutionGovernorClient:

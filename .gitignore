@@ -42,13 +42,22 @@ node_modules/
 .vscode/
 .idea/
 .cursor/
+.cursorrules
 *.swp
 *.swo
 *~
 
 # OS
 .DS_Store
+**/.DS_Store
 Thumbs.db
+
+# Git
+.gitconfig.local
+.gitattributes
+
+# Docker
+.dockerignore
 
 # Internal development
 offline/

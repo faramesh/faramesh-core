@@ -1,46 +1,44 @@
 # server/main.py
 # SPDX-License-Identifier: Elastic-2.0
 from __future__ import annotations
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, Optional, List
+
+import json
 import os
 import secrets
 import time
 import uuid
-import json
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from starlette.requests import Request as StarletteRequest
-from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .models import Action, Status, Decision
-from .settings import get_settings
-from .storage import get_store
-from .policy_engine import PolicyEngine
-from .executor import ActionExecutor
 from .auth import AuthMiddleware
 from .errors import (
-    ActionNotFoundError,
     ActionNotExecutableError,
+    ActionNotFoundError,
     UnauthorizedError,
     ValidationError,
 )
-from .events import get_event_manager, emit_action_event
-from .metrics import get_metrics_response, requests_total, errors_total, actions_total, action_duration_seconds
+from .events import emit_action_event, get_event_manager
+from .executor import ActionExecutor
+from .metrics import action_duration_seconds, actions_total, errors_total, get_metrics_response
+from .models import Action, Decision, Status
+from .policy_engine import PolicyEngine
 from .security.guard import (
-    validate_action_params,
-    sanitize_shell_command,
-    validate_policy_decision,
-    enforce_no_side_effects,
-    validate_external_string,
-    validate_context,
     SecurityError,
+    enforce_no_side_effects,
+    validate_action_params,
+    validate_context,
+    validate_external_string,
+    validate_policy_decision,
 )
+from .settings import get_settings
+from .storage import get_store
 
 settings = get_settings()
 store = get_store()
@@ -54,7 +52,6 @@ app = FastAPI(title="Faramesh - Agent Action Governor")
 async def global_exception_handler(request: Request, exc: Exception):
     """Catch all unhandled exceptions and return proper error responses."""
     import logging
-    import traceback
     
     logging.error(f"Unhandled exception: {exc}", exc_info=True)
     errors_total.inc()

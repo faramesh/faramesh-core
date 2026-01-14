@@ -2,8 +2,8 @@
 """Basic Prometheus metrics for Faramesh."""
 from __future__ import annotations
 
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from fastapi import Response
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
 # Metrics
 requests_total = Counter(

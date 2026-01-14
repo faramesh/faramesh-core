@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
 
 import yaml
 
 from .cli import (
-    _get_base_url, _get_auth_token, _make_request, _print_error, 
-    _print_success, _handle_request_error, HAS_RICH
+    HAS_RICH,
+    _get_auth_token,
+    _get_base_url,
+    _handle_request_error,
+    _make_request,
+    _print_error,
+    _print_success,
 )
 
 if HAS_RICH:
     from rich.console import Console
-    from rich.panel import Panel
 
 
 def cmd_apply(args):
@@ -42,7 +44,7 @@ def cmd_apply(args):
                 try:
                     f.seek(0)
                     data = yaml.safe_load(f)
-                except:
+                except Exception:
                     f.seek(0)
                     data = json.load(f)
         

@@ -1,23 +1,16 @@
 """Tests for DX/UX CLI commands."""
 
-import pytest
-import tempfile
-import json
-from pathlib import Path
-import os
 import sys
+from pathlib import Path
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from faramesh.cli import (
-    cmd_init,
-    cmd_explain,
-    cmd_build_ui,
     cmd_doctor,
-    cmd_replay,
-    cmd_policy_diff,
+    cmd_init,
     cmd_init_docker,
+    cmd_policy_diff,
     make_parser,
 )
 
@@ -217,7 +210,7 @@ def test_token_commands(tmp_path):
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     
-    from faramesh.cli_token import cmd_token_create, cmd_token_list, cmd_token_revoke, _load_tokens
+    from faramesh.cli_token import _load_tokens, cmd_token_create, cmd_token_revoke
     
     # Create a test token
     class CreateArgs:
@@ -252,7 +245,7 @@ def test_policy_commands(tmp_path):
     import sys
     sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
     
-    from faramesh.cli import cmd_policy_validate, cmd_policy_test
+    from faramesh.cli import cmd_policy_test, cmd_policy_validate
     
     # Create a valid policy file
     policy_file = tmp_path / "test_policy.yaml"

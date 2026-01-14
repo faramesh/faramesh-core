@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Dict, Set, Optional, Any
 from collections import deque
 from datetime import datetime
+from typing import Any, Dict, Optional, Set
 
 from fastapi import Request
 from fastapi.responses import StreamingResponse
