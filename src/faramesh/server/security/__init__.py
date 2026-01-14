@@ -3,12 +3,12 @@
 """Security and validation module for Faramesh."""
 
 from .guard import (
-    validate_action_params,
-    sanitize_shell_command,
-    validate_policy_decision,
-    enforce_no_side_effects,
-    validate_external_string,
     SecurityError,
+    enforce_no_side_effects,
+    sanitize_shell_command,
+    validate_action_params,
+    validate_external_string,
+    validate_policy_decision,
 )
 
 __all__ = [
