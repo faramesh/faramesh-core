@@ -1,6 +1,8 @@
 # src/faramesh/server/auth.py
 from __future__ import annotations
 
+from typing import Optional
+
 from fastapi import Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
@@ -11,7 +13,7 @@ from .settings import get_settings
 class AuthMiddleware(BaseHTTPMiddleware):
     """Middleware for bearer token authentication."""
     
-    def __init__(self, app, auth_token: str | None = None):
+    def __init__(self, app, auth_token: Optional[str] = None):
         super().__init__(app)
         self.auth_token = auth_token or get_settings().auth_token
         self.public_paths = {

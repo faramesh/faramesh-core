@@ -54,18 +54,26 @@ class SQLiteStore:
                 """
             )
             # Add columns if they don't exist (for existing databases)
-            try:
-                conn.execute("ALTER TABLE actions ADD COLUMN policy_version TEXT")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-            try:
-                conn.execute("ALTER TABLE actions ADD COLUMN tenant_id TEXT")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
-            try:
-                conn.execute("ALTER TABLE actions ADD COLUMN version INTEGER DEFAULT 1")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+            new_columns = [
+                "policy_version TEXT",
+                "tenant_id TEXT",
+                "version INTEGER DEFAULT 1",
+                "outcome TEXT",
+                "reason_code TEXT",
+                "reason_details_json TEXT",
+                "request_hash TEXT",
+                "policy_hash TEXT",
+                "runtime_version TEXT",
+                "profile_id TEXT",
+                "profile_version TEXT",
+                "profile_hash TEXT",
+                "provenance_id TEXT",
+            ]
+            for col_def in new_columns:
+                try:
+                    conn.execute(f"ALTER TABLE actions ADD COLUMN {col_def}")
+                except sqlite3.OperationalError:
+                    pass  # Column already exists
             
             conn.execute(
                 """
@@ -94,10 +102,21 @@ class SQLiteStore:
                     event_type TEXT NOT NULL,
                     meta_json TEXT,
                     created_at TEXT NOT NULL,
+                    prev_hash TEXT,
+                    record_hash TEXT,
                     FOREIGN KEY (action_id) REFERENCES actions(id) ON DELETE CASCADE
                 );
                 """
             )
+            # Add hash chain columns if they don't exist
+            try:
+                conn.execute("ALTER TABLE action_events ADD COLUMN prev_hash TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE action_events ADD COLUMN record_hash TEXT")
+            except sqlite3.OperationalError:
+                pass
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_action_events_action_id
@@ -124,14 +143,20 @@ class SQLiteStore:
                     params_json, context_json,
                     decision, status, reason, risk_level,
                     created_at, updated_at, approval_token,
-                    policy_version, tenant_id, version
+                    policy_version, tenant_id, version,
+                    outcome, reason_code, reason_details_json,
+                    request_hash, policy_hash, runtime_version,
+                    profile_id, profile_version, profile_hash, provenance_id
                 )
                 VALUES (
                     :id, :agent_id, :tool, :operation,
                     :params_json, :context_json,
                     :decision, :status, :reason, :risk_level,
                     :created_at, :updated_at, :approval_token,
-                    :policy_version, :tenant_id, :version
+                    :policy_version, :tenant_id, :version,
+                    :outcome, :reason_code, :reason_details_json,
+                    :request_hash, :policy_hash, :runtime_version,
+                    :profile_id, :profile_version, :profile_hash, :provenance_id
                 )
                 """,
                 {
@@ -151,6 +176,16 @@ class SQLiteStore:
                     "policy_version": getattr(action, "policy_version", None),
                     "tenant_id": getattr(action, "tenant_id", None),
                     "version": getattr(action, "version", 1),
+                    "outcome": action.outcome.value if action.outcome else None,
+                    "reason_code": action.reason_code,
+                    "reason_details_json": json.dumps(action.reason_details, default=str) if action.reason_details else None,
+                    "request_hash": action.request_hash,
+                    "policy_hash": action.policy_hash,
+                    "runtime_version": action.runtime_version,
+                    "profile_id": action.profile_id,
+                    "profile_version": action.profile_version,
+                    "profile_hash": action.profile_hash,
+                    "provenance_id": action.provenance_id,
                 },
             )
             conn.commit()
@@ -197,7 +232,17 @@ class SQLiteStore:
                         approval_token = :approval_token,
                         policy_version = :policy_version,
                         tenant_id = :tenant_id,
-                        version = :version
+                        version = :version,
+                        outcome = :outcome,
+                        reason_code = :reason_code,
+                        reason_details_json = :reason_details_json,
+                        request_hash = :request_hash,
+                        policy_hash = :policy_hash,
+                        runtime_version = :runtime_version,
+                        profile_id = :profile_id,
+                        profile_version = :profile_version,
+                        profile_hash = :profile_hash,
+                        provenance_id = :provenance_id
                     WHERE id = :id AND version = :expected_version
                     """,
                     {
@@ -217,6 +262,16 @@ class SQLiteStore:
                         "tenant_id": getattr(action, "tenant_id", None),
                         "version": new_version,
                         "expected_version": expected_version,
+                        "outcome": action.outcome.value if action.outcome else None,
+                        "reason_code": action.reason_code,
+                        "reason_details_json": json.dumps(action.reason_details, default=str) if action.reason_details else None,
+                        "request_hash": action.request_hash,
+                        "policy_hash": action.policy_hash,
+                        "runtime_version": action.runtime_version,
+                        "profile_id": action.profile_id,
+                        "profile_version": action.profile_version,
+                        "profile_hash": action.profile_hash,
+                        "provenance_id": action.provenance_id,
                     },
                 )
                 # Check if any rows were updated
@@ -241,7 +296,17 @@ class SQLiteStore:
                         approval_token = :approval_token,
                         policy_version = :policy_version,
                         tenant_id = :tenant_id,
-                        version = :version
+                        version = :version,
+                        outcome = :outcome,
+                        reason_code = :reason_code,
+                        reason_details_json = :reason_details_json,
+                        request_hash = :request_hash,
+                        policy_hash = :policy_hash,
+                        runtime_version = :runtime_version,
+                        profile_id = :profile_id,
+                        profile_version = :profile_version,
+                        profile_hash = :profile_hash,
+                        provenance_id = :provenance_id
                     WHERE id = :id
                     """,
                     {
@@ -260,6 +325,16 @@ class SQLiteStore:
                         "policy_version": getattr(action, "policy_version", None),
                         "tenant_id": getattr(action, "tenant_id", None),
                         "version": new_version,
+                        "outcome": action.outcome.value if action.outcome else None,
+                        "reason_code": action.reason_code,
+                        "reason_details_json": json.dumps(action.reason_details, default=str) if action.reason_details else None,
+                        "request_hash": action.request_hash,
+                        "policy_hash": action.policy_hash,
+                        "runtime_version": action.runtime_version,
+                        "profile_id": action.profile_id,
+                        "profile_version": action.profile_version,
+                        "profile_hash": action.profile_hash,
+                        "provenance_id": action.provenance_id,
                     },
                 )
                 # Check if action exists (rowcount > 0)
@@ -373,27 +448,63 @@ class SQLiteStore:
         event_type: str,
         meta: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Create an event in the action_events table."""
+        """Create an event in the action_events table with hash chaining."""
         import uuid as uuid_module
+        from .canonicalization import canonicalize_event_payload, compute_event_hash
+        
         event_id = str(uuid_module.uuid4())
         now = datetime.utcnow().isoformat()
         
         # Safe JSON serialization
         try:
-            meta_json = json.dumps(meta, default=str) if meta else None
+            meta_dict = meta if meta else {}
+            meta_json = json.dumps(meta_dict, default=str) if meta_dict else None
         except (TypeError, ValueError) as e:
             import logging
             logging.warning(f"Failed to serialize event meta: {e}, using empty dict")
+            meta_dict = {}
             meta_json = json.dumps({}, default=str)
         
         conn = self._connect()
         try:
+            # Get previous event's record_hash for chaining
+            prev_hash = None
+            try:
+                prev_cur = conn.execute(
+                    """
+                    SELECT record_hash FROM action_events
+                    WHERE action_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (action_id,),
+                )
+                prev_row = prev_cur.fetchone()
+                if prev_row and prev_row[0]:
+                    prev_hash = prev_row[0]
+            except sqlite3.Error:
+                # No previous event or column doesn't exist yet
+                pass
+            
+            # Build event dict for canonicalization
+            event_dict = {
+                "id": event_id,
+                "action_id": action_id,
+                "event_type": event_type,
+                "created_at": now,
+                "meta": meta_dict,
+            }
+            
+            # Compute record_hash
+            record_hash = compute_event_hash(event_dict, prev_hash)
+            
+            # Insert with hash chain fields
             conn.execute(
                 """
-                INSERT INTO action_events (id, action_id, event_type, meta_json, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO action_events (id, action_id, event_type, meta_json, created_at, prev_hash, record_hash)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (event_id, action_id, event_type, meta_json, now),
+                (event_id, action_id, event_type, meta_json, now, prev_hash, record_hash),
             )
             conn.commit()
         except sqlite3.Error as e:
@@ -407,25 +518,36 @@ class SQLiteStore:
         """Get all events for an action, ordered by created_at."""
         conn = self._connect()
         try:
-            cur = conn.execute(
-                """
-                SELECT id, action_id, event_type, meta_json, created_at
-                FROM action_events
-                WHERE action_id = ?
-                ORDER BY created_at ASC
-                """,
-                (action_id,),
-            )
+            # Try to get hash fields if they exist
+            try:
+                cur = conn.execute(
+                    """
+                    SELECT id, action_id, event_type, meta_json, created_at, prev_hash, record_hash
+                    FROM action_events
+                    WHERE action_id = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (action_id,),
+                )
+            except sqlite3.Error:
+                # Fallback if hash columns don't exist yet
+                cur = conn.execute(
+                    """
+                    SELECT id, action_id, event_type, meta_json, created_at
+                    FROM action_events
+                    WHERE action_id = ?
+                    ORDER BY created_at ASC
+                    """,
+                    (action_id,),
+                )
+            
             rows = cur.fetchall()
             events = []
             for row in rows:
                 # Safe JSON parsing with bounds checking
                 try:
-                    # Check if row has enough columns
-                    if len(row) < 5:
-                        import logging
-                        logging.warning(f"Event row has insufficient columns: {len(row)}, expected 5")
-                        continue
+                    # Check if row has hash fields (7 columns) or not (5 columns)
+                    has_hash_fields = len(row) >= 7
                     meta = json.loads(row[3]) if row[3] else {}
                 except (json.JSONDecodeError, TypeError, IndexError) as e:
                     import logging
@@ -440,6 +562,9 @@ class SQLiteStore:
                         "meta": meta,
                         "created_at": row[4],
                     }
+                    if has_hash_fields:
+                        event["prev_hash"] = row[5] if len(row) > 5 else None
+                        event["record_hash"] = row[6] if len(row) > 6 else None
                     events.append(event)
                 except (IndexError, TypeError) as e:
                     import logging

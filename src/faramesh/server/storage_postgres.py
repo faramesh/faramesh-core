@@ -85,6 +85,28 @@ class PostgresStore:
             ADD COLUMN IF NOT EXISTS version INTEGER DEFAULT 1;
             """
         )
+        
+        # Add execution gate columns
+        new_columns = [
+            "outcome TEXT",
+            "reason_code TEXT",
+            "reason_details_json TEXT",
+            "request_hash TEXT",
+            "policy_hash TEXT",
+            "runtime_version TEXT",
+            "profile_id TEXT",
+            "profile_version TEXT",
+            "profile_hash TEXT",
+            "provenance_id TEXT",
+        ]
+        for col_def in new_columns:
+            col_name = col_def.split()[0]
+            cur.execute(
+                f"""
+                ALTER TABLE actions
+                ADD COLUMN IF NOT EXISTS {col_def};
+                """
+            )
 
         cur.execute(
             """
@@ -114,8 +136,22 @@ class PostgresStore:
                 action_id TEXT NOT NULL,
                 event_type TEXT NOT NULL,
                 meta_json TEXT,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                prev_hash TEXT,
+                record_hash TEXT
             );
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE action_events
+            ADD COLUMN IF NOT EXISTS prev_hash TEXT;
+            """
+        )
+        cur.execute(
+            """
+            ALTER TABLE action_events
+            ADD COLUMN IF NOT EXISTS record_hash TEXT;
             """
         )
         cur.execute(
@@ -146,14 +182,20 @@ class PostgresStore:
                 params_json, context_json,
                 decision, status, reason, risk_level,
                 approval_token, policy_version, tenant_id,
-                created_at, updated_at, version
+                created_at, updated_at, version,
+                outcome, reason_code, reason_details_json,
+                request_hash, policy_hash, runtime_version,
+                profile_id, profile_version, profile_hash, provenance_id
             )
             VALUES (
                 %(id)s, %(agent_id)s, %(tool)s, %(operation)s,
                 %(params_json)s, %(context_json)s,
                 %(decision)s, %(status)s, %(reason)s, %(risk_level)s,
                 %(approval_token)s, %(policy_version)s, %(tenant_id)s,
-                %(created_at)s, %(updated_at)s, %(version)s
+                %(created_at)s, %(updated_at)s, %(version)s,
+                %(outcome)s, %(reason_code)s, %(reason_details_json)s,
+                %(request_hash)s, %(policy_hash)s, %(runtime_version)s,
+                %(profile_id)s, %(profile_version)s, %(profile_hash)s, %(provenance_id)s
             )
             """,
             {
@@ -173,6 +215,16 @@ class PostgresStore:
                 "created_at": action.created_at.isoformat() if hasattr(action.created_at, 'isoformat') else datetime.utcnow().isoformat(),
                 "updated_at": action.updated_at.isoformat() if hasattr(action.updated_at, 'isoformat') else datetime.utcnow().isoformat(),
                 "version": getattr(action, "version", 1),
+                "outcome": action.outcome.value if action.outcome else None,
+                "reason_code": action.reason_code,
+                "reason_details_json": json.dumps(action.reason_details, default=str) if action.reason_details else None,
+                "request_hash": action.request_hash,
+                "policy_hash": action.policy_hash,
+                "runtime_version": action.runtime_version,
+                "profile_id": action.profile_id,
+                "profile_version": action.profile_version,
+                "profile_hash": action.profile_hash,
+                "provenance_id": action.provenance_id,
             },
         )
             conn.commit()
@@ -222,7 +274,17 @@ class PostgresStore:
                         approval_token = %(approval_token)s,
                         policy_version = %(policy_version)s,
                         tenant_id = %(tenant_id)s,
-                        version = %(version)s
+                        version = %(version)s,
+                        outcome = %(outcome)s,
+                        reason_code = %(reason_code)s,
+                        reason_details_json = %(reason_details_json)s,
+                        request_hash = %(request_hash)s,
+                        policy_hash = %(policy_hash)s,
+                        runtime_version = %(runtime_version)s,
+                        profile_id = %(profile_id)s,
+                        profile_version = %(profile_version)s,
+                        profile_hash = %(profile_hash)s,
+                        provenance_id = %(provenance_id)s
                     WHERE id = %(id)s AND version = %(expected_version)s
                     """,
                     {
@@ -242,6 +304,16 @@ class PostgresStore:
                         "tenant_id": getattr(action, "tenant_id", None),
                         "version": new_version,
                         "expected_version": expected_version,
+                        "outcome": action.outcome.value if action.outcome else None,
+                        "reason_code": action.reason_code,
+                        "reason_details_json": json.dumps(action.reason_details, default=str) if action.reason_details else None,
+                        "request_hash": action.request_hash,
+                        "policy_hash": action.policy_hash,
+                        "runtime_version": action.runtime_version,
+                        "profile_id": action.profile_id,
+                        "profile_version": action.profile_version,
+                        "profile_hash": action.profile_hash,
+                        "provenance_id": action.provenance_id,
                     },
                 )
                 # Check if any rows were updated
@@ -268,7 +340,17 @@ class PostgresStore:
                         approval_token = %(approval_token)s,
                         policy_version = %(policy_version)s,
                         tenant_id = %(tenant_id)s,
-                        version = %(version)s
+                        version = %(version)s,
+                        outcome = %(outcome)s,
+                        reason_code = %(reason_code)s,
+                        reason_details_json = %(reason_details_json)s,
+                        request_hash = %(request_hash)s,
+                        policy_hash = %(policy_hash)s,
+                        runtime_version = %(runtime_version)s,
+                        profile_id = %(profile_id)s,
+                        profile_version = %(profile_version)s,
+                        profile_hash = %(profile_hash)s,
+                        provenance_id = %(provenance_id)s
                     WHERE id = %(id)s
                     """,
                     {
@@ -287,6 +369,16 @@ class PostgresStore:
                         "policy_version": getattr(action, "policy_version", None),
                         "tenant_id": getattr(action, "tenant_id", None),
                         "version": new_version,
+                        "outcome": action.outcome.value if action.outcome else None,
+                        "reason_code": action.reason_code,
+                        "reason_details_json": json.dumps(action.reason_details, default=str) if action.reason_details else None,
+                        "request_hash": action.request_hash,
+                        "policy_hash": action.policy_hash,
+                        "runtime_version": action.runtime_version,
+                        "profile_id": action.profile_id,
+                        "profile_version": action.profile_version,
+                        "profile_hash": action.profile_hash,
+                        "provenance_id": action.provenance_id,
                     },
                 )
                 # Check if action exists (rowcount > 0)
@@ -404,11 +496,12 @@ class PostgresStore:
         event_type: str,
         meta: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Create an event in the action_events table."""
+        """Create an event in the action_events table with hash chaining."""
         import json
         import logging
         import uuid as uuid_module
         from datetime import datetime
+        from .canonicalization import canonicalize_event_payload, compute_event_hash
         
         self._ensure_initialized()
         event_id = str(uuid_module.uuid4())
@@ -416,20 +509,56 @@ class PostgresStore:
         
         # Safe JSON serialization
         try:
-            meta_json = json.dumps(meta, default=str) if meta else None
+            meta_dict = meta if meta else {}
+            meta_json = json.dumps(meta_dict, default=str) if meta_dict else None
         except (TypeError, ValueError) as e:
             logging.warning(f"Failed to serialize event meta: {e}, using empty dict")
+            meta_dict = {}
             meta_json = json.dumps({}, default=str)
         
         conn = self._connect()
         try:
             cur = conn.cursor()
+            
+            # Get previous event's record_hash for chaining
+            prev_hash = None
+            try:
+                cur.execute(
+                    """
+                    SELECT record_hash FROM action_events
+                    WHERE action_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (action_id,),
+                )
+                prev_row = cur.fetchone()
+                if prev_row:
+                    # RealDictCursor returns dict-like object
+                    prev_hash = prev_row.get("record_hash") if hasattr(prev_row, "get") else (prev_row[0] if prev_row else None)
+            except Exception:
+                # No previous event or column doesn't exist yet
+                pass
+            
+            # Build event dict for canonicalization
+            event_dict = {
+                "id": event_id,
+                "action_id": action_id,
+                "event_type": event_type,
+                "created_at": now,
+                "meta": meta_dict,
+            }
+            
+            # Compute record_hash
+            record_hash = compute_event_hash(event_dict, prev_hash)
+            
+            # Insert with hash chain fields
             cur.execute(
                 """
-                INSERT INTO action_events (id, action_id, event_type, meta_json, created_at)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO action_events (id, action_id, event_type, meta_json, created_at, prev_hash, record_hash)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                (event_id, action_id, event_type, meta_json, now),
+                (event_id, action_id, event_type, meta_json, now, prev_hash, record_hash),
             )
             conn.commit()
         except Exception as e:
@@ -449,15 +578,29 @@ class PostgresStore:
         conn = self._connect()
         try:
             cur = conn.cursor()
-            cur.execute(
-                """
-                SELECT id, action_id, event_type, meta_json, created_at
-                FROM action_events
-                WHERE action_id = %s
-                ORDER BY created_at ASC
-                """,
-                (action_id,),
-            )
+            # Try to get hash fields if they exist
+            try:
+                cur.execute(
+                    """
+                    SELECT id, action_id, event_type, meta_json, created_at, prev_hash, record_hash
+                    FROM action_events
+                    WHERE action_id = %s
+                    ORDER BY created_at ASC
+                    """,
+                    (action_id,),
+                )
+            except Exception:
+                # Fallback if hash columns don't exist yet
+                cur.execute(
+                    """
+                    SELECT id, action_id, event_type, meta_json, created_at
+                    FROM action_events
+                    WHERE action_id = %s
+                    ORDER BY created_at ASC
+                    """,
+                    (action_id,),
+                )
+            
             rows = cur.fetchall()
             
             events = []
@@ -477,6 +620,11 @@ class PostgresStore:
                         "meta": meta,
                         "created_at": row.get("created_at", ""),
                     }
+                    # Add hash fields if they exist
+                    if "prev_hash" in row:
+                        event["prev_hash"] = row.get("prev_hash")
+                    if "record_hash" in row:
+                        event["record_hash"] = row.get("record_hash")
                     events.append(event)
                 except (KeyError, TypeError) as e:
                     logging.warning(f"Failed to construct event from row: {e}")

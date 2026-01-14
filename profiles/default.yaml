@@ -1,0 +1,15 @@
+id: "default"
+version: "1"
+allowed_tools:
+  - "shell"
+  - "http"
+  - "stripe"
+rules:
+  - name: disallow_shell_on_root
+    when:
+      tool: "shell"
+    pattern: "rm -rf /|mkfs"
+    outcome: "HALT"
+    reason_code: "PROFILE_DENY_DANGEROUS_SHELL"
+required_controls:
+  approval_token: false

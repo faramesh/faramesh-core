@@ -1191,6 +1191,15 @@ def make_parser():
     p_explain.add_argument("id", help="Action ID or prefix")
     p_explain.set_defaults(func=cmd_explain)
     
+    p_verify_log = sub.add_parser("verify-log", help="Verify tamper-evident audit log chain for an action")
+    p_verify_log.add_argument("id", help="Action ID or prefix")
+    p_verify_log.set_defaults(func=cmd_verify_log)
+    
+    p_replay_decision = sub.add_parser("replay-decision", help="Replay a decision to verify determinism")
+    p_replay_decision.add_argument("id", nargs="?", help="Action ID or prefix")
+    p_replay_decision.add_argument("--provenance-id", help="Provenance ID to replay")
+    p_replay_decision.set_defaults(func=cmd_replay_decision)
+    
     p_build_ui = sub.add_parser("build-ui", help="Build the web UI")
     p_build_ui.set_defaults(func=cmd_build_ui)
     
@@ -1474,9 +1483,24 @@ def cmd_explain(args):
             }.get(status, 'white')
             console.print(f"[bold]Status:[/bold] [{status_color}]{status}[/{status_color}]")
             
+            # Outcome (if available)
+            outcome = action.get('outcome')
+            if outcome:
+                outcome_color = {
+                    'EXECUTE': 'green',
+                    'ABSTAIN': 'yellow',
+                    'HALT': 'red'
+                }.get(outcome, 'white')
+                console.print(f"[bold]Outcome:[/bold] [{outcome_color}]{outcome}[/{outcome_color}]")
+            
             # Decision
             decision_val = action.get('decision', 'N/A')
             console.print(f"[bold]Decision:[/bold] {decision_val}")
+            
+            # Reason Code (if available)
+            reason_code = action.get('reason_code')
+            if reason_code:
+                console.print(f"[bold]Reason Code:[/bold] {reason_code}")
             
             # Reason
             reason_val = action.get('reason', 'N/A')
@@ -1487,12 +1511,30 @@ def cmd_explain(args):
             risk_color = {'high': 'red', 'medium': 'yellow', 'low': 'green'}.get(risk_val, 'white')
             console.print(f"[bold]Risk Level:[/bold] [{risk_color}]{risk_val}[/{risk_color}]")
             
+            # Version binding info
+            if action.get('request_hash') or action.get('policy_hash') or action.get('runtime_version'):
+                console.print(f"\n[bold]Version Binding:[/bold]")
+                if action.get('request_hash'):
+                    console.print(f"  Request Hash: {action['request_hash'][:16]}...")
+                if action.get('policy_hash'):
+                    console.print(f"  Policy Hash: {action['policy_hash'][:16]}...")
+                if action.get('profile_hash'):
+                    console.print(f"  Profile Hash: {action['profile_hash'][:16]}...")
+                if action.get('runtime_version'):
+                    console.print(f"  Runtime Version: {action['runtime_version']}")
+                if action.get('provenance_id'):
+                    console.print(f"  Provenance ID: {action['provenance_id'][:16]}...")
+            
             # Policy File
             console.print(f"\n[bold]Policy File:[/bold] {policy_path}")
             if policy_path.exists():
                 console.print(f"[bold]Policy Version:[/bold] {action.get('policy_version', 'N/A')}")
             else:
                 console.print("[red]⚠ Policy file not found[/red]")
+            
+            # Profile info (if available)
+            if action.get('profile_id'):
+                console.print(f"\n[bold]Profile:[/bold] {action.get('profile_id')} (v{action.get('profile_version', 'N/A')})")
             
             # Tool/Operation
             console.print(f"\n[bold]Tool:[/bold] {action.get('tool', 'N/A')}")
@@ -1505,14 +1547,37 @@ def cmd_explain(args):
         else:
             print(f"\nAction Explanation: {action_id[:8]}\n")
             print(f"Status: {action.get('status', 'N/A')}")
+            if action.get('outcome'):
+                print(f"Outcome: {action['outcome']}")
             print(f"Decision: {action.get('decision', 'N/A')}")
+            if action.get('reason_code'):
+                print(f"Reason Code: {action['reason_code']}")
             print(f"Reason: {action.get('reason', 'N/A')}")
             print(f"Risk Level: {action.get('risk_level', 'N/A')}")
+            
+            # Version binding info
+            if action.get('request_hash') or action.get('policy_hash') or action.get('runtime_version'):
+                print(f"\nVersion Binding:")
+                if action.get('request_hash'):
+                    print(f"  Request Hash: {action['request_hash'][:16]}...")
+                if action.get('policy_hash'):
+                    print(f"  Policy Hash: {action['policy_hash'][:16]}...")
+                if action.get('profile_hash'):
+                    print(f"  Profile Hash: {action['profile_hash'][:16]}...")
+                if action.get('runtime_version'):
+                    print(f"  Runtime Version: {action['runtime_version']}")
+                if action.get('provenance_id'):
+                    print(f"  Provenance ID: {action['provenance_id'][:16]}...")
+            
             print(f"\nPolicy File: {policy_path}")
             if policy_path.exists():
                 print(f"Policy Version: {action.get('policy_version', 'N/A')}")
             else:
                 print("⚠ Policy file not found")
+            
+            if action.get('profile_id'):
+                print(f"\nProfile: {action.get('profile_id')} (v{action.get('profile_version', 'N/A')})")
+            
             print(f"\nTool: {action.get('tool', 'N/A')}")
             print(f"Operation: {action.get('operation', 'N/A')}")
             params = action.get('params', {})
@@ -1715,6 +1780,198 @@ def cmd_doctor(args):
         return 0
     
     return 1 if issues else 0
+
+
+def cmd_verify_log(args):
+    """Verify tamper-evident audit log chain for an action."""
+    base_url = _get_base_url(args)
+    token = _get_auth_token(args)
+    
+    # Find action
+    action_id = args.id
+    try:
+        r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
+        r.raise_for_status()
+    except Exception:
+        matches = _find_action_by_prefix(base_url, args.id, token)
+        if len(matches) == 0:
+            _print_error(f"No action found matching '{args.id}'")
+            sys.exit(1)
+        elif len(matches) > 1:
+            _print_error(f"Multiple actions match prefix '{args.id}':")
+            for match in matches:
+                print(f"  {match['id']} - {match.get('status', 'N/A')}", file=sys.stderr)
+            sys.exit(1)
+        action_id = matches[0]['id']
+    
+    try:
+        # Get events
+        r = _make_request("GET", f"{base_url}/v1/actions/{action_id}/events", token=token)
+        r.raise_for_status()
+        events = r.json()
+        
+        if not events:
+            _print_error(f"No events found for action {action_id[:8]}")
+            sys.exit(1)
+        
+        # Verify chain
+        from faramesh.server.canonicalization import canonicalize_event_payload, compute_event_hash
+        
+        prev_hash = None
+        broken_index = None
+        
+        for i, event in enumerate(events):
+            # Build event dict for canonicalization
+            event_dict = {
+                "id": event.get("id"),
+                "action_id": event.get("action_id"),
+                "event_type": event.get("event_type"),
+                "created_at": event.get("created_at"),
+                "meta": event.get("meta", {}),
+            }
+            
+            # Compute expected hash
+            expected_hash = compute_event_hash(event_dict, prev_hash)
+            actual_hash = event.get("record_hash")
+            
+            if not actual_hash:
+                if HAS_RICH:
+                    console = Console()
+                    console.print(f"[yellow]⚠[/yellow] Event {i} ({event.get('event_type')}) has no record_hash - chain verification skipped")
+                else:
+                    print(f"⚠ Event {i} ({event.get('event_type')}) has no record_hash - chain verification skipped")
+                prev_hash = None
+                continue
+            
+            if actual_hash != expected_hash:
+                broken_index = i
+                break
+            
+            # Check prev_hash matches
+            if prev_hash is not None and event.get("prev_hash") != prev_hash:
+                broken_index = i
+                break
+            
+            prev_hash = actual_hash
+        
+        if broken_index is not None:
+            _print_error(f"Audit chain verification FAILED at event {broken_index}")
+            if broken_index < len(events):
+                event = events[broken_index]
+                print(f"  Event ID: {event.get('id', 'N/A')}")
+                print(f"  Event Type: {event.get('event_type', 'N/A')}")
+                if HAS_RICH:
+                    console = Console()
+                    console.print(f"[red]Chain integrity compromised[/red]")
+                else:
+                    print("Chain integrity compromised")
+            sys.exit(1)
+        else:
+            if HAS_RICH:
+                console = Console()
+                console.print(f"[green]✓[/green] Audit chain verification PASSED for {len(events)} events")
+            else:
+                print(f"✓ Audit chain verification PASSED for {len(events)} events")
+    
+    except Exception as e:
+        _handle_request_error(e, base_url)
+
+
+def cmd_replay_decision(args):
+    """Replay a decision to verify determinism."""
+    base_url = _get_base_url(args)
+    token = _get_auth_token(args)
+    
+    action_id = None
+    
+    if args.provenance_id:
+        # Find action by provenance_id
+        try:
+            r = _make_request("GET", f"{base_url}/v1/actions", params={"limit": 1000}, token=token)
+            r.raise_for_status()
+            actions = r.json()
+            matches = [a for a in actions if a.get('provenance_id') == args.provenance_id]
+            if not matches:
+                _print_error(f"No action found with provenance_id '{args.provenance_id}'")
+                sys.exit(1)
+            if len(matches) > 1:
+                _print_error(f"Multiple actions match provenance_id '{args.provenance_id}'")
+                sys.exit(1)
+            action_id = matches[0]['id']
+        except Exception as e:
+            _handle_request_error(e, base_url)
+    elif args.id:
+        # Find action by ID
+        try:
+            r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
+            r.raise_for_status()
+        except Exception:
+            matches = _find_action_by_prefix(base_url, args.id, token)
+            if len(matches) == 0:
+                _print_error(f"No action found matching '{args.id}'")
+                sys.exit(1)
+            elif len(matches) > 1:
+                _print_error(f"Multiple actions match prefix '{args.id}':")
+                for match in matches:
+                    print(f"  {match['id']} - {match.get('status', 'N/A')}", file=sys.stderr)
+                sys.exit(1)
+            action_id = matches[0]['id']
+    else:
+        _print_error("Must provide either action ID or --provenance-id")
+        sys.exit(1)
+    
+    try:
+        # Get original action
+        r = _make_request("GET", f"{base_url}/v1/actions/{action_id}", token=token)
+        r.raise_for_status()
+        original = r.json()
+        
+        # Extract payload
+        payload = {
+            "agent_id": original['agent_id'],
+            "tool": original['tool'],
+            "operation": original['operation'],
+            "params": original['params'],
+            "context": original.get('context', {}),
+        }
+        
+        # Call gate/decide endpoint
+        r = _make_request("POST", f"{base_url}/v1/gate/decide", json=payload, token=token)
+        r.raise_for_status()
+        new_decision = r.json()
+        
+        # Compare
+        mismatches = []
+        
+        if new_decision.get('outcome') != original.get('outcome'):
+            mismatches.append(f"outcome: {original.get('outcome')} != {new_decision.get('outcome')}")
+        
+        if new_decision.get('reason_code') != original.get('reason_code'):
+            mismatches.append(f"reason_code: {original.get('reason_code')} != {new_decision.get('reason_code')}")
+        
+        if new_decision.get('policy_hash') != original.get('policy_hash'):
+            mismatches.append("policy_hash mismatch (policy may have changed)")
+        
+        if new_decision.get('profile_hash') != original.get('profile_hash'):
+            mismatches.append("profile_hash mismatch (profile may have changed)")
+        
+        if new_decision.get('runtime_version') != original.get('runtime_version'):
+            mismatches.append(f"runtime_version: {original.get('runtime_version')} != {new_decision.get('runtime_version')}")
+        
+        if mismatches:
+            _print_error(f"Decision replay FAILED - mismatches detected:")
+            for mismatch in mismatches:
+                print(f"  - {mismatch}", file=sys.stderr)
+            sys.exit(1)
+        else:
+            if HAS_RICH:
+                console = Console()
+                console.print(f"[green]✓[/green] Decision replay PASSED - outcome and hashes match")
+            else:
+                print("✓ Decision replay PASSED - outcome and hashes match")
+    
+    except Exception as e:
+        _handle_request_error(e, base_url)
 
 
 def cmd_replay(args):
