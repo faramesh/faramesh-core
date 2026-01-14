@@ -16,6 +16,27 @@ class Decision(str, Enum):
     REQUIRE_APPROVAL = "require_approval"
 
 
+class DecisionOutcome(str, Enum):
+    """Explicit decision outcomes for execution gate."""
+    EXECUTE = "EXECUTE"
+    ABSTAIN = "ABSTAIN"
+    HALT = "HALT"
+
+
+# Reason codes for decisions
+REASON_CODE_POLICY_ALLOW = "POLICY_ALLOW"
+REASON_CODE_POLICY_DENY = "POLICY_DENY"
+REASON_CODE_POLICY_REQUIRE_APPROVAL = "POLICY_REQUIRE_APPROVAL"
+REASON_CODE_RISK_UPGRADE = "RISK_UPGRADE"
+REASON_CODE_DEFAULT_DENY_NO_MATCH = "DEFAULT_DENY_NO_MATCH"
+REASON_CODE_PROFILE_DISALLOWS_TOOL = "PROFILE_DISALLOWS_TOOL"
+REASON_CODE_PROFILE_RULE_DENY = "PROFILE_RULE_DENY"
+REASON_CODE_PROFILE_MISSING_REQUIRED_CONTROL = "PROFILE_MISSING_REQUIRED_CONTROL"
+REASON_CODE_INTERNAL_ERROR = "INTERNAL_ERROR"
+REASON_CODE_MISSING_POLICY = "MISSING_POLICY"
+REASON_CODE_PROFILE_LOAD_ERROR = "PROFILE_LOAD_ERROR"
+
+
 class Status(str, Enum):
     PENDING_DECISION = "pending_decision"
     ALLOWED = "allowed"
@@ -47,6 +68,17 @@ class Action:
     tenant_id: Optional[str] = None
     project_id: Optional[str] = None
     version: int = 1  # Optimistic locking version
+    # Execution gate fields
+    outcome: Optional[DecisionOutcome] = None
+    reason_code: Optional[str] = None
+    reason_details: Optional[Dict[str, Any]] = None
+    request_hash: Optional[str] = None
+    policy_hash: Optional[str] = None
+    runtime_version: Optional[str] = None
+    profile_id: Optional[str] = None
+    profile_version: Optional[str] = None
+    profile_hash: Optional[str] = None
+    provenance_id: Optional[str] = None
 
     @staticmethod
     def new(
@@ -96,6 +128,16 @@ class Action:
             "version": self.version,
             "created_at": self.created_at.isoformat() + "Z",
             "updated_at": self.updated_at.isoformat() + "Z",
+            "outcome": self.outcome.value if self.outcome else None,
+            "reason_code": self.reason_code,
+            "reason_details": self.reason_details,
+            "request_hash": self.request_hash,
+            "policy_hash": self.policy_hash,
+            "runtime_version": self.runtime_version,
+            "profile_id": self.profile_id,
+            "profile_version": self.profile_version,
+            "profile_hash": self.profile_hash,
+            "provenance_id": self.provenance_id,
         }
 
     @staticmethod
@@ -164,4 +206,14 @@ class Action:
             tenant_id=_get(row, "tenant_id"),
             project_id=_get(row, "project_id"),
             version=_get(row, "version", 1),
+            outcome=_safe_enum_parse(DecisionOutcome, _get(row, "outcome"), None),
+            reason_code=_get(row, "reason_code"),
+            reason_details=_safe_json_loads(_get(row, "reason_details_json"), None),
+            request_hash=_get(row, "request_hash"),
+            policy_hash=_get(row, "policy_hash"),
+            runtime_version=_get(row, "runtime_version"),
+            profile_id=_get(row, "profile_id"),
+            profile_version=_get(row, "profile_version"),
+            profile_hash=_get(row, "profile_hash"),
+            provenance_id=_get(row, "provenance_id"),
         )

@@ -1,6 +1,6 @@
 [project]
 name = "faramesh"
-version = "0.2.0"
+version = "0.3.0"
 description = "Faramesh — Minimal open-core agent action governor"
 requires-python = ">=3.9"
 readme = "README.md"

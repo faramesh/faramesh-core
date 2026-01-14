@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.0] - 2026-01-14
+
+### Added
+
+- **Execution Gate (`POST /v1/gate/decide`)**:
+  - Decide-only endpoint for pre-checking actions without creating DB records
+  - Returns deterministic decision with full version-bound metadata
+  - Supports EXECUTE / ABSTAIN / HALT outcomes with machine-readable reason codes
+
+- **Deterministic Canonicalization & Request Hashing**:
+  - `canonicalize()` - Deterministic JSON serialization (sorted keys, normalized floats, no NaN/Infinity)
+  - `compute_request_hash()` - SHA-256 hash of canonical action payload
+  - Identical logical payloads (different key ordering) produce identical hashes
+  - Strict fail-closed behavior on invalid inputs
+
+- **Execution Profiles**:
+  - YAML-based execution profiles with tool allowlists and constraints
+  - `profiles/default.yaml` - Default profile configuration
+  - Profile enforcement in decision pipeline
+  - Profile version and hash binding for auditability
+
+- **Decision Outcomes & Reason Codes**:
+  - `DecisionOutcome` enum: EXECUTE, ABSTAIN, HALT
+  - Canonical reason codes: POLICY_ALLOW, POLICY_DENY, POLICY_REQUIRE_APPROVAL, PROFILE_DISALLOWS_TOOL, INTERNAL_ERROR, etc.
+  - Extended action model with outcome, reason_code, reason_details fields
+
+- **Version Binding & Provenance**:
+  - `request_hash` - Hash of canonical action payload
+  - `policy_hash` - Hash of policy configuration
+  - `profile_hash` - Hash of execution profile
+  - `runtime_version` - Faramesh version string
+  - `provenance_id` - Combined hash for replay verification
+
+- **Tamper-Evident Audit Log**:
+  - Hash-chained event records with `prev_hash` and `record_hash`
+  - Append-only audit trail for all action events
+  - CLI verification: `faramesh verify-log <action-id>`
+
+- **Decision Replay**:
+  - CLI command: `faramesh replay-decision <action-id>`
+  - Re-runs gate evaluation and compares with stored decision
+  - Detects policy/profile changes since original decision
+
+- **Conformance Test Suite**:
+  - `tests/test_conformance.py` - Comprehensive conformance tests
+  - Determinism tests (identical payloads → identical decisions)
+  - Fail-closed behavior tests (malformed input → HALT)
+  - Profile enforcement tests
+  - Audit chain verification tests
+  - Replay discipline tests
+
+- **CLI Enhancements**:
+  - `faramesh verify-log <action-id>` - Verify audit chain integrity
+  - `faramesh replay-decision <action-id>` - Replay and verify decision
+  - Enhanced `faramesh explain` with outcome and reason_code display
+
+### Changed
+
+- **Action Model**: Extended with execution gate fields (outcome, reason_code, request_hash, policy_hash, profile_hash, runtime_version, provenance_id)
+- **API Responses**: All action responses now include version-bound metadata
+- **Decision Engine**: Centralized decision logic with fail-closed semantics
+
+### Security
+
+- Fail-closed semantics: any parse error, schema error, or internal error results in HALT (no execution)
+- Strict Pydantic schemas with `extra="forbid"` reject unknown fields
+- Tamper-evident audit chain detects modifications
+
+---
+
 ## [0.2.0] - 2026-01-13
 
 ### Added
@@ -146,6 +216,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History
 
+- **0.3.0** - Execution gate, deterministic hashing, tamper-evident audit, decision replay, execution profiles
 - **0.2.0** - Enhanced integrations, DX features, security improvements, documentation rewrite
 - **0.1.0** - Initial public release
 

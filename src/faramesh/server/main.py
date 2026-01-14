@@ -15,9 +15,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .auth import AuthMiddleware
+from .decision_engine import evaluate_decision
 from .errors import (
     ActionNotExecutableError,
     ActionNotFoundError,
@@ -27,8 +28,9 @@ from .errors import (
 from .events import emit_action_event, get_event_manager
 from .executor import ActionExecutor
 from .metrics import action_duration_seconds, actions_total, errors_total, get_metrics_response
-from .models import Action, Decision, Status
+from .models import Action, Decision, DecisionOutcome, Status
 from .policy_engine import PolicyEngine
+from .profiles import load_profile_from_env
 from .security.guard import (
     SecurityError,
     enforce_no_side_effects,
@@ -44,6 +46,11 @@ settings = get_settings()
 store = get_store()
 executor = ActionExecutor(store)
 policies = PolicyEngine(settings.policy_file)
+# Load runtime version
+try:
+    from faramesh import __version__ as runtime_version_str
+except ImportError:
+    runtime_version_str = "unknown"
 
 app = FastAPI(title="Faramesh - Agent Action Governor")
 
@@ -642,6 +649,8 @@ def get_policy_info():
 
 
 class ActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    
     agent_id: str
     tool: str
     operation: str
@@ -650,6 +659,8 @@ class ActionRequest(BaseModel):
 
 
 class ResultRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    
     success: bool
     error: Optional[str] = None
 
@@ -671,6 +682,17 @@ class ActionResponse(BaseModel):
     updated_at: str
     js_example: Optional[str] = None
     python_example: Optional[str] = None
+    # Execution gate fields
+    outcome: Optional[str] = None
+    reason_code: Optional[str] = None
+    reason_details: Optional[Dict[str, Any]] = None
+    request_hash: Optional[str] = None
+    policy_hash: Optional[str] = None
+    runtime_version: Optional[str] = None
+    profile_id: Optional[str] = None
+    profile_version: Optional[str] = None
+    profile_hash: Optional[str] = None
+    provenance_id: Optional[str] = None
 
 
 def _build_sdk_examples(action: Action) -> Dict[str, Optional[str]]:
@@ -785,6 +807,16 @@ def action_to_response(action: Action, override: Optional[datetime] = None):
         updated_at=updated.isoformat() + "Z",
         js_example=examples.get("js_example"),
         python_example=examples.get("python_example"),
+        outcome=action.outcome.value if hasattr(action, "outcome") and action.outcome else None,
+        reason_code=getattr(action, "reason_code", None),
+        reason_details=getattr(action, "reason_details", None),
+        request_hash=getattr(action, "request_hash", None),
+        policy_hash=getattr(action, "policy_hash", None),
+        runtime_version=getattr(action, "runtime_version", None),
+        profile_id=getattr(action, "profile_id", None),
+        profile_version=getattr(action, "profile_version", None),
+        profile_hash=getattr(action, "profile_hash", None),
+        provenance_id=getattr(action, "provenance_id", None),
     )
 
 
@@ -928,7 +960,33 @@ async def submit_action(req: ActionRequest):
         except SecurityError as e:
             raise ValidationError(f"Invalid context: {e}")
         
-        # Create action
+        # Load profile if available
+        profile = load_profile_from_env()
+        
+        # Evaluate decision using centralized decision engine
+        decision_result = evaluate_decision(
+            agent_id=agent_id,
+            tool=tool,
+            operation=operation,
+            params=validated_params,
+            context=validated_context,
+            policy_engine=policies,
+            profile=profile,
+            runtime_version=runtime_version_str,
+        )
+        
+        # Map DecisionOutcome back to Decision enum for compatibility
+        if decision_result.outcome == DecisionOutcome.EXECUTE:
+            decision = Decision.ALLOW
+            action_status = Status.ALLOWED
+        elif decision_result.outcome == DecisionOutcome.HALT:
+            decision = Decision.DENY
+            action_status = Status.DENIED
+        else:  # ABSTAIN
+            decision = Decision.REQUIRE_APPROVAL
+            action_status = Status.PENDING_APPROVAL
+        
+        # Create action with decision result fields
         action = Action.new(
             agent_id=agent_id,
             tool=tool,
@@ -937,43 +995,30 @@ async def submit_action(req: ActionRequest):
             context=validated_context,
         )
         
-        # Evaluate policy with error handling
-        try:
-            decision, reason, risk = policies.evaluate(
-                tool=tool,
-                operation=operation,
-                params=validated_params,
-                context=validated_context,
-            )
-        except Exception as e:
-            import logging
-            logging.error(f"Policy evaluation error: {e}")
-            # Deny by default for safety
-            decision = Decision.DENY
-            reason = f"Policy evaluation error: {str(e)}"
-            risk = "high"
-        
-        # Validate decision
-        try:
-            validate_policy_decision(decision)
-        except SecurityError as e:
-            import logging
-            logging.error(f"Invalid policy decision: {e}")
-            decision = Decision.DENY
-            reason = "Invalid policy decision"
-            risk = "high"
-        
+        # Set decision fields
         action.decision = decision
-        action.reason = reason
-        action.risk_level = risk
-        action.policy_version = policies.policy_version()
-
-        if decision == Decision.ALLOW:
-            action.status = Status.ALLOWED
-        elif decision == Decision.DENY:
-            action.status = Status.DENIED
+        action.status = action_status
+        action.reason = decision_result.reason
+        # Extract risk_level from reason_details if available, else infer from outcome
+        if decision_result.reason_details and "risk_level" in decision_result.reason_details:
+            action.risk_level = decision_result.reason_details["risk_level"]
         else:
-            action.status = Status.PENDING_APPROVAL
+            action.risk_level = "high" if decision_result.outcome == DecisionOutcome.HALT else "low"
+        action.policy_version = decision_result.policy_version
+        
+        # Set execution gate fields
+        action.outcome = decision_result.outcome
+        action.reason_code = decision_result.reason_code
+        action.reason_details = decision_result.reason_details
+        action.request_hash = decision_result.request_hash
+        action.policy_hash = decision_result.policy_hash
+        action.runtime_version = decision_result.runtime_version
+        action.profile_id = decision_result.profile_id
+        action.profile_version = decision_result.profile_version
+        action.profile_hash = decision_result.profile_hash
+        action.provenance_id = decision_result.provenance_id
+        
+        if decision == Decision.REQUIRE_APPROVAL:
             action.approval_token = secrets.token_urlsafe(16)
 
         # Note: enforce_no_side_effects is NOT called here because we're just creating the action.
@@ -992,14 +1037,21 @@ async def submit_action(req: ActionRequest):
         
         # Write event: created (best effort)
         try:
-            store.create_event(action.id, "created", {"decision": decision.value if decision else None, "risk_level": risk})
+            store.create_event(action.id, "created", {"decision": decision.value if decision else None, "risk_level": action.risk_level})
         except Exception as e:
             import logging
             logging.warning(f"Failed to create 'created' event: {e}")
         
         # Write event: decision_made (best effort)
         try:
-            store.create_event(action.id, "decision_made", {"decision": decision.value if decision else None, "reason": reason, "risk_level": risk})
+            store.create_event(action.id, "decision_made", {
+                "decision": decision.value if decision else None,
+                "outcome": action.outcome.value if action.outcome else None,
+                "reason_code": action.reason_code,
+                "reason": action.reason,
+                "risk_level": action.risk_level,
+                "request_hash": action.request_hash,
+            })
         except Exception as e:
             import logging
             logging.warning(f"Failed to create 'decision_made' event: {e}")
@@ -1029,6 +1081,99 @@ async def submit_action(req: ActionRequest):
     except Exception as e:
         import logging
         logging.error(f"Unexpected error in submit_action: {e}", exc_info=True)
+        errors_total.inc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Internal server error: {str(e)}"
+        )
+
+
+class GateDecisionRequest(BaseModel):
+    """Request model for gate decide endpoint."""
+    model_config = ConfigDict(extra="forbid")
+    
+    agent_id: str
+    tool: str
+    operation: str
+    params: Dict[str, Any]
+    context: Optional[Dict[str, Any]] = None
+
+
+class GateDecisionResponse(BaseModel):
+    """Response model for gate decide endpoint."""
+    outcome: str
+    reason_code: str
+    reason: Optional[str] = None
+    request_hash: str
+    policy_version: Optional[str] = None
+    policy_hash: Optional[str] = None
+    profile_id: Optional[str] = None
+    profile_version: Optional[str] = None
+    profile_hash: Optional[str] = None
+    runtime_version: Optional[str] = None
+    provenance_id: Optional[str] = None
+
+
+@app.post("/v1/gate/decide", response_model=GateDecisionResponse)
+async def gate_decide(req: GateDecisionRequest):
+    """
+    Decide-only execution gate endpoint.
+    
+    Evaluates policy and profile but does NOT create an action or trigger execution.
+    Returns decision with version-bound fields for replay and audit.
+    """
+    try:
+        # Validate inputs
+        agent_id = validate_external_string(req.agent_id, "agent_id")
+        tool = validate_external_string(req.tool, "tool")
+        operation = validate_external_string(req.operation, "operation")
+        
+        # Validate and sanitize params
+        try:
+            validated_params = validate_action_params(req.params or {}, tool)
+        except SecurityError as e:
+            raise ValidationError(f"Invalid action parameters: {e}")
+        
+        # Validate context
+        try:
+            validated_context = validate_context(req.context)
+        except SecurityError as e:
+            raise ValidationError(f"Invalid context: {e}")
+        
+        # Load profile if available
+        profile = load_profile_from_env()
+        
+        # Evaluate decision using centralized decision engine
+        decision_result = evaluate_decision(
+            agent_id=agent_id,
+            tool=tool,
+            operation=operation,
+            params=validated_params,
+            context=validated_context,
+            policy_engine=policies,
+            profile=profile,
+            runtime_version=runtime_version_str,
+        )
+        
+        return GateDecisionResponse(
+            outcome=decision_result.outcome.value,
+            reason_code=decision_result.reason_code,
+            reason=decision_result.reason,
+            request_hash=decision_result.request_hash,
+            policy_version=decision_result.policy_version,
+            policy_hash=decision_result.policy_hash,
+            profile_id=decision_result.profile_id,
+            profile_version=decision_result.profile_version,
+            profile_hash=decision_result.profile_hash,
+            runtime_version=decision_result.runtime_version,
+            provenance_id=decision_result.provenance_id,
+        )
+        
+    except ValidationError:
+        raise
+    except Exception as e:
+        import logging
+        logging.error(f"Unexpected error in gate_decide: {e}", exc_info=True)
         errors_total.inc()
         raise HTTPException(
             status_code=500,
@@ -1077,6 +1222,8 @@ def get_action(action_id: str):
 
 
 class ApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    
     token: str
     approve: bool
     reason: Optional[str] = None

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -128,6 +129,7 @@ class PolicyEngine:
                         "version": "error",
                         "rules": [],
                         "risk_rules": [],
+                        "policy_hash": None,
                     }
                     return
                 
@@ -141,6 +143,7 @@ class PolicyEngine:
                         "version": "error",
                         "rules": [],
                         "risk_rules": [],
+                        "policy_hash": None,
                     }
                     return
                 
@@ -157,10 +160,33 @@ class PolicyEngine:
                 rules = y.get("rules", []) if isinstance(y, dict) else []
                 risk = y.get("risk", {}) if isinstance(y, dict) else {}
                 risk_rules = risk.get("rules", []) if isinstance(risk, dict) else []
-                self.cached_policy = {
-                    "version": "yaml",
+                
+                # Compute policy version (prefer env var, else file-based)
+                import os
+                policy_version_env = os.getenv("FARAMESH_POLICY_VERSION")
+                if policy_version_env:
+                    policy_version = policy_version_env
+                else:
+                    # Use filename and mtime
+                    import time
+                    mtime = p.stat().st_mtime if p.exists() else 0
+                    mtime_iso = datetime.fromtimestamp(mtime).isoformat() if mtime else "unknown"
+                    policy_version = f"{p.name}@{mtime_iso}"
+                
+                # Compute policy hash
+                from .canonicalization import compute_policy_hash
+                policy_dict = {
+                    "version": policy_version,
                     "rules": rules,
                     "risk_rules": risk_rules,
+                }
+                policy_hash = compute_policy_hash(policy_dict)
+                
+                self.cached_policy = {
+                    "version": policy_version,
+                    "rules": rules,
+                    "risk_rules": risk_rules,
+                    "policy_hash": policy_hash,
                 }
             except ValueError:
                 # Re-raise validation errors - these should fail initialization
@@ -172,6 +198,7 @@ class PolicyEngine:
                     "version": "error",
                     "rules": [],
                     "risk_rules": [],
+                    "policy_hash": None,
                 }
         else:
             logging.warning(f"Policy file not found: {p}, using empty policy (deny all)")
@@ -179,6 +206,7 @@ class PolicyEngine:
                 "version": "none",
                 "rules": [],
                 "risk_rules": [],
+                "policy_hash": None,
             }
 
     def _get_param_value(self, params: Dict, context: Dict, key: str, default=None):
@@ -429,3 +457,7 @@ class PolicyEngine:
 
     def policy_version(self) -> str:
         return str(self.cached_policy.get("version", "none"))
+    
+    def policy_hash(self) -> Optional[str]:
+        """Get the policy hash."""
+        return self.cached_policy.get("policy_hash")
