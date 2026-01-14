@@ -5,8 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
-from typing import Any, Optional, Dict, List
+from typing import Any, Dict, Optional
 
 try:
     import readline
@@ -15,15 +14,20 @@ except ImportError:
     HAS_READLINE = False
 
 from .cli import (
-    _get_base_url, _get_auth_token, _make_request, _print_error, 
-    _print_success, _truncate_uuid, _find_action_by_prefix, _handle_request_error,
-    HAS_RICH
+    HAS_RICH,
+    _find_action_by_prefix,
+    _get_auth_token,
+    _get_base_url,
+    _handle_request_error,
+    _make_request,
+    _print_error,
+    _print_success,
+    _truncate_uuid,
 )
 
 if HAS_RICH:
     from rich.console import Console
     from rich.panel import Panel
-    from rich.text import Text
 
 
 class FaraShell:
@@ -160,7 +164,7 @@ class FaraShell:
             r = _make_request("GET", f"{self.base_url}/v1/actions/{action_id}", token=self.token)
             r.raise_for_status()
             full_id = action_id
-        except:
+        except Exception:
             matches = _find_action_by_prefix(self.base_url, action_id, self.token)
             if len(matches) == 0:
                 _print_error(f"No action found: {action_id}")
@@ -204,7 +208,7 @@ class FaraShell:
             r = _make_request("GET", f"{self.base_url}/v1/actions/{action_id}", token=self.token)
             r.raise_for_status()
             full_id = action_id
-        except:
+        except Exception:
             matches = _find_action_by_prefix(self.base_url, action_id, self.token)
             if len(matches) == 0:
                 _print_error(f"No action found: {action_id}")

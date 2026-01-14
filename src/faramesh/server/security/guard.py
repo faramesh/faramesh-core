@@ -3,9 +3,9 @@
 """Security guard module - centralized validation and sanitization."""
 
 from __future__ import annotations
-from typing import Any, Dict, List, Optional, Set
+
 import re
-import shlex
+from typing import Any, Dict, Optional, Set
 
 
 class SecurityError(Exception):

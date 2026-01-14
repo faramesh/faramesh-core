@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 # SPDX-License-Identifier: Elastic-2.0
-
 import argparse
 import json
 import os
@@ -17,11 +16,10 @@ from .server.settings import get_settings
 
 # Try to import optional dependencies for prettier output
 try:
-    from rich.console import Console
-    from rich.table import Table
-    from rich.text import Text
-    from rich.panel import Panel
     from rich import box
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
     HAS_RICH = True
 except ImportError:
     HAS_RICH = False
@@ -71,8 +69,8 @@ def _print_json(obj: Any) -> None:
 def _print_error(msg: str) -> None:
     """Print error message."""
     if HAS_RICH:
-        console = Console()
-        console.print(f"[red]❌ Error:[/red] {msg}", err=True)
+        console = Console(file=sys.stderr)
+        console.print(f"[red]❌ Error:[/red] {msg}")
     else:
         print(f"❌ Error: {msg}", file=sys.stderr)
 
@@ -177,7 +175,7 @@ def _handle_request_error(e: Exception, base_url: str) -> None:
     elif isinstance(e, requests.exceptions.HTTPError):
         try:
             error_detail = e.response.text
-        except:
+        except Exception:
             error_detail = str(e)
         _print_error(f"HTTP {e.response.status_code}: {error_detail}")
         sys.exit(1)
@@ -258,7 +256,7 @@ def print_help() -> None:
             panther_lines = panther.strip().split('\n')
             for line in panther_lines:
                 print("\033[44m\033[33m" + line + "\033[0m")
-        except:
+        except Exception:
             # Ultimate fallback: just print the panther
             print(panther.strip())
     
@@ -451,15 +449,15 @@ rules:
     if HAS_RICH:
         console = Console()
         console.print(f"[green]✓[/green] Created policy file: {policy_file}")
-        console.print(f"\n[cyan]Next steps:[/cyan]")
+        console.print("\n[cyan]Next steps:[/cyan]")
         console.print(f"  1. Edit {policy_file} to customize rules")
-        console.print(f"  2. Test with: [bold]fara policy-test <action.json>[/bold]")
+        console.print("  2. Test with: [bold]fara policy-test <action.json>[/bold]")
         console.print(f"  3. Validate with: [bold]fara policy-validate {policy_file}[/bold]")
     else:
         print(f"✓ Created policy file: {policy_file}")
-        print(f"\nNext steps:")
+        print("\nNext steps:")
         print(f"  1. Edit {policy_file} to customize rules")
-        print(f"  2. Test with: fara policy-test <action.json>")
+        print("  2. Test with: fara policy-test <action.json>")
         print(f"  3. Validate with: fara policy-validate {policy_file}")
 
 
@@ -576,7 +574,7 @@ def cmd_get(args):
     try:
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
-    except:
+    except Exception:
         # Not a full UUID, try prefix matching
         matches = _find_action_by_prefix(base_url, args.id, token)
         
@@ -756,7 +754,7 @@ def cmd_logs(args):
     try:
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
-    except:
+    except Exception:
         # Not a full UUID, try prefix matching
         matches = _find_action_by_prefix(base_url, args.id, token)
         
@@ -784,13 +782,13 @@ def cmd_logs(args):
             print(f"Status: {action.get('status', 'N/A')}")
             print(f"Decision: {action.get('decision', 'N/A')}")
             print(f"Reason: {action.get('reason', 'N/A')}")
-            print(f"\nTimeline:")
+            print("\nTimeline:")
             print(f"  Created: {action.get('created_at', 'N/A')}")
             print(f"  Updated: {action.get('updated_at', 'N/A')}")
             
             # Show status history if available
             if action.get('status') == 'pending_approval':
-                print(f"\n  → Currently awaiting approval")
+                print("\n  → Currently awaiting approval")
             elif action.get('status') == 'approved':
                 print(f"\n  → Approved at {action.get('updated_at', 'N/A')}")
             elif action.get('status') == 'denied':
@@ -809,7 +807,7 @@ def cmd_events(args):
     try:
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
-    except:
+    except Exception:
         # Not a full UUID, try prefix matching
         matches = _find_action_by_prefix(base_url, args.id, token)
         
@@ -920,7 +918,7 @@ def cmd_approve(args):
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
         action_id = args.id  # Full UUID worked
-    except:
+    except Exception:
         # Not a full UUID, try prefix matching
         matches = _find_action_by_prefix(base_url, args.id, token)
         
@@ -950,7 +948,7 @@ def cmd_deny(args):
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
         action_id = args.id  # Full UUID worked
-    except:
+    except Exception:
         # Not a full UUID, try prefix matching
         matches = _find_action_by_prefix(base_url, args.id, token)
         
@@ -984,7 +982,7 @@ def cmd_curl(args):
     try:
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
-    except:
+    except Exception:
         # Not a full UUID, try prefix matching
         matches = _find_action_by_prefix(base_url, args.id, token)
         
@@ -1016,7 +1014,7 @@ def cmd_curl(args):
             curl_lines = [f'curl -X POST {base_url}/v1/actions/{action_id}/approval \\']
             if token:
                 curl_lines.append(f'  -H "Authorization: Bearer {token}" \\')
-            curl_lines.append(f'  -H "Content-Type: application/json" \\')
+            curl_lines.append('  -H "Content-Type: application/json" \\')
             curl_lines.append(f'  -d \'{{"token": "{approval_token}", "approve": true}}\'')
             print('\n'.join(curl_lines))
             print()
@@ -1024,7 +1022,7 @@ def cmd_curl(args):
             curl_lines = [f'curl -X POST {base_url}/v1/actions/{action_id}/approval \\']
             if token:
                 curl_lines.append(f'  -H "Authorization: Bearer {token}" \\')
-            curl_lines.append(f'  -H "Content-Type: application/json" \\')
+            curl_lines.append('  -H "Content-Type: application/json" \\')
             curl_lines.append(f'  -d \'{{"token": "{approval_token}", "approve": false}}\'')
             print('\n'.join(curl_lines))
         elif status in ('approved', 'allowed'):
@@ -1211,8 +1209,12 @@ def make_parser():
     # New fara action namespace - lazy import to avoid circular deps
     def _setup_action_commands():
         from .cli_actions import (
-            cmd_action_submit, cmd_action_approve, cmd_action_deny,
-            cmd_action_start, cmd_action_replay, cmd_history
+            cmd_action_approve,
+            cmd_action_deny,
+            cmd_action_replay,
+            cmd_action_start,
+            cmd_action_submit,
+            cmd_history,
         )
         
         p_action = sub.add_parser("action", help="Action management commands")
@@ -1308,7 +1310,6 @@ def make_parser():
 def cmd_init(args):
     """Scaffold a working starter layout."""
     from pathlib import Path
-    import os
     
     base_path = Path.cwd()
     policies_dir = base_path / "policies"
@@ -1412,7 +1413,7 @@ def cmd_explain(args):
     try:
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
-    except:
+    except Exception:
         matches = _find_action_by_prefix(base_url, args.id, token)
         if len(matches) == 0:
             _print_error(f"No action found matching '{args.id}'")
@@ -1431,9 +1432,10 @@ def cmd_explain(args):
         action = r.json()
         
         # Get policy info
-        from faramesh.server.settings import get_settings
-        from faramesh.server.policy_engine import PolicyEngine
         from pathlib import Path
+
+        from faramesh.server.policy_engine import PolicyEngine
+        from faramesh.server.settings import get_settings
         
         settings = get_settings()
         policy_file = settings.policy_file
@@ -1451,10 +1453,9 @@ def cmd_explain(args):
                 params=action['params'],
                 context=action.get('context', {})
             )
-        except Exception as e:
-            decision = None
-            reason = f"Could not re-evaluate: {e}"
-            risk = action.get('risk_level', 'unknown')
+        except Exception:
+            # Re-evaluation failed, use values from action dict
+            pass
         
         # Print explanation
         if HAS_RICH:
@@ -1523,9 +1524,9 @@ def cmd_explain(args):
 
 def cmd_build_ui(args):
     """Build the web UI."""
+    import shutil
     import subprocess
     from pathlib import Path
-    import shutil
     
     # Find UI folder (web/ relative to package root)
     package_root = Path(__file__).resolve().parents[2]
@@ -1612,9 +1613,9 @@ def cmd_build_ui(args):
 
 def cmd_doctor(args):
     """Sanity check user environment."""
-    from pathlib import Path
-    import sys as sys_module
     import os
+    import sys as sys_module
+    from pathlib import Path
     
     issues = []
     warnings = []
@@ -1726,7 +1727,7 @@ def cmd_replay(args):
     try:
         r = _make_request("GET", f"{base_url}/v1/actions/{args.id}", token=token)
         r.raise_for_status()
-    except:
+    except Exception:
         matches = _find_action_by_prefix(base_url, args.id, token)
         if len(matches) == 0:
             _print_error(f"No action found matching '{args.id}'")
@@ -1769,12 +1770,12 @@ def cmd_replay(args):
         
         if HAS_RICH:
             console = Console()
-            console.print(f"[green]✓[/green] Replayed action")
+            console.print("[green]✓[/green] Replayed action")
             console.print(f"Original: {action_id}")
             console.print(f"New: {new['id']}")
             console.print(f"Status: {new.get('status')}")
         else:
-            print(f"✓ Replayed action")
+            print("✓ Replayed action")
             print(f"Original: {action_id}")
             print(f"New: {new['id']}")
             print(f"Status: {new.get('status')}")
@@ -1785,6 +1786,7 @@ def cmd_replay(args):
 def cmd_policy_diff(args):
     """Show differences between two policy files."""
     from pathlib import Path
+
     import yaml
     
     old_file = Path(args.old_file)
@@ -1819,7 +1821,7 @@ def cmd_policy_diff(args):
         # Show differences
         if HAS_RICH:
             console = Console()
-            console.print(f"[bold]Policy Differences:[/bold]\n")
+            console.print("[bold]Policy Differences:[/bold]\n")
             console.print(f"[cyan]Old:[/cyan] {old_file}")
             console.print(f"[cyan]New:[/cyan] {new_file}\n")
             
@@ -1848,7 +1850,7 @@ def cmd_policy_diff(args):
                 for desc in removed:
                     console.print(f"  - {desc}")
         else:
-            print(f"Policy Differences:\n")
+            print("Policy Differences:\n")
             print(f"Old: {old_file}")
             print(f"New: {new_file}\n")
             print(f"Old rules: {len(old_rules)}")
@@ -2031,9 +2033,8 @@ def cmd_serve(args):
     
     if hot_reload_enabled and is_local_policy:
         try:
-            from watchdog.observers import Observer
             from watchdog.events import FileSystemEventHandler
-            from pathlib import Path
+            from watchdog.observers import Observer
             
             # Use the already-resolved policy_file_path from above
             class PolicyWatcher(FileSystemEventHandler):
@@ -2072,10 +2073,10 @@ def cmd_serve(args):
                             if HAS_RICH:
                                 console = Console()
                                 console.print(f"[red]⚠[/red] Policy reload failed: {error_msg}")
-                                console.print(f"[yellow]⚠[/yellow] Keeping previous valid policy active")
+                                console.print("[yellow]⚠[/yellow] Keeping previous valid policy active")
                             else:
                                 print(f"⚠ Policy reload failed: {error_msg}")
-                                print(f"⚠ Keeping previous valid policy active")
+                                print("⚠ Keeping previous valid policy active")
             
             if policy_file_path.exists():
                 event_handler = PolicyWatcher(policy_file_path)
@@ -2115,8 +2116,8 @@ def cmd_serve(args):
         print("Policy hot-reload enabled (--hot-reload or FARAMESH_HOT_RELOAD=1)")
     print("Press CTRL+C to stop")
     
-    import contextlib
     import asyncio
+    import contextlib
     
     # Suppress asyncio CancelledError noise during shutdown
     # uvicorn creates its own event loop, so we patch asyncio.get_event_loop()
@@ -2173,6 +2174,7 @@ def cmd_migrate(args):
     """Run database migrations."""
     try:
         import subprocess
+
         from faramesh.server.storage import SQLiteStore
 
         settings = get_settings()

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
 
 import psycopg2
 import psycopg2.extras
@@ -405,10 +405,10 @@ class PostgresStore:
         meta: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Create an event in the action_events table."""
-        import uuid as uuid_module
-        from datetime import datetime
         import json
         import logging
+        import uuid as uuid_module
+        from datetime import datetime
         
         self._ensure_initialized()
         event_id = str(uuid_module.uuid4())

@@ -1,20 +1,20 @@
 # src/faramesh/server/executor.py
 from __future__ import annotations
 
+import logging
 import subprocess
 import threading
-import logging
 from datetime import datetime
 from typing import Any
 
-from .models import Action, Status, Decision
+from .models import Action, Decision, Status
 from .policy_engine import PolicyEngine
-from .settings import get_settings
 from .security.guard import (
+    SecurityError,
     enforce_no_side_effects,
     sanitize_shell_command,
-    SecurityError,
 )
+from .settings import get_settings
 
 
 class ActionExecutor:
@@ -277,7 +277,6 @@ class ActionExecutor:
                 # Deny by default for safety
                 decision = Decision.DENY
                 reason = f"Policy evaluation error: {str(e)}"
-                risk = "high"
 
             # 2) apply decision
             if decision == Decision.DENY:
