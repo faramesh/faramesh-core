@@ -203,6 +203,72 @@ faramesh tail
 - Copy curl commands with one click
 - Demo mode indicator (if active)
 
+## Architecture
+
+High‑level data flow:
+
+```text
+┌─────────┐      submit        ┌─────────────┐        decision        ┌───────────────┐
+│ Agents  │ ─────────────────▶ │ Faramesh    │ ─────────────────────▶ │ Executors /   │
+│ (LLMs,  │                    │ API Server  │                        │ Tools         │
+└─────────┘                    │  / Policy   │                        └───────────────┘
+       ▲                       │  Engine     │                               │
+       │                       └─────────────┘                               │ report
+       │                              ▲                                      │ result
+       │                              │                                      ▼
+       │                        ┌─────────────┐                       ┌──────────────┐
+       │                        │ Web UI &   │◀──────────────────────▶│ Storage /    │
+       └──────────────────────▶ │ CLI (HITL) │        events / state   │ DB / Metrics │
+                                └─────────────┘                       └──────────────┘
+```
+
+### Execution Gate Flow
+
+The deterministic execution gate ensures all actions pass through canonicalization, profile evaluation, and policy evaluation before any execution occurs.
+
+```mermaid
+flowchart TD
+    client[Client/SDK] -->|submit action| actionsEndpoint["POST /v1/actions"]
+    client -->|decide only| gateEndpoint["POST /v1/gate/decide"]
+
+    subgraph decisionEngine[Decision Engine]
+      canon[Canonicalize + request_hash]
+      profileEval[Profile evaluation]
+      policyEval[PolicyEngine.evaluate]
+      outcomeMap[Map to outcome + reason_code]
+      versionBind[Bind policy/profile/runtime + provenance_id]
+    end
+
+    actionsEndpoint --> decisionEngine
+    gateEndpoint --> decisionEngine
+
+    decisionEngine -->|EXECUTE outcome| executor[ActionExecutor]
+    decisionEngine -->|ABSTAIN/HALT| noExec["No execution"]
+
+    executor --> eventsDB[(action_events with hash chain)]
+    actionsEndpoint --> actionsDB[(actions table)]
+    gateEndpoint --> decisionsOnly["Decision response only"]
+
+    eventsDB --> cliVerify["faramesh verify-log"]
+    actionsDB --> cliReplay["faramesh replay-decision"]
+```
+
+**Decision Outcomes:**
+| Outcome | Description | Next Step |
+|---------|-------------|-----------|
+| **EXECUTE** | Action is allowed to proceed | Executor runs the action |
+| **ABSTAIN** | Action requires human approval | Wait for approval |
+| **HALT** | Action is denied | No execution, logged |
+
+**Version-Bound Fields:** Every decision includes deterministic metadata: `request_hash`, `policy_hash`, `profile_hash`, `runtime_version`, and `provenance_id` for replay verification.
+
+See also:
+
+- `Architecture.png` for a visual diagram.
+- `docs/API.md` for endpoint‑level details.
+
+
+
 ## Core Concepts
 
 ### Actions
@@ -1090,69 +1156,7 @@ services:
       - ./data:/app/data
 ```
 
-## Architecture
 
-High‑level data flow:
-
-```text
-┌─────────┐      submit        ┌─────────────┐        decision        ┌───────────────┐
-│ Agents  │ ─────────────────▶ │ Faramesh    │ ─────────────────────▶ │ Executors /   │
-│ (LLMs,  │                    │ API Server  │                        │ Tools         │
-└─────────┘                    │  / Policy   │                        └───────────────┘
-       ▲                       │  Engine     │                               │
-       │                       └─────────────┘                               │ report
-       │                              ▲                                      │ result
-       │                              │                                      ▼
-       │                        ┌─────────────┐                       ┌──────────────┐
-       │                        │ Web UI &   │◀──────────────────────▶│ Storage /    │
-       └──────────────────────▶ │ CLI (HITL) │        events / state   │ DB / Metrics │
-                                └─────────────┘                       └──────────────┘
-```
-
-### Execution Gate Flow
-
-The deterministic execution gate ensures all actions pass through canonicalization, profile evaluation, and policy evaluation before any execution occurs.
-
-```mermaid
-flowchart TD
-    client[Client/SDK] -->|submit action| actionsEndpoint["POST /v1/actions"]
-    client -->|decide only| gateEndpoint["POST /v1/gate/decide"]
-
-    subgraph decisionEngine[Decision Engine]
-      canon[Canonicalize + request_hash]
-      profileEval[Profile evaluation]
-      policyEval[PolicyEngine.evaluate]
-      outcomeMap[Map to outcome + reason_code]
-      versionBind[Bind policy/profile/runtime + provenance_id]
-    end
-
-    actionsEndpoint --> decisionEngine
-    gateEndpoint --> decisionEngine
-
-    decisionEngine -->|EXECUTE outcome| executor[ActionExecutor]
-    decisionEngine -->|ABSTAIN/HALT| noExec["No execution"]
-
-    executor --> eventsDB[(action_events with hash chain)]
-    actionsEndpoint --> actionsDB[(actions table)]
-    gateEndpoint --> decisionsOnly["Decision response only"]
-
-    eventsDB --> cliVerify["faramesh verify-log"]
-    actionsDB --> cliReplay["faramesh replay-decision"]
-```
-
-**Decision Outcomes:**
-| Outcome | Description | Next Step |
-|---------|-------------|-----------|
-| **EXECUTE** | Action is allowed to proceed | Executor runs the action |
-| **ABSTAIN** | Action requires human approval | Wait for approval |
-| **HALT** | Action is denied | No execution, logged |
-
-**Version-Bound Fields:** Every decision includes deterministic metadata: `request_hash`, `policy_hash`, `profile_hash`, `runtime_version`, and `provenance_id` for replay verification.
-
-See also:
-
-- `Architecture.png` for a visual diagram.
-- `docs/API.md` for endpoint‑level details.
 
 ## Contributing
 
