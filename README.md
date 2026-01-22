@@ -6,7 +6,7 @@ Faramesh Core is an open-core execution governor that provides policy-driven gov
 
 ## Where does Faramesh sit (Architecture)
 
-![Faramesh Architecture](https://github.com/faramesh/faramesh-core/blob/main/faramesh-core/Faramesh_Architecture.png?raw=true)
+![Faramesh Architecture](https://github.com/faramesh/faramesh-core/blob/main/Faramesh_Architecture.png)
 
 
 ## Faramesh Cloud Products
