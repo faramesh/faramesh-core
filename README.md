@@ -36,6 +36,19 @@ Faramesh OSS is the engine, Nexus and Horizon are the accelerators.
 - **SDK Integration**: Python and Node.js SDKs for easy agent integration
 - **LangChain Support**: Drop-in wrapper for LangChain tools
 
+### Quick Links
+
+- **[Framework Integrations](https://github.com/faramesh/faramesh-docs/blob/main/INTEGRATIONS.md)** - One-line governance for LangChain, CrewAI, AutoGen, MCP, LangGraph, LlamaIndex
+- **[LangChain Integration Demo](https://github.com/faramesh/faramesh-examples/tree/main/langchain)** - Runnable demo showing how to wrap LangChain tools with Faramesh governance
+- **[CrewAI Integration](https://github.com/faramesh/faramesh-examples/blob/main/crewai/README.md)** - One-line governance for CrewAI agents
+- **[AutoGen Integration](https://github.com/faramesh/faramesh-examples/blob/main/autogen/README.md)** - One-line governance for AutoGen function calling
+- **[MCP Integration](https://github.com/faramesh/faramesh-examples/blob/main/mcp/README.md)** - One-line governance for MCP tools
+- **[LangGraph Integration](https://github.com/faramesh/faramesh-examples/blob/main/langgraph/README.md)** - Simple graph nodes with Faramesh governance
+- **[LlamaIndex Integration](https://github.com/faramesh/faramesh-examples/blob/main/llamaindex/README.md)** - Tool wrapping for LlamaIndex agents
+- **[Docker Compose with Demo Agent](https://github.com/faramesh/faramesh-examples/blob/main/docker/README.md)** - One-click setup with continuous demo agent
+- **[Policy Packs](https://github.com/faramesh/faramesh-docs/blob/main/POLICY_PACKS.md)** - Ready-to-use policy templates for common scenarios
+- **[Govern Your Own Tool Tutorial](http://github.com/faramesh/faramesh-docs/blob/main/govern-your-own-tool.md)** - Step-by-step guide to wrapping custom tools
+
 ### 🚀 Quick Start (TL;DR)
 
 ```bash
@@ -833,7 +846,7 @@ response = agent.run("List files in /tmp and fetch a URL")
 4. **Execute**: Only executes if allowed/approved
 5. **Report**: Reports result back to Faramesh
 
-See [`examples/langchain/`](examples/langchain/) for a complete runnable demo with HTTP and shell tools.
+See [`examples/langchain/`](https://github.com/faramesh/faramesh-examples/blob/main/langchain/README.md) for a complete runnable demo with HTTP and shell tools.
 
 ## Docker Deployment
 
@@ -1044,16 +1057,16 @@ cp .env.example .env
 
 ### Quick Links
 
-- **[Framework Integrations](docs/INTEGRATIONS.md)** - One-line governance for LangChain, CrewAI, AutoGen, MCP, LangGraph, LlamaIndex
-- **[LangChain Integration Demo](examples/langchain/)** - Runnable demo showing how to wrap LangChain tools with Faramesh governance
-- **[CrewAI Integration](examples/crewai/)** - One-line governance for CrewAI agents
-- **[AutoGen Integration](examples/autogen/)** - One-line governance for AutoGen function calling
-- **[MCP Integration](examples/mcp/)** - One-line governance for MCP tools
-- **[LangGraph Integration](examples/langgraph/)** - Simple graph nodes with Faramesh governance
-- **[LlamaIndex Integration](examples/llamaindex/)** - Tool wrapping for LlamaIndex agents
-- **[Docker Compose with Demo Agent](docker-compose.yaml)** - One-click setup with continuous demo agent
-- **[Policy Packs](policies/packs/)** - Ready-to-use policy templates for common scenarios
-- **[Govern Your Own Tool Tutorial](docs/govern-your-own-tool.md)** - Step-by-step guide to wrapping custom tools
+- **[Framework Integrations](https://github.com/faramesh/faramesh-docs/blob/main/INTEGRATIONS.md)** - One-line governance for LangChain, CrewAI, AutoGen, MCP, LangGraph, LlamaIndex
+- **[LangChain Integration Demo](https://github.com/faramesh/faramesh-examples/tree/main/langchain)** - Runnable demo showing how to wrap LangChain tools with Faramesh governance
+- **[CrewAI Integration](https://github.com/faramesh/faramesh-examples/blob/main/crewai/README.md)** - One-line governance for CrewAI agents
+- **[AutoGen Integration](https://github.com/faramesh/faramesh-examples/blob/main/autogen/README.md)** - One-line governance for AutoGen function calling
+- **[MCP Integration](https://github.com/faramesh/faramesh-examples/blob/main/mcp/README.md)** - One-line governance for MCP tools
+- **[LangGraph Integration](https://github.com/faramesh/faramesh-examples/blob/main/langgraph/README.md)** - Simple graph nodes with Faramesh governance
+- **[LlamaIndex Integration](https://github.com/faramesh/faramesh-examples/blob/main/llamaindex/README.md)** - Tool wrapping for LlamaIndex agents
+- **[Docker Compose with Demo Agent](https://github.com/faramesh/faramesh-examples/blob/main/docker/README.md)** - One-click setup with continuous demo agent
+- **[Policy Packs](https://github.com/faramesh/faramesh-docs/blob/main/POLICY_PACKS.md)** - Ready-to-use policy templates for common scenarios
+- **[Govern Your Own Tool Tutorial](http://github.com/faramesh/faramesh-docs/blob/main/govern-your-own-tool.md)** - Step-by-step guide to wrapping custom tools
 
 ### Example 1: Basic Agent Integration
 
@@ -1243,7 +1256,7 @@ If installation fails, upgrade pip: `python3 -m pip install --upgrade pip`
 
 ## Support
 
-- **Documentation**: [docs/](docs/)
+- **Documentation**: [docs/](http://github.com/faramesh/faramesh-docs)
 - **Issues**: [GitHub Issues](https://github.com/faramesh/faramesh-core/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/faramesh/faramesh-core/discussions)
 
@@ -1486,7 +1499,7 @@ Faramesh focuses specifically on governance and safety—it doesn't build agents
 
 No. Faramesh integrates via SDKs that wrap your existing tools. Your agents call the SDK instead of tools directly, and Faramesh handles the governance layer transparently.
 
-See [Govern Your Own Tool](docs/govern-your-own-tool.md) for a step-by-step tutorial on wrapping custom tools.
+See [Govern Your Own Tool](https://github.com/faramesh/faramesh-docs/blob/main/govern-your-own-tool.md) for a step-by-step tutorial on wrapping custom tools.
 
 ### What happens if Faramesh is down?
 
