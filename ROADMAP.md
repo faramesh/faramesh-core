@@ -172,7 +172,7 @@ We welcome community input on the roadmap:
 
 - **GitHub Discussions**: [Share your ideas](https://github.com/faramesh/faramesh-core/discussions)
 - **GitHub Issues**: [Request features](https://github.com/faramesh/faramesh-core/issues/new)
-- **Design Partners**: [Join as a design partner](docs/DESIGN_PARTNER_GUIDE.md)
+- **Design Partners**: [Join as a design partner](https://github.com/faramesh/faramesh-docs/blob/main/DESIGN_PARTNER_GUIDE.md)
 
 ---
 
@@ -203,4 +203,4 @@ We welcome community input on the roadmap:
 - [Changelog](CHANGELOG.md) - Detailed release notes
 - [Architecture](ARCHITECTURE.md) - System architecture
 - [Contributing](CONTRIBUTING.md) - How to contribute
-- [Design Partner Guide](docs/DESIGN_PARTNER_GUIDE.md) - Early adopter program
+- [Design Partner Guide](https://github.com/faramesh/faramesh-docs/blob/main/DESIGN_PARTNER_GUIDE.md) - Early adopter program
