@@ -122,6 +122,6 @@ We follow responsible disclosure practices:
 
 ## See Also
 
-- [Security Guardrails](docs/SECURITY-GUARDRAILS.md) - Security mechanisms
+- [Security Guardrails](https://github.com/faramesh/faramesh-docs/blob/main/SECURITY-GUARDRAILS.md) - Security mechanisms
 - [Error Handling](https://github.com/faramesh/faramesh-docs/blob/main/ERROR-HANDLING.md) - Error codes and handling
 - [Policy Configuration](https://github.com/faramesh/faramesh-docs/blob/main/Policies.md) - Policy security
