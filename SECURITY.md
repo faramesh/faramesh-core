@@ -27,7 +27,7 @@ We provide security updates for the following versions:
 
 ### Option 2: Email
 
-Email: **security@faramesh.dev** (if available)
+Email: **security@faramesh.dev** 
 
 **Note:** If the email address is not available, use GitHub Security Advisory.
 
