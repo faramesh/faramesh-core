@@ -71,7 +71,7 @@ When reporting a vulnerability, please include:
 2. **No Hardcoded Secrets**: Never commit tokens or passwords
 3. **Dependency Updates**: Keep dependencies updated
 4. **Security Reviews**: Review code for security issues
-5. **Follow Guidelines**: Follow security guardrails in [SECURITY-GUARDRAILS.md](docs/SECURITY-GUARDRAILS.md)
+5. **Follow Guidelines**: Follow security guardrails in [SECURITY-GUARDRAILS.md](https://github.com/faramesh/faramesh-docs/blob/main/SECURITY-GUARDRAILS.md)
 
 ---
 
@@ -98,8 +98,6 @@ When reporting a vulnerability, please include:
 5. **Optimistic Locking**: Prevents race conditions
 6. **Authentication**: Bearer token authentication supported
 
-See [Security Guardrails](docs/SECURITY-GUARDRAILS.md) for detailed security mechanisms.
-
 ---
 
 ## Security Updates
@@ -125,5 +123,5 @@ We follow responsible disclosure practices:
 ## See Also
 
 - [Security Guardrails](docs/SECURITY-GUARDRAILS.md) - Security mechanisms
-- [Error Handling](docs/ERROR-HANDLING.md) - Error codes and handling
-- [Policy Configuration](docs/POLICIES.md) - Policy security
+- [Error Handling](https://github.com/faramesh/faramesh-docs/blob/main/ERROR-HANDLING.md) - Error codes and handling
+- [Policy Configuration](https://github.com/faramesh/faramesh-docs/blob/main/Policies.md) - Policy security
