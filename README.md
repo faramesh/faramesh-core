@@ -4,9 +4,10 @@
 
 Faramesh Core is an open-core execution governor that provides policy-driven governance, risk scoring, and human-in-the-loop approval for AI agent tool calls. Built for production use with a modern web UI, comprehensive CLI, and SDK integrations.
 
-**Where does Faramesh sit (Architecture)**
+##Where does Faramesh sit (Architecture)##
 
-Faramesh_Architecture.png
+![Uploading Faramesh_Architecture.png…]()
+
 
 ## Faramesh Cloud Products
 
