@@ -207,7 +207,7 @@ jobs:
           generate_release_notes: true
 
       - name: Trigger version sync workflow
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             await github.rest.actions.createWorkflowDispatch({
