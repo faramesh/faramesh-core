@@ -43,7 +43,7 @@ jobs:
           cp -r faramesh-ui/dist/* faramesh-core/src/faramesh/web/
 
       - name: Upload UI artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ui-assets
           path: faramesh-core/src/faramesh/web
@@ -83,7 +83,7 @@ jobs:
           twine check dist/*
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: dist
           path: dist/*
