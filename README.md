@@ -1,4 +1,12 @@
 <p align="center">
+  <a href="https://faramesh.dev">Website</a> &nbsp;·&nbsp;
+  <a href="https://faramesh.dev/blog">Blog</a> &nbsp;·&nbsp;
+  <a href="https://faramesh.dev/docs">Documentation</a> &nbsp;·&nbsp;
+  <a href="https://faramesh.dev/changelog">Changelog</a> &nbsp;·&nbsp;
+  <a href="https://faramesh.dev/stack">Stack</a>
+</p>
+
+<p align="center">
   <img src="logo.png" alt="Faramesh" width="220" />
 </p>
 
