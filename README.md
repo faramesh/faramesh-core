@@ -152,8 +152,8 @@ docker compose up
 
 | File | Contents |
 |---|---|
-| [QUICKSTART.md](QUICKSTART.md) | Step-by-step setup, SDK examples, CLI reference |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | How the execution gate works |
+| [QUICKSTART.md](docs/QUICKSTART.md) | Step-by-step setup, SDK examples, CLI reference |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the execution gate works |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | [CHANGELOG.md](CHANGELOG.md) | What changed |
 | [policies/examples/](policies/examples/) | Ready-to-use policy examples |
