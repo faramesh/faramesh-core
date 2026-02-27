@@ -188,7 +188,7 @@ See [Security Guardrails](docs/SECURITY-GUARDRAILS.md) for details.
 
 Please report security vulnerabilities via:
 - **GitHub Security Advisory**: [Create a security advisory](https://github.com/faramesh/faramesh-core/security/advisories/new)
-- **Email**: security@faramesh.io (if available)
+- **Email**: security@faramesh.dev (if available)
 
 See [SECURITY.md](../SECURITY.md) for details.
 
