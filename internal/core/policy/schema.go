@@ -57,11 +57,16 @@ type Match struct {
 	When string `yaml:"when"`
 }
 
-// Budget defines cost and call limits.
+// Budget defines cost and call limits enforced pre-execution.
 type Budget struct {
-	DailyUSD   float64 `yaml:"daily_usd"`
+	// DailyUSD is the maximum USD spend per calendar day (persisted, survives restarts).
+	DailyUSD float64 `yaml:"daily_usd"`
+	// SessionUSD is the maximum USD spend per session.
 	SessionUSD float64 `yaml:"session_usd"`
-	OnExceed   string  `yaml:"on_exceed"`
+	// MaxCalls is the maximum total tool calls per session (all tools).
+	MaxCalls int64 `yaml:"max_calls"`
+	// OnExceed is the effect when a limit is hit: "deny" or "defer".
+	OnExceed string `yaml:"on_exceed"`
 }
 
 // Session configures session behavior.

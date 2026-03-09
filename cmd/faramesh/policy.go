@@ -1,13 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/faramesh/faramesh-core/internal/core"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
+	"github.com/faramesh/faramesh-core/internal/core/session"
+	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 )
 
 var policyCmd = &cobra.Command{
@@ -34,9 +38,47 @@ var policyInspectCmd = &cobra.Command{
 	RunE:  runPolicyInspect,
 }
 
+var policyTestCmd = &cobra.Command{
+	Use:   "test <policy.yaml>",
+	Short: "Evaluate a tool call against a policy and print the decision",
+	Long: `Dry-run a governance decision without a running daemon.
+
+  faramesh policy test policy.yaml --tool stripe/refund --args '{"amount":500}'
+  faramesh policy test policy.yaml --tool shell/exec --args '{"cmd":"rm -rf /"}'
+
+Useful for policy authoring, CI, and demos.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runPolicyTest,
+}
+
+var policyDiffCmd = &cobra.Command{
+	Use:   "diff <old.yaml> <new.yaml>",
+	Short: "Show rule-level diff between two policy versions",
+	Long: `Compare two policy files and show which rules were added, removed, or changed.
+
+  faramesh policy diff policies/v1.yaml policies/v2.yaml
+
+Useful before deploying a policy update.`,
+	Args: cobra.ExactArgs(2),
+	RunE: runPolicyDiff,
+}
+
+var (
+	policyTestTool string
+	policyTestArgs string
+	policyTestJSON bool
+)
+
 func init() {
+	policyTestCmd.Flags().StringVar(&policyTestTool, "tool", "", "tool ID to test (required)")
+	policyTestCmd.Flags().StringVar(&policyTestArgs, "args", "{}", "tool arguments as JSON object")
+	policyTestCmd.Flags().BoolVar(&policyTestJSON, "json", false, "output full decision as JSON")
+	_ = policyTestCmd.MarkFlagRequired("tool")
+
 	policyCmd.AddCommand(policyValidateCmd)
 	policyCmd.AddCommand(policyInspectCmd)
+	policyCmd.AddCommand(policyTestCmd)
+	policyCmd.AddCommand(policyDiffCmd)
 }
 
 func runPolicyValidate(cmd *cobra.Command, args []string) error {
@@ -104,6 +146,124 @@ func runPolicyInspect(cmd *cobra.Command, args []string) error {
 		}
 	}
 	return nil
+}
+
+func runPolicyTest(cmd *cobra.Command, args []string) error {
+	path := args[0]
+	doc, version, err := policy.LoadFile(path)
+	if err != nil {
+		return fmt.Errorf("load policy: %w", err)
+	}
+	engine, err := policy.NewEngine(doc, version)
+	if err != nil {
+		return fmt.Errorf("compile policy: %w", err)
+	}
+
+	// Parse --args JSON.
+	var toolArgs map[string]any
+	if err := json.Unmarshal([]byte(policyTestArgs), &toolArgs); err != nil {
+		return fmt.Errorf("parse --args: %w", err)
+	}
+
+	// Build a minimal pipeline (no WAL, no SQLite, no deferrals).
+	pip := core.NewPipeline(core.Config{
+		Engine:   engine,
+		Sessions: session.NewManager(),
+		Defers:   deferwork.NewWorkflow(""),
+	})
+
+	req := core.CanonicalActionRequest{
+		CallID:           "policy-test",
+		AgentID:          "policy-test-agent",
+		SessionID:        "policy-test-session",
+		ToolID:           policyTestTool,
+		Args:             toolArgs,
+		InterceptAdapter: "cli",
+	}
+	d := pip.Evaluate(req)
+
+	if policyTestJSON {
+		out, _ := json.MarshalIndent(d, "", "  ")
+		fmt.Println(string(out))
+		return nil
+	}
+
+	effectColor := ruleEffectColor(string(d.Effect))
+	bold := color.New(color.Bold)
+	fmt.Println()
+	bold.Printf("  Tool:    ")
+	fmt.Printf("%s\n", policyTestTool)
+	bold.Printf("  Effect:  ")
+	effectColor.Printf("%s\n", d.Effect)
+	bold.Printf("  Rule:    ")
+	fmt.Printf("%s\n", or(d.RuleID, "(default deny)"))
+	bold.Printf("  Reason:  ")
+	fmt.Printf("%s\n", d.Reason)
+	bold.Printf("  Code:    ")
+	fmt.Printf("%s\n", d.ReasonCode)
+	fmt.Println()
+	return nil
+}
+
+func runPolicyDiff(cmd *cobra.Command, args []string) error {
+	oldDoc, oldVer, err := policy.LoadFile(args[0])
+	if err != nil {
+		return fmt.Errorf("load %s: %w", args[0], err)
+	}
+	newDoc, newVer, err := policy.LoadFile(args[1])
+	if err != nil {
+		return fmt.Errorf("load %s: %w", args[1], err)
+	}
+
+	bold := color.New(color.Bold)
+	green := color.New(color.FgGreen)
+	red := color.New(color.FgRed)
+	yellow := color.New(color.FgYellow)
+
+	fmt.Println()
+	bold.Printf("Policy diff\n")
+	fmt.Printf("  old: %s  [%s]  %d rules\n", args[0], oldVer, len(oldDoc.Rules))
+	fmt.Printf("  new: %s  [%s]  %d rules\n", args[1], newVer, len(newDoc.Rules))
+	fmt.Println()
+
+	oldByID := make(map[string]policy.Rule)
+	for _, r := range oldDoc.Rules {
+		oldByID[r.ID] = r
+	}
+	newByID := make(map[string]policy.Rule)
+	for _, r := range newDoc.Rules {
+		newByID[r.ID] = r
+	}
+
+	changed := false
+	for _, r := range newDoc.Rules {
+		if old, ok := oldByID[r.ID]; !ok {
+			green.Printf("  + %-32s  %s\n", r.ID, r.Effect)
+			changed = true
+		} else if old.Effect != r.Effect || old.Match.When != r.Match.When || old.Match.Tool != r.Match.Tool {
+			yellow.Printf("  ~ %-32s  %s → %s\n", r.ID, old.Effect, r.Effect)
+			changed = true
+		}
+	}
+	for _, r := range oldDoc.Rules {
+		if _, ok := newByID[r.ID]; !ok {
+			red.Printf("  - %-32s  %s\n", r.ID, r.Effect)
+			changed = true
+		}
+	}
+
+	if !changed {
+		color.New(color.FgHiBlack).Println("  (no rule changes)")
+	}
+	fmt.Println()
+	return nil
+}
+
+func or(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 func ruleEffectColor(effect string) *color.Color {

@@ -1,7 +1,8 @@
 // Package session manages per-agent session state: call counters, history
-// ring buffer, and the kill switch. All operations are safe for concurrent
-// use. The in-process sync.Map backend is used for MVP; the interface is
-// designed to support a Redis-backed implementation as a drop-in replacement.
+// ring buffer, cost accumulators, and the kill switch. All operations are
+// safe for concurrent use. The in-process sync.Map backend is used for MVP;
+// the interface is designed to support a Redis-backed implementation as a
+// drop-in replacement.
 package session
 
 import (
@@ -19,11 +20,21 @@ type HistoryEntry struct {
 
 // State holds runtime state for a single agent session.
 type State struct {
-	mu        sync.Mutex
-	callCount int64
-	history   []HistoryEntry
+	mu         sync.Mutex
+	callCount  int64 // atomic
+	history    []HistoryEntry
 	maxHistory int
-	killed    atomic.Bool
+	killed     atomic.Bool
+
+	// Cost tracking — session-scoped, resets with session.
+	sessionCostMu sync.Mutex
+	sessionCostUSD float64
+
+	// Daily cost — persists across sessions; resets at midnight.
+	// In the MVP this is in-memory only. Production uses PostgreSQL.
+	dailyCostMu  sync.Mutex
+	dailyCostUSD float64
+	dailyCostDay string // "2006-01-02" — day the counter applies to
 }
 
 // NewState creates a new session state with a history buffer of the given size.
@@ -42,6 +53,42 @@ func (s *State) IncrCallCount() int64 {
 // CallCount returns the current call count.
 func (s *State) CallCount() int64 {
 	return atomic.LoadInt64(&s.callCount)
+}
+
+// AddCost records a tool call cost in USD against both the session and daily accumulators.
+func (s *State) AddCost(costUSD float64) {
+	today := time.Now().UTC().Format("2006-01-02")
+
+	s.sessionCostMu.Lock()
+	s.sessionCostUSD += costUSD
+	s.sessionCostMu.Unlock()
+
+	s.dailyCostMu.Lock()
+	if s.dailyCostDay != today {
+		// New calendar day — reset daily counter.
+		s.dailyCostUSD = 0
+		s.dailyCostDay = today
+	}
+	s.dailyCostUSD += costUSD
+	s.dailyCostMu.Unlock()
+}
+
+// CurrentCostUSD returns the total cost accumulated in this session.
+func (s *State) CurrentCostUSD() float64 {
+	s.sessionCostMu.Lock()
+	defer s.sessionCostMu.Unlock()
+	return s.sessionCostUSD
+}
+
+// DailyCostUSD returns the total cost accumulated today (UTC day).
+func (s *State) DailyCostUSD() float64 {
+	today := time.Now().UTC().Format("2006-01-02")
+	s.dailyCostMu.Lock()
+	defer s.dailyCostMu.Unlock()
+	if s.dailyCostDay != today {
+		return 0 // new day, counter not yet initialized
+	}
+	return s.dailyCostUSD
 }
 
 // RecordHistory adds a completed call to the history ring buffer.

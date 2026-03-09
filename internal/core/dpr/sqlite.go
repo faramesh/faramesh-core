@@ -93,6 +93,25 @@ func (s *Store) LastHash(agentID string) (string, error) {
 	return hash, err
 }
 
+// KnownAgents returns all distinct agent IDs that have DPR records.
+// Used to seed the in-memory chain hash cache on daemon restart.
+func (s *Store) KnownAgents() ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT agent_id FROM dpr_records`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var agents []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		agents = append(agents, id)
+	}
+	return agents, rows.Err()
+}
+
 // Close closes the database connection.
 func (s *Store) Close() error { return s.db.Close() }
 
