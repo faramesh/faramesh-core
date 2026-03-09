@@ -89,9 +89,23 @@ func runPolicyValidate(cmd *cobra.Command, args []string) error {
 		os.Exit(1)
 	}
 
-	errs := policy.Validate(doc)
-	if len(errs) > 0 {
-		for _, e := range errs {
+	diagnostics := policy.Validate(doc)
+
+	// Separate errors from warnings.
+	var hardErrors, warnings []string
+	for _, d := range diagnostics {
+		if len(d) > 8 && d[:8] == "warning:" {
+			warnings = append(warnings, d)
+		} else {
+			hardErrors = append(hardErrors, d)
+		}
+	}
+
+	for _, w := range warnings {
+		color.Yellow("  ⚠ %s", w[9:]) // strip "warning: " prefix
+	}
+	if len(hardErrors) > 0 {
+		for _, e := range hardErrors {
 			printError(e)
 		}
 		os.Exit(1)
@@ -107,7 +121,11 @@ func runPolicyValidate(cmd *cobra.Command, args []string) error {
 	green.Printf("✓ ")
 	fmt.Printf("%s  ", path)
 	color.New(color.FgHiBlack).Printf("[%s]  ", version)
-	fmt.Printf("%d rules  agent=%s\n", len(doc.Rules), doc.AgentID)
+	fmt.Printf("%d rules  agent=%s", len(doc.Rules), doc.AgentID)
+	if len(warnings) > 0 {
+		color.Yellow("  (%d warning(s))", len(warnings))
+	}
+	fmt.Println()
 	return nil
 }
 

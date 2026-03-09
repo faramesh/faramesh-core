@@ -25,6 +25,13 @@ type Tool struct {
 	ShadowSafe      bool     `yaml:"shadow_safe"`
 	Tags            []string `yaml:"tags"`
 	EndpointPattern string   `yaml:"endpoint_pattern"`
+
+	// CostUSD is the estimated cost in USD per successful call to this tool.
+	// Used by the pipeline to call sess.AddCost() after a PERMIT, enabling
+	// accurate session and daily budget enforcement.
+	// For dynamic-cost tools, set this to the base/minimum cost; the agent
+	// can call sess.AddCost() with the actual cost after the call returns.
+	CostUSD float64 `yaml:"cost_usd"`
 }
 
 // Phase defines a workflow phase that scopes which tools are visible.
