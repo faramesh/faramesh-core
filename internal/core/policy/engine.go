@@ -38,11 +38,33 @@ type EvalContext struct {
 	Args    map[string]any `expr:"args"`
 	Vars    map[string]any `expr:"vars"`
 	Session SessionCtx     `expr:"session"`
+	Tool    ToolCtx        `expr:"tool"`
 }
 
 // SessionCtx exposes session-level data to policy conditions.
+//
+// Available in policy when: expressions as:
+//   session.call_count         — total calls in this session
+//   session.history            — array of recent tool calls (newest first)
+//   session.cost_usd           — session cost in USD (when CostShield is enabled)
+//   session.daily_cost_usd     — daily cost in USD (when CostShield is enabled)
 type SessionCtx struct {
-	CallCount int64 `expr:"call_count"`
+	CallCount    int64            `expr:"call_count"`
+	History      []map[string]any `expr:"history"` // [{tool, effect, timestamp}, ...]
+	CostUSD      float64          `expr:"cost_usd"`
+	DailyCostUSD float64          `expr:"daily_cost_usd"`
+}
+
+// ToolCtx exposes per-tool metadata declared in the policy tools: block.
+//
+// Available in policy when: expressions as:
+//   tool.reversibility         — "irreversible" | "reversible" | "compensatable"
+//   tool.blast_radius          — "none" | "local" | "scoped" | "system" | "external"
+//   tool.tags                  — array of string tags
+type ToolCtx struct {
+	Reversibility string   `expr:"reversibility"`
+	BlastRadius   string   `expr:"blast_radius"`
+	Tags          []string `expr:"tags"`
 }
 
 // EvalResult is returned by Evaluate.
@@ -75,10 +97,23 @@ func (e *Engine) Evaluate(toolID string, ctx EvalContext) EvalResult {
 				continue
 			}
 		}
+		rc := rule.ReasonCode
+		if rc == "" {
+			switch strings.ToLower(rule.Effect) {
+			case "permit", "allow":
+				rc = "RULE_PERMIT"
+			case "deny", "halt":
+				rc = "RULE_DENY"
+			case "defer", "abstain", "pending":
+				rc = "RULE_DEFER"
+			case "shadow":
+				rc = "SHADOW_DENY"
+			}
+		}
 		return EvalResult{
 			Effect:     rule.Effect,
 			RuleID:     rule.ID,
-			ReasonCode: rule.ReasonCode,
+			ReasonCode: rc,
 			Reason:     rule.Reason,
 		}
 	}
@@ -86,7 +121,7 @@ func (e *Engine) Evaluate(toolID string, ctx EvalContext) EvalResult {
 	return EvalResult{
 		Effect:     e.doc.DefaultEffect,
 		RuleID:     "",
-		ReasonCode: "DEFAULT_EFFECT",
+		ReasonCode: "UNMATCHED_DENY",
 		Reason:     "no rule matched; applying default_effect",
 	}
 }
@@ -116,22 +151,52 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 	for k, v := range doc.Vars {
 		vars[k] = v
 	}
+	// Default zero-value environment (used at compile time for type checking).
 	env := map[string]any{
 		"vars": vars,
 		"args": map[string]any{},
 		"session": map[string]any{
-			"call_count": int64(0),
+			"call_count":     int64(0),
+			"history":        []map[string]any{},
+			"cost_usd":       float64(0),
+			"daily_cost_usd": float64(0),
+		},
+		"tool": map[string]any{
+			"reversibility": "",
+			"blast_radius":  "",
+			"tags":          []string{},
 		},
 	}
-	if ctx != nil {
-		env["args"] = ctx.Args
-		if ctx.Vars != nil {
-			env["vars"] = ctx.Vars
-		}
-		env["session"] = map[string]any{
-			"call_count": ctx.Session.CallCount,
-		}
+	if ctx == nil {
+		return env
 	}
+
+	env["args"] = ctx.Args
+	if ctx.Vars != nil {
+		env["vars"] = ctx.Vars
+	}
+
+	history := ctx.Session.History
+	if history == nil {
+		history = []map[string]any{}
+	}
+	env["session"] = map[string]any{
+		"call_count":     ctx.Session.CallCount,
+		"history":        history,
+		"cost_usd":       ctx.Session.CostUSD,
+		"daily_cost_usd": ctx.Session.DailyCostUSD,
+	}
+
+	tags := ctx.Tool.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	env["tool"] = map[string]any{
+		"reversibility": ctx.Tool.Reversibility,
+		"blast_radius":  ctx.Tool.BlastRadius,
+		"tags":          tags,
+	}
+
 	return env
 }
 
