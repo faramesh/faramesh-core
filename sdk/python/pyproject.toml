@@ -1,0 +1,43 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "faramesh"
+version = "0.1.0"
+description = "Unified governance plane for AI agents — pre-execution authorization, policy-as-code, tamper-evident audit trail"
+readme = "../../README.md"
+license = { file = "../../LICENSE" }
+requires-python = ">=3.9"
+keywords = ["ai", "agents", "governance", "policy", "security", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+# No mandatory dependencies. The daemon is a Go binary.
+# Optional: pydantic for model support, langchain for @tool integration.
+dependencies = []
+
+[project.optional-dependencies]
+pydantic = ["pydantic>=2.0"]
+langchain = ["langchain-core>=0.1"]
+all = ["faramesh[pydantic,langchain]"]
+
+[project.urls]
+Homepage = "https://faramesh.dev"
+Documentation = "https://faramesh.dev/docs"
+Repository = "https://github.com/faramesh/faramesh-core"
+Issues = "https://github.com/faramesh/faramesh-core/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["faramesh"]
