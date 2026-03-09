@@ -52,7 +52,8 @@ jobs:
         run: |
           GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
             go build \
-            -ldflags="-X main.version=${{ steps.version.outputs.version }} -s -w -trimpath" \
+            -trimpath \
+            -ldflags="-X main.version=${{ steps.version.outputs.version }} -s -w" \
             -o faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }} \
             ./cmd/faramesh
 
