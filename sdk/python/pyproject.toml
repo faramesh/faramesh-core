@@ -6,8 +6,8 @@ build-backend = "hatchling.build"
 name = "faramesh"
 version = "0.1.0"
 description = "Unified governance plane for AI agents — pre-execution authorization, policy-as-code, tamper-evident audit trail"
-readme = "../../README.md"
-license = { file = "../../LICENSE" }
+readme = "README.md"
+license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
 keywords = ["ai", "agents", "governance", "policy", "security", "llm"]
 classifiers = [
