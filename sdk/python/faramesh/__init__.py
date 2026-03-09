@@ -17,5 +17,5 @@ from .govern import govern
 from .client import FarameshClient
 from .exceptions import DenyError, DeferredError, FarameshError
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 __all__ = ["govern", "FarameshClient", "DenyError", "DeferredError", "FarameshError"]
