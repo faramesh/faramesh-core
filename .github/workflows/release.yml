@@ -5,218 +5,232 @@ on:
     tags:
       - 'v*.*.*'
 
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
 jobs:
-  build-ui:
-    name: Build UI Assets
+  # ─── Build cross-compiled Go binaries ───────────────────────────────────────
+  build-binaries:
+    name: Build ${{ matrix.suffix }}
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    
+
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64
+            ext: .exe
+
     steps:
-      - name: Checkout core
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
         with:
-          path: faramesh-core
+          go-version: "1.22"
+          cache: true
 
-      - name: Checkout UI
-        uses: actions/checkout@v4
-        with:
-          repository: faramesh/faramesh-ui
-          path: faramesh-ui
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install UI dependencies
-        working-directory: faramesh-ui
-        run: npm ci
-
-      - name: Build UI
-        working-directory: faramesh-ui
-        run: npm run build
-
-      - name: Copy UI assets to core
+      - name: Build
         run: |
-          mkdir -p faramesh-core/src/faramesh/web
-          cp -r faramesh-ui/dist/* faramesh-core/src/faramesh/web/
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build \
+            -ldflags="-X main.version=${{ steps.version.outputs.version }} -s -w -trimpath" \
+            -o faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }} \
+            ./cmd/faramesh
 
-      - name: Upload UI artifacts
-        uses: actions/upload-artifact@v4
+      - name: Generate checksum
+        run: |
+          sha256sum faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }} \
+            > faramesh-${{ matrix.suffix }}.sha256
+
+      - uses: actions/upload-artifact@v4
         with:
-          name: ui-assets
-          path: faramesh-core/src/faramesh/web
+          name: faramesh-${{ matrix.suffix }}
+          path: |
+            faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }}
+            faramesh-${{ matrix.suffix }}.sha256
           retention-days: 1
 
-  build-package:
-    name: Build Python Package
-    runs-on: ubuntu-latest
-    needs: build-ui
-    
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download UI assets
-        uses: actions/download-artifact@v4
-        with:
-          name: ui-assets
-          path: src/faramesh/web
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install build tools
-        run: |
-          python -m pip install --upgrade pip
-          pip install build wheel twine
-
-      - name: Build wheel and sdist
-        run: |
-          python -m build
-
-      - name: Check package
-        run: |
-          twine check dist/*
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/*
-          retention-days: 7
-
-  publish-pypi:
-    name: Publish to PyPI
-    runs-on: ubuntu-latest
-    needs: build-package
-    environment:
-      name: pypi
-      url: https://pypi.org/p/faramesh
-    permissions:
-      id-token: write  # For trusted publishing
-
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          packages-dir: dist/
-          print-hash: true
-
+  # ─── Docker image ────────────────────────────────────────────────────────────
   docker:
-    name: Build & Push Docker Image
+    name: Docker image
     runs-on: ubuntu-latest
-    needs: build-package
-    permissions:
-      contents: read
-      packages: write
+    needs: build-binaries
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Download UI assets
-        uses: actions/download-artifact@v4
-        with:
-          name: ui-assets
-          path: src/faramesh/web
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version from tag
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Extract version
         id: version
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Build and push Docker image
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ steps.version.outputs.version }}
           tags: |
-            ghcr.io/faramesh/faramesh-core:${{ steps.version.outputs.tag }}
-            ghcr.io/faramesh/faramesh-core:latest
+            ghcr.io/faramesh/faramesh:${{ steps.version.outputs.tag }}
+            ghcr.io/faramesh/faramesh:latest
+            faramesh/faramesh:${{ steps.version.outputs.tag }}
+            faramesh/faramesh:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+        continue-on-error: true
 
+  # ─── GitHub Release with binaries ────────────────────────────────────────────
   github-release:
-    name: Create GitHub Release
+    name: GitHub Release
     runs-on: ubuntu-latest
-    needs: [publish-pypi, docker]
-    permissions:
-      contents: write
-      workflows: write
+    needs: build-binaries
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Download artifacts
+      - name: Download all binaries
         uses: actions/download-artifact@v4
         with:
-          name: dist
-          path: dist
+          path: artifacts/
+          merge-multiple: true
 
-      - name: Extract version from tag
+      - name: Extract version
         id: version
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      - name: Generate release notes
-        id: release_notes
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Create release body
         run: |
-          VERSION=${{ steps.version.outputs.version }}
-          # Extract changelog section for this version
-          if [ -f CHANGELOG.md ]; then
-            awk "/^## \[$VERSION\]/,/^## \[/" CHANGELOG.md | sed '$d' > release_notes.txt
-          else
-            echo "## Changes in v$VERSION" > release_notes.txt
-            echo "" >> release_notes.txt
-            echo "See [CHANGELOG.md](CHANGELOG.md) for details." >> release_notes.txt
-          fi
+          cat > release_notes.md << 'EOF'
+          ## faramesh v${{ steps.version.outputs.version }}
+
+          ### Install
+
+          **macOS / Linux:**
+          ```bash
+          curl -fsSL https://faramesh.dev/install.sh | sh
+          ```
+
+          **Direct download:**
+          | Platform | Binary |
+          |---|---|
+          | Linux amd64 | `faramesh-linux-amd64` |
+          | Linux arm64 | `faramesh-linux-arm64` |
+          | macOS amd64 | `faramesh-darwin-amd64` |
+          | macOS arm64 (Apple Silicon) | `faramesh-darwin-arm64` |
+          | Windows amd64 | `faramesh-windows-amd64.exe` |
+
+          **Python SDK:**
+          ```bash
+          pip install faramesh==${{ steps.version.outputs.version }}
+          ```
+
+          **Docker:**
+          ```bash
+          docker run --rm ghcr.io/faramesh/faramesh:v${{ steps.version.outputs.version }} demo
+          ```
+
+          ### Quick start
+          ```bash
+          faramesh demo
+          faramesh init
+          faramesh serve --policy policy.yaml
+          ```
+
+          ### Verify checksums
+          ```bash
+          sha256sum -c faramesh-linux-amd64.sha256
+          ```
+          EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
-          body_path: release_notes.txt
+          name: faramesh v${{ steps.version.outputs.version }}
+          body_path: release_notes.md
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          files: artifacts/*
           generate_release_notes: true
 
-      - name: Trigger version sync workflow
-        uses: actions/github-script@v7
+  # ─── Python SDK to PyPI ──────────────────────────────────────────────────────
+  publish-python-sdk:
+    name: Publish Python SDK to PyPI
+    runs-on: ubuntu-latest
+    needs: github-release
+    environment:
+      name: pypi
+      url: https://pypi.org/p/faramesh
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - uses: actions/setup-python@v5
         with:
-          script: |
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'version-sync.yml',
-              ref: 'main',
-              inputs: {
-                version: '${{ steps.version.outputs.version }}',
-                repos: 'python-sdk,node-sdk'
-              }
-            })
+          python-version: "3.11"
+
+      - name: Set SDK version
+        working-directory: sdk/python
+        run: |
+          sed -i 's/^version = .*/version = "${{ steps.version.outputs.version }}"/' pyproject.toml
+
+      - name: Build SDK wheel
+        working-directory: sdk/python
+        run: |
+          pip install hatchling build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdk/python/dist/
+          print-hash: true
+        continue-on-error: true
