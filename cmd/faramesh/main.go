@@ -24,7 +24,9 @@ Quick start:
   faramesh init                             # Detect env, generate config
   faramesh serve --policy policy.yaml      # Start the daemon
   faramesh policy validate policy.yaml     # Validate a policy file
-  faramesh audit tail                       # Stream live decisions`,
+  faramesh audit tail                       # Stream live decisions
+  faramesh auth login                       # Authenticate with Horizon cloud
+  faramesh auth status                      # Show Horizon auth status`,
 	SilenceUsage: true,
 	Version:      version,
 }
@@ -36,6 +38,28 @@ func init() {
 	rootCmd.AddCommand(auditCmd)
 	rootCmd.AddCommand(initCmd)
 	rootCmd.AddCommand(agentCmd)
+	rootCmd.AddCommand(authCmd)
+
+	// Convenience top-level aliases for login/logout/whoami.
+	rootCmd.AddCommand(&cobra.Command{
+		Use:    "login",
+		Short:  "Authenticate with Faramesh Horizon (alias: auth login)",
+		Hidden: true,
+		RunE:   runAuthLogin,
+	})
+	rootCmd.AddCommand(&cobra.Command{
+		Use:    "logout",
+		Short:  "Remove stored Horizon credentials (alias: auth logout)",
+		Hidden: true,
+		RunE:   authLogoutCmd.RunE,
+	})
+	rootCmd.AddCommand(&cobra.Command{
+		Use:     "whoami",
+		Short:   "Show Horizon authentication status (alias: auth status)",
+		Hidden:  true,
+		Aliases: []string{},
+		RunE:    runAuthStatus,
+	})
 
 	rootCmd.SetVersionTemplate(func() string {
 		bold := color.New(color.Bold)
