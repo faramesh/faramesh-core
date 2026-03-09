@@ -1,49 +1,23 @@
-# Multi-stage Dockerfile for Faramesh Core
-FROM python:3.11-slim as builder
+# Build stage
+FROM golang:1.22-alpine AS builder
+RUN apk add --no-cache ca-certificates
 
-WORKDIR /build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements and install Python dependencies
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir build wheel && \
-    python -m pip install --upgrade pip
-
-# Copy source and build package
 COPY . .
-RUN python -m build && \
-    pip install --no-cache-dir dist/*.whl
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-X main.version=${VERSION} -s -w" \
+    -o /faramesh \
+    ./cmd/faramesh
 
-# Runtime stage
-FROM python:3.11-slim
+# Final image — distroless/static for minimal attack surface.
+# The binary is ~28MB; the image is ~30MB total.
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=builder /faramesh /faramesh
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-WORKDIR /app
-
-# Install runtime dependencies only
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy installed package from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
-# Create non-root user
-RUN useradd -m -u 1000 faramesh && \
-    chown -R faramesh:faramesh /app
-
-USER faramesh
-
-# Expose port
-EXPOSE 8000
-
-# Health check (using /metrics endpoint as health check)
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/metrics', timeout=2)" || exit 1
-
-# Default command
-CMD ["faramesh", "serve", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/faramesh"]
+CMD ["--help"]
