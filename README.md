@@ -23,8 +23,8 @@
 
 ## See it work in 30 seconds
 
-```
-brew install faramesh/tap/faramesh
+```bash
+brew install faramesh/tap/faramesh   # macOS / Linux with Homebrew
 faramesh demo
 ```
 
@@ -271,22 +271,22 @@ The OSS Core gives away everything that runs at the execution boundary — the p
 
 ## Install
 
-**macOS / Linux (brew):**
+**macOS / Linux — Homebrew (recommended):**
 ```bash
 brew install faramesh/tap/faramesh
 ```
 
-**macOS / Linux (direct):**
+**macOS / Linux — install script:**
 ```bash
-curl -fsSL https://faramesh.dev/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh | sh
 ```
 
 **Docker:**
 ```bash
-docker run --rm faramesh/faramesh demo
+docker run --rm ghcr.io/faramesh/faramesh:latest demo
 ```
 
-**Go:**
+**Go toolchain:**
 ```bash
 go install github.com/faramesh/faramesh-core/cmd/faramesh@latest
 ```
@@ -295,6 +295,10 @@ go install github.com/faramesh/faramesh-core/cmd/faramesh@latest
 ```bash
 pip install faramesh
 ```
+
+**Windows — direct download:**
+
+Download `faramesh-windows-amd64.exe` from the [latest release](https://github.com/faramesh/faramesh-core/releases/latest), rename to `faramesh.exe`, and add to your `PATH`.
 
 ---
 

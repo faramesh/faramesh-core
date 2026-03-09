@@ -149,9 +149,14 @@ jobs:
 
           ### Install
 
-          **macOS / Linux:**
+          **macOS / Linux — Homebrew:**
           ```bash
-          curl -fsSL https://faramesh.dev/install.sh | sh
+          brew install faramesh/tap/faramesh
+          ```
+
+          **macOS / Linux — install script:**
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh | sh
           ```
 
           **Direct download:**
@@ -170,7 +175,7 @@ jobs:
 
           **Docker:**
           ```bash
-          docker run --rm ghcr.io/faramesh/faramesh:v${{ steps.version.outputs.version }} demo
+          docker run --rm ghcr.io/faramesh/faramesh:latest demo
           ```
 
           ### Quick start
@@ -195,6 +200,109 @@ jobs:
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
           files: artifacts/*
           generate_release_notes: true
+
+  # ─── Update Homebrew formula ─────────────────────────────────────────────────
+  update-homebrew:
+    name: Update Homebrew formula
+    runs-on: ubuntu-latest
+    needs: github-release
+
+    steps:
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download SHA256 files
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          BASE="https://github.com/faramesh/faramesh-core/releases/download/v${VERSION}"
+          curl -fsSL "${BASE}/faramesh-darwin-amd64.sha256"  | awk '{print $1}' > sha-darwin-amd64
+          curl -fsSL "${BASE}/faramesh-darwin-arm64.sha256"  | awk '{print $1}' > sha-darwin-arm64
+          curl -fsSL "${BASE}/faramesh-linux-amd64.sha256"   | awk '{print $1}' > sha-linux-amd64
+          curl -fsSL "${BASE}/faramesh-linux-arm64.sha256"   | awk '{print $1}' > sha-linux-arm64
+          echo "darwin-amd64: $(cat sha-darwin-amd64)"
+          echo "darwin-arm64: $(cat sha-darwin-arm64)"
+          echo "linux-amd64:  $(cat sha-linux-amd64)"
+          echo "linux-arm64:  $(cat sha-linux-arm64)"
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: faramesh/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          SHA_DARWIN_AMD64=$(cat sha-darwin-amd64)
+          SHA_DARWIN_ARM64=$(cat sha-darwin-arm64)
+          SHA_LINUX_AMD64=$(cat sha-linux-amd64)
+          SHA_LINUX_ARM64=$(cat sha-linux-arm64)
+
+          cat > homebrew-tap/Formula/faramesh.rb << FORMULA
+          class Faramesh < Formula
+            desc "Unified governance plane for AI agents — pre-execution authorization, policy-as-code, tamper-evident audit trail"
+            homepage "https://faramesh.dev"
+            version "${VERSION}"
+            license "Elastic-2.0"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/faramesh/faramesh-core/releases/download/v\#{version}/faramesh-darwin-arm64"
+                sha256 "${SHA_DARWIN_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/faramesh/faramesh-core/releases/download/v\#{version}/faramesh-darwin-amd64"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/faramesh/faramesh-core/releases/download/v\#{version}/faramesh-linux-arm64"
+                sha256 "${SHA_LINUX_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/faramesh/faramesh-core/releases/download/v\#{version}/faramesh-linux-amd64"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install Dir["faramesh-*"].first => "faramesh"
+            end
+
+            def caveats
+              <<~EOS
+                Run the demo to see Faramesh in action:
+                  faramesh demo
+
+                Initialize Faramesh in your project:
+                  faramesh init
+
+                Start the governance daemon:
+                  faramesh serve --policy policy.yaml
+
+                Docs: https://faramesh.dev/docs
+              EOS
+            end
+
+            test do
+              assert_match version.to_s, shell_output("\#{bin}/faramesh --version")
+              system bin/"faramesh", "demo"
+            end
+          end
+          FORMULA
+
+      - name: Commit and push formula update
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "faramesh-bot"
+          git config user.email "bot@faramesh.dev"
+          git add Formula/faramesh.rb
+          git diff --staged --quiet || git commit -m "feat: update faramesh to v${{ steps.version.outputs.version }}"
+          git push
 
   # ─── Python SDK to PyPI ──────────────────────────────────────────────────────
   publish-python-sdk:
