@@ -1,52 +1,64 @@
-.PHONY: help push release status test lint format install
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS = -X main.version=$(VERSION) -s -w
+CGO_ENABLED = 0
 
-help: ## Show this help message
-	@echo "Faramesh Core - Quick Commands"
-	@echo "=============================="
-	@echo ""
-	@echo "Usage: make <command>"
-	@echo ""
-	@echo "Commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
+BINARY = faramesh
+CMD = ./cmd/faramesh
+DIST = dist
 
-install: ## Install package in development mode
-	pip install -e ".[dev,test,cli]"
+.PHONY: all build test clean demo lint release
 
-test: ## Run tests
-	pytest
+all: build
 
-lint: ## Run linters (ruff, mypy)
-	ruff check src/ tests/
-	mypy src/faramesh --ignore-missing-imports || true
+## build: Compile the faramesh binary for the current platform.
+build:
+	CGO_ENABLED=$(CGO_ENABLED) go build -ldflags="$(LDFLAGS)" -o $(BINARY) $(CMD)
+	@echo "Built: ./$(BINARY)"
 
-format: ## Format code with ruff
-	ruff format src/ tests/
+## demo: Run faramesh demo using the just-built binary.
+demo: build
+	./$(BINARY) demo
 
-status: ## Show git status
-	git status
+## test: Run all Go tests.
+test:
+	go test -race ./...
 
-push: ## Quick push (usage: make push MSG="your message")
-	@if [ -z "$(MSG)" ]; then \
-		echo "❌ Error: MSG required"; \
-		echo "Usage: make push MSG=\"your commit message\""; \
-		exit 1; \
-	fi
-	git add -A
-	git commit -m "$(MSG)"
-	git push origin $$(git branch --show-current)
+## lint: Run go vet and staticcheck.
+lint:
+	go vet ./...
+	@which staticcheck >/dev/null 2>&1 && staticcheck ./... || echo "(staticcheck not installed)"
 
-release: ## Create release (usage: make release VERSION=0.2.1)
-	@if [ -z "$(VERSION)" ]; then \
-		echo "❌ Error: VERSION required"; \
-		echo "Usage: make release VERSION=0.2.1"; \
-		exit 1; \
-	fi
-	@./scripts/quick-release.sh $(VERSION) "Release v$(VERSION)"
+## release: Cross-compile binaries for all supported platforms.
+release: clean
+	@mkdir -p $(DIST)
+	GOOS=linux   GOARCH=amd64  CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY)-linux-amd64   $(CMD)
+	GOOS=linux   GOARCH=arm64  CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY)-linux-arm64   $(CMD)
+	GOOS=darwin  GOARCH=amd64  CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY)-darwin-amd64  $(CMD)
+	GOOS=darwin  GOARCH=arm64  CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY)-darwin-arm64  $(CMD)
+	GOOS=windows GOARCH=amd64  CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY)-windows-amd64.exe $(CMD)
+	@echo "Release binaries in $(DIST)/"
+	@ls -lh $(DIST)/
 
-clean: ## Clean build artifacts
-	rm -rf dist/ build/ *.egg-info/ .pytest_cache/ .coverage htmlcov/
+## docker: Build the Docker image.
+docker:
+	docker build -t faramesh/faramesh:$(VERSION) -t faramesh/faramesh:latest .
 
-build: ## Build package
-	python -m build
+## clean: Remove build artifacts.
+clean:
+	rm -f $(BINARY)
+	rm -rf $(DIST)/
 
-check: lint test ## Run all checks (lint + test)
+## install: Install faramesh to /usr/local/bin.
+install: build
+	install -m 755 $(BINARY) /usr/local/bin/$(BINARY)
+	@echo "Installed: /usr/local/bin/$(BINARY)"
+
+## policy-check: Validate all policy files in policies/.
+policy-check: build
+	@for f in policies/*.yaml; do \
+		./$(BINARY) policy validate "$$f" || exit 1; \
+	done
+
+## help: Show this help.
+help:
+	@grep -E '^## ' Makefile | sed 's/^## /  /'
