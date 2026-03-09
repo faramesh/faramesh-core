@@ -74,7 +74,9 @@ func runAuditTail(cmd *cobra.Command, args []string) error {
 	denyColor := color.New(color.FgRed, color.Bold)
 	deferColor := color.New(color.FgYellow, color.Bold)
 
-	bold.Println("\nFaramesh Audit Tail — streaming decisions (Ctrl+C to stop)\n")
+	fmt.Println()
+	bold.Println("Faramesh Audit Tail — streaming decisions (Ctrl+C to stop)")
+	fmt.Println()
 
 	dec := json.NewDecoder(conn)
 	for {

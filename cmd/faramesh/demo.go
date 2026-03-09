@@ -93,8 +93,10 @@ func runDemo(cmd *cobra.Command, args []string) error {
 	// Header.
 	bold := color.New(color.Bold)
 	dim := color.New(color.FgHiBlack)
-	bold.Println("\nFaramesh — Unified Agent Governance")
-	dim.Println("Starting synthetic agent with demo policy...\n")
+	fmt.Println()
+	bold.Println("Faramesh — Unified Agent Governance")
+	dim.Println("Starting synthetic agent with demo policy...")
+	fmt.Println()
 	time.Sleep(300 * time.Millisecond)
 
 	permitColor := color.New(color.FgGreen, color.Bold)
