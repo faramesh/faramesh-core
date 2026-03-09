@@ -14,6 +14,9 @@
 //
 //   Client → Server: {"type":"kill","agent_id":"..."}\n
 //   Server → Client: {"ok":true}\n
+//
+//   Client → Server: {"type":"audit_subscribe"}\n
+//   Server → Client: (stream of decision JSON objects, one per line, until connection closes)\n
 package sdk
 
 import (
@@ -22,6 +25,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
@@ -79,19 +83,16 @@ type Server struct {
 	log      *zap.Logger
 	listener net.Listener
 	// subscribers receive copies of every decision for audit tail.
+	subsMu sync.Mutex
 	subs   []chan core.Decision
-	subsMu chan struct{}
 }
 
 // NewServer creates a new SDK socket server.
 func NewServer(pipeline *core.Pipeline, log *zap.Logger) *Server {
-	s := &Server{
+	return &Server{
 		pipeline: pipeline,
 		log:      log,
-		subsMu:   make(chan struct{}, 1),
 	}
-	s.subsMu <- struct{}{}
-	return s
 }
 
 // Listen binds the Unix socket and starts accepting connections.
@@ -116,10 +117,23 @@ func (s *Server) Listen(socketPath string) error {
 // Used by audit tail.
 func (s *Server) Subscribe() chan core.Decision {
 	ch := make(chan core.Decision, 64)
-	<-s.subsMu
+	s.subsMu.Lock()
 	s.subs = append(s.subs, ch)
-	s.subsMu <- struct{}{}
+	s.subsMu.Unlock()
 	return ch
+}
+
+// Unsubscribe removes a subscription channel.
+func (s *Server) Unsubscribe(ch chan core.Decision) {
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	for i, sub := range s.subs {
+		if sub == ch {
+			s.subs = append(s.subs[:i], s.subs[i+1:]...)
+			close(ch)
+			return
+		}
+	}
 }
 
 // Close shuts down the listener.
@@ -165,6 +179,10 @@ func (s *Server) handle(conn net.Conn) {
 			s.handleApproveDefer(conn, line)
 		case "kill":
 			s.handleKill(conn, line)
+		case "audit_subscribe":
+			// This call blocks — it streams decisions until the connection closes.
+			s.handleAuditSubscribe(conn)
+			return
 		default:
 			writeJSON(conn, map[string]any{"error": "unknown type: " + msgType})
 		}
@@ -202,14 +220,7 @@ func (s *Server) handleGovern(conn net.Conn, line []byte) {
 	writeJSON(conn, resp)
 
 	// Fan out to audit subscribers.
-	<-s.subsMu
-	for _, ch := range s.subs {
-		select {
-		case ch <- decision:
-		default:
-		}
-	}
-	s.subsMu <- struct{}{}
+	s.broadcast(decision)
 
 	s.log.Info("governed",
 		zap.String("agent", req.AgentID),
@@ -228,7 +239,7 @@ func (s *Server) handlePollDefer(conn net.Conn, line []byte) {
 	status, _ := s.pipeline.DeferWorkflow().Status(req.DeferToken)
 	writeJSON(conn, pollDeferResponse{
 		DeferToken: req.DeferToken,
-		Status:     status,
+		Status:     string(status),
 	})
 }
 
@@ -264,6 +275,39 @@ func (s *Server) handleKill(conn net.Conn, line []byte) {
 	s.pipeline.SessionManager().Kill(req.AgentID)
 	s.log.Warn("kill switch activated", zap.String("agent", req.AgentID))
 	writeJSON(conn, map[string]any{"ok": true})
+}
+
+// handleAuditSubscribe streams every decision to this connection until it closes.
+// The connection sends {"type":"audit_subscribe"} once, then receives a stream
+// of decision JSON objects (one per line) until it disconnects.
+func (s *Server) handleAuditSubscribe(conn net.Conn) {
+	ch := s.Subscribe()
+	defer s.Unsubscribe(ch)
+
+	writeJSON(conn, map[string]any{"subscribed": true})
+
+	for decision := range ch {
+		writeJSON(conn, map[string]any{
+			"effect":      string(decision.Effect),
+			"rule_id":     decision.RuleID,
+			"reason_code": decision.ReasonCode,
+			"reason":      decision.Reason,
+			"defer_token": decision.DeferToken,
+			"latency_ms":  decision.Latency.Milliseconds(),
+		})
+	}
+}
+
+// broadcast sends a decision to all subscribed audit tail channels.
+func (s *Server) broadcast(d core.Decision) {
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	for _, ch := range s.subs {
+		select {
+		case ch <- d:
+		default:
+		}
+	}
 }
 
 func writeJSON(conn net.Conn, v any) {

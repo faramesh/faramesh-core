@@ -58,9 +58,9 @@ func runAuditTail(cmd *cobra.Command, args []string) error {
 	}
 	defer conn.Close()
 
-	// Send a tail subscription request.
+	// Send a subscribe request. The server will stream decisions until disconnect.
 	req, _ := json.Marshal(map[string]string{
-		"type":     "audit_tail",
+		"type":     "audit_subscribe",
 		"agent_id": tailAgent,
 	})
 	req = append(req, '\n')

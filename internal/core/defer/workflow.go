@@ -10,12 +10,20 @@ import (
 	"net/http"
 	"sync"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // DefaultTimeout is how long a DEFER waits before auto-expiring.
 const DefaultTimeout = 5 * time.Minute
+
+// DeferStatus represents the state of a DEFER handle.
+type DeferStatus string
+
+const (
+	StatusPending  DeferStatus = "pending"
+	StatusApproved DeferStatus = "approved"
+	StatusDenied   DeferStatus = "denied"
+	StatusExpired  DeferStatus = "expired"
+)
 
 // Handle represents a pending deferred call.
 type Handle struct {
@@ -32,12 +40,20 @@ type Handle struct {
 type Resolution struct {
 	Approved bool
 	Reason   string
+	Status   DeferStatus
+}
+
+// resolvedHandle stores the final resolution for completed DEFERs so
+// Status() can report approved/denied/expired after resolution.
+type resolvedHandle struct {
+	resolution Resolution
 }
 
 // Workflow manages all pending DEFER handles for a daemon instance.
 type Workflow struct {
-	mu      sync.Mutex
-	pending map[string]*Handle
+	mu       sync.Mutex
+	pending  map[string]*Handle
+	resolved map[string]*resolvedHandle // keeps last N resolved for status queries
 	slackURL string
 }
 
@@ -46,14 +62,22 @@ type Workflow struct {
 func NewWorkflow(slackWebhookURL string) *Workflow {
 	return &Workflow{
 		pending:  make(map[string]*Handle),
+		resolved: make(map[string]*resolvedHandle),
 		slackURL: slackWebhookURL,
 	}
 }
 
-// Defer creates a new deferred handle, sends the approval notification,
-// and returns the token. The caller blocks in Wait() until resolved or expired.
-func (w *Workflow) Defer(agentID, toolID, reason string) (*Handle, error) {
-	token := uuid.New().String()[:8]
+// DeferWithToken creates a new deferred handle with a specific token.
+// If a handle with this token already exists, the existing handle is returned
+// and no duplicate is created. This prevents double-registration when the
+// pipeline calls DeferWithToken with a deterministic token.
+func (w *Workflow) DeferWithToken(token, agentID, toolID, reason string) (*Handle, error) {
+	w.mu.Lock()
+	if h, ok := w.pending[token]; ok {
+		w.mu.Unlock()
+		return h, nil // already exists — idempotent
+	}
+
 	h := &Handle{
 		Token:     token,
 		AgentID:   agentID,
@@ -63,8 +87,6 @@ func (w *Workflow) Defer(agentID, toolID, reason string) (*Handle, error) {
 		Deadline:  time.Now().Add(DefaultTimeout),
 		ch:        make(chan Resolution, 1),
 	}
-
-	w.mu.Lock()
 	w.pending[token] = h
 	w.mu.Unlock()
 
@@ -72,11 +94,13 @@ func (w *Workflow) Defer(agentID, toolID, reason string) (*Handle, error) {
 	go func() {
 		select {
 		case <-time.After(time.Until(h.Deadline)):
+			res := Resolution{Approved: false, Reason: "expired", Status: StatusExpired}
 			w.mu.Lock()
 			delete(w.pending, token)
+			w.resolved[token] = &resolvedHandle{resolution: res}
 			w.mu.Unlock()
 			select {
-			case h.ch <- Resolution{Approved: false, Reason: "expired"}:
+			case h.ch <- res:
 			default:
 			}
 		case <-h.ch:
@@ -88,6 +112,14 @@ func (w *Workflow) Defer(agentID, toolID, reason string) (*Handle, error) {
 	}
 
 	return h, nil
+}
+
+// Defer creates a new deferred handle with a random token.
+// Prefer DeferWithToken when a deterministic token is available.
+func (w *Workflow) Defer(agentID, toolID, reason string) (*Handle, error) {
+	// Generate a unique token from timestamp + tool for demo/test use.
+	token := fmt.Sprintf("%x", time.Now().UnixNano())[:8]
+	return w.DeferWithToken(token, agentID, toolID, reason)
 }
 
 // Resolve approves or denies a pending DEFER by its token.
@@ -104,31 +136,43 @@ func (w *Workflow) Resolve(token string, approved bool, reason string) error {
 		return fmt.Errorf("unknown or already-resolved defer token %q", token)
 	}
 
+	status := StatusDenied
+	if approved {
+		status = StatusApproved
+	}
+	res := Resolution{Approved: approved, Reason: reason, Status: status}
+
+	w.mu.Lock()
+	w.resolved[token] = &resolvedHandle{resolution: res}
+	w.mu.Unlock()
+
 	select {
-	case h.ch <- Resolution{Approved: approved, Reason: reason}:
+	case h.ch <- res:
 		return nil
 	default:
 		return fmt.Errorf("defer token %q already resolved", token)
 	}
 }
 
-// Status returns the current status of a DEFER token.
-func (w *Workflow) Status(token string) (string, bool) {
+// Status returns the current detailed status of a DEFER token.
+// Returns: "pending", "approved", "denied", or "expired".
+func (w *Workflow) Status(token string) (DeferStatus, bool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	_, ok := w.pending[token]
-	if !ok {
-		return "resolved", false
+	if _, ok := w.pending[token]; ok {
+		return StatusPending, true
 	}
-	return "pending", true
+	if r, ok := w.resolved[token]; ok {
+		return r.resolution.Status, false
+	}
+	return StatusExpired, false // unknown token treated as expired
 }
 
 // Wait blocks the caller until the DEFER is resolved or expires.
-// Returns the Resolution and whether it was before the deadline.
+// Returns the Resolution and whether it was approved before the deadline.
 func Wait(h *Handle) (Resolution, bool) {
 	r := <-h.ch
-	expired := r.Reason == "expired"
-	return r, !expired
+	return r, r.Status == StatusApproved
 }
 
 // Pending returns a snapshot of all pending tokens and their tool/agent info.
