@@ -24,7 +24,11 @@
 ## See it work in 30 seconds
 
 ```bash
-brew install faramesh/tap/faramesh   # macOS / Linux with Homebrew
+# macOS / Linux with Homebrew
+brew install faramesh/tap/faramesh
+
+# or: curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh | sh
+
 faramesh demo
 ```
 
@@ -286,7 +290,7 @@ curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install
 docker run --rm ghcr.io/faramesh/faramesh:latest demo
 ```
 
-**Go toolchain:**
+**Go toolchain** (compiles from source; takes ~5 min due to embedded SQLite):
 ```bash
 go install github.com/faramesh/faramesh-core/cmd/faramesh@latest
 ```
