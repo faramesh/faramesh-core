@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/sha256"
 	"fmt"
+	"math"
 	"regexp"
 	"strings"
 	"time"
@@ -93,6 +94,12 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	if req.InterceptAdapter == "" {
 		req.InterceptAdapter = "sdk"
 	}
+
+	// [0] Canonicalize args: strip null-valued keys, normalize floats.
+	// This ensures {amount: 500, extra: null} and {amount: 500} produce
+	// the same policy evaluation outcome, and that float arithmetic artifacts
+	// like 0.30000000000000004 are normalized to 0.3.
+	req.Args = canonicalizeArgs(req.Args)
 
 	// [1] Kill switch check — nanoseconds, no network.
 	sess := p.sessions.Get(req.AgentID)
@@ -271,18 +278,38 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 	}
 
 	// [10] Async: replicate to SQLite, update session history, sync to Horizon.
+	// For PERMIT decisions: record cost against the session and daily accumulators
+	// using the tool's declared cost_usd from the policy. This closes the gap
+	// where sess.AddCost was never called, making USD budget enforcement inert.
 	if p.store != nil {
 		go func() {
 			_ = p.store.Save(rec)
 		}()
 	}
 	go sess.RecordHistory(req.ToolID, string(d.Effect))
+	if d.Effect == EffectPermit || d.Effect == EffectShadow {
+		go p.accountCost(req.AgentID, req.ToolID, sess)
+	}
 	if p.syncer != nil {
 		go p.syncer.Send(d)
 	}
 
 	// [11] Return Decision.
 	return d
+}
+
+// accountCost looks up the declared cost_usd for the tool and records it.
+// Called asynchronously after a PERMIT so it does not add latency.
+func (p *Pipeline) accountCost(agentID, toolID string, sess *session.State) {
+	doc := p.engine.Doc()
+	if doc.Tools == nil {
+		return
+	}
+	t, ok := doc.Tools[toolID]
+	if !ok || t.CostUSD <= 0 {
+		return
+	}
+	sess.AddCost(t.CostUSD)
 }
 
 // buildRecord constructs the DPR record for this decision.
@@ -328,6 +355,58 @@ func (p *Pipeline) DeferWorkflow() *deferwork.Workflow {
 // SessionManager returns the session manager.
 func (p *Pipeline) SessionManager() *session.Manager {
 	return p.sessions
+}
+
+// canonicalizeArgs normalizes tool call arguments before policy evaluation.
+//
+// Two normalization rules are applied:
+//  1. Null-field stripping: keys with nil values are removed.
+//     This makes {amount: 500, extra_field: null} and {amount: 500} canonical
+//     equivalents — consistent with how most LLMs produce optional fields.
+//  2. Float precision normalization: floating-point values are rounded to 9
+//     decimal places to eliminate IEEE 754 artifacts. This ensures that
+//     0.1 + 0.2 = 0.30000000000000004 is treated as 0.3 in policy conditions.
+func canonicalizeArgs(args map[string]any) map[string]any {
+	if args == nil {
+		return map[string]any{}
+	}
+	out := make(map[string]any, len(args))
+	for k, v := range args {
+		cv := canonicalizeValue(v)
+		if cv != nil {
+			out[k] = cv
+		}
+		// nil return from canonicalizeValue means the key is stripped.
+	}
+	return out
+}
+
+func canonicalizeValue(v any) any {
+	if v == nil {
+		return nil // caller strips the key
+	}
+	switch val := v.(type) {
+	case float64:
+		// Round to 9 decimal places to eliminate IEEE 754 artifacts.
+		factor := math.Pow(10, 9)
+		rounded := math.Round(val*factor) / factor
+		// If the rounded value is a whole number, return as float64 to keep
+		// type consistency (100.0 stays 100.0, not int).
+		return rounded
+	case map[string]any:
+		return canonicalizeArgs(val)
+	case []any:
+		out := make([]any, 0, len(val))
+		for _, item := range val {
+			cv := canonicalizeValue(item)
+			if cv != nil {
+				out = append(out, cv)
+			}
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // scanner patterns for pre-execution safety checks.
