@@ -2,116 +2,103 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
 
 jobs:
-  lint:
-    name: Lint & Type Check
-    runs-on: ubuntu-latest
-    
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
-
-      - name: Run ruff
-        run: |
-          ruff check src/ tests/
-
-      - name: Run mypy
-        run: |
-          mypy src/faramesh --ignore-missing-imports || true
-        continue-on-error: true  # Make mypy non-blocking initially
-
-  test:
-    name: Python Tests
+  build:
+    name: Build & Test (Go ${{ matrix.go }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
+        go: ["1.22", "1.23"]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          go-version: ${{ matrix.go }}
+          cache: true
 
-      - name: Install dependencies
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race -count=1 ./...
+
+      - name: Build binary
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[test,cli]"
+          CGO_ENABLED=0 go build -ldflags="-X main.version=ci-${GITHUB_SHA::8}" \
+            -o faramesh ./cmd/faramesh
+          ./faramesh --version
 
-      - name: Run pytest with coverage
-        run: |
-          pytest --cov=src/faramesh --cov-report=xml --cov-report=term
+      - name: Validate demo policy
+        run: ./faramesh policy validate policies/demo.yaml
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          file: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
+      - name: Run demo (smoke test)
+        run: ./faramesh demo
 
-  build:
-    name: Build Package
+  cross-compile:
+    name: Cross-compile release binaries
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: build
+
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64
+            ext: .exe
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.11"
+          go-version: "1.22"
+          cache: true
 
-      - name: Install build tools
+      - name: Build ${{ matrix.suffix }}
         run: |
-          python -m pip install --upgrade pip
-          pip install build wheel
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build -ldflags="-X main.version=ci-${GITHUB_SHA::8} -s -w" \
+            -o faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }} \
+            ./cmd/faramesh
 
-      - name: Build wheel
-        run: |
-          python -m build
-
-      - name: Check wheel contents
-        run: |
-          python -m pip install twine
-          twine check dist/*
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: faramesh-${{ matrix.suffix }}
+          path: faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }}
+          retention-days: 7
 
   docker:
-    name: Docker Build
+    name: Docker build (no push)
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: build
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: false
-          tags: faramesh-core:test
+          tags: faramesh/faramesh:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
