@@ -38,9 +38,10 @@ type Handle struct {
 
 // Resolution is the outcome of a resolved DEFER.
 type Resolution struct {
-	Approved bool
-	Reason   string
-	Status   DeferStatus
+	Approved     bool
+	Reason       string
+	Status       DeferStatus
+	ModifiedArgs map[string]any // conditional approval: modified args to re-validate
 }
 
 // resolvedHandle stores the final resolution for completed DEFERs so
@@ -141,6 +142,39 @@ func (w *Workflow) Resolve(token string, approved bool, reason string) error {
 		status = StatusApproved
 	}
 	res := Resolution{Approved: approved, Reason: reason, Status: status}
+
+	w.mu.Lock()
+	w.resolved[token] = &resolvedHandle{resolution: res}
+	w.mu.Unlock()
+
+	select {
+	case h.ch <- res:
+		return nil
+	default:
+		return fmt.Errorf("defer token %q already resolved", token)
+	}
+}
+
+// ResolveWithModifiedArgs approves a DEFER with modified arguments.
+// The modified args should be re-validated against the policy before execution.
+func (w *Workflow) ResolveWithModifiedArgs(token string, reason string, modifiedArgs map[string]any) error {
+	w.mu.Lock()
+	h, ok := w.pending[token]
+	if ok {
+		delete(w.pending, token)
+	}
+	w.mu.Unlock()
+
+	if !ok {
+		return fmt.Errorf("unknown or already-resolved defer token %q", token)
+	}
+
+	res := Resolution{
+		Approved:     true,
+		Reason:       reason,
+		Status:       StatusApproved,
+		ModifiedArgs: modifiedArgs,
+	}
 
 	w.mu.Lock()
 	w.resolved[token] = &resolvedHandle{resolution: res}
