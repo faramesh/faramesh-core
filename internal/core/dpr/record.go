@@ -15,33 +15,81 @@ import (
 const SchemaVersion = "dpr/1.0"
 
 // Record is a single entry in the Decision Provenance Record chain.
-// All fields are intentionally flat for efficient SQLite storage and
-// simple JSON serialization into the WAL.
+// DPR v1.0 — all fields are intentionally flat for efficient storage
+// and simple JSON serialization into the WAL.
 type Record struct {
-	SchemaVersion string `json:"schema_version"`
-	RecordID      string `json:"record_id"`
-
-	// Chain integrity
+	// ── Schema & Chain Integrity ──
+	SchemaVersion  string `json:"schema_version"`
+	FPLVersion     string `json:"fpl_version,omitempty"`     // Faramesh Policy Language version
+	CARVersion     string `json:"car_version,omitempty"`     // Canonical Action Request version
+	RecordID       string `json:"record_id"`
 	PrevRecordHash string `json:"prev_record_hash"`
 	RecordHash     string `json:"record_hash"`
+	HMACSig        string `json:"hmac_signature,omitempty"`  // HMAC-SHA256 for non-repudiation
 
-	// Identity and request
+	// ── Identity & Request ──
 	AgentID          string `json:"agent_id"`
 	SessionID        string `json:"session_id"`
 	ToolID           string `json:"tool_id"`
 	InterceptAdapter string `json:"intercept_adapter"`
+	PrincipalIDHash  string `json:"principal_id_hash,omitempty"` // HMAC pseudonymized (GDPR)
 
-	// Decision
+	// ── Decision ──
 	Effect        string `json:"effect"`
 	MatchedRuleID string `json:"matched_rule_id"`
 	ReasonCode    string `json:"reason_code"`
 	Reason        string `json:"reason"`
+	DenialToken   string `json:"denial_token,omitempty"` // opaque token for operator lookup
 
-	// Policy context
-	PolicyVersion string `json:"policy_version"`
+	// ── Incident Classification ──
+	IncidentCategory string `json:"incident_category,omitempty"` // e.g. "destructive_command", "data_exfiltration"
+	IncidentSeverity string `json:"incident_severity,omitempty"` // "critical", "high", "medium", "low"
 
-	// Privacy-safe argument fingerprint: shape hash, never raw values.
-	ArgsStructuralSig string `json:"args_structural_sig"`
+	// ── Policy Context ──
+	PolicyVersion     string `json:"policy_version"`
+	PolicySourceType  string `json:"policy_source_type,omitempty"`  // "file"|"string"|"url"|"database"|"push"
+	PolicySourceID    string `json:"policy_source_id,omitempty"`    // URL, db key, or push message ID
+
+	// ── Arguments ──
+	ArgsStructuralSig   string            `json:"args_structural_sig"`
+	ArgProvenance       map[string]string  `json:"arg_provenance,omitempty"`       // arg_path -> source_dpr_record_id
+	SelectorSnapshot    map[string]any     `json:"selector_snapshot,omitempty"`    // selector values that drove decision
+
+	// ── Custom Operators ──
+	CustomOperatorsEvaluated []string       `json:"custom_operators_evaluated,omitempty"`
+	OperatorResults          map[string]any `json:"operator_results,omitempty"`
+	OperatorRegistryHash     string         `json:"operator_registry_hash,omitempty"`
+
+	// ── Workflow Phase ──
+	WorkflowPhase         string `json:"workflow_phase,omitempty"`
+	PhaseTransitionRecord bool   `json:"phase_transition_record,omitempty"`
+
+	// ── Credential Broker ──
+	CredentialBrokered bool   `json:"credential_brokered,omitempty"`
+	CredentialSource   string `json:"credential_source,omitempty"`
+	CredentialScope    string `json:"credential_scope,omitempty"`
+
+	// ── Execution Environment ──
+	ExecutionEnvironment string `json:"execution_environment,omitempty"` // "firecracker"|"gvisor"|"docker_sandbox"|"host"
+
+	// ── Multi-Agent Linkage ──
+	InvokedByAgentID    string `json:"invoked_by_agent_id,omitempty"`
+	InvokedByDPRID      string `json:"invoked_by_dpr_record_id,omitempty"`
+	InnerGovernanceDPRID string `json:"inner_governance_dpr_record_id,omitempty"`
+
+	// ── Callbacks ──
+	CallbacksFired  []string `json:"callbacks_fired,omitempty"`
+	CallbackErrors  []string `json:"callback_errors,omitempty"`
+
+	// ── Degraded Mode ──
+	DegradedMode string `json:"degraded_mode,omitempty"` // "FULL"|"STATELESS"|"MINIMAL"|"EMERGENCY"
+
+	// ── Batch Approval ──
+	BatchApproval    bool     `json:"batch_approval,omitempty"`
+	BatchSize        int      `json:"batch_size,omitempty"`
+	BatchDPRIDs      []string `json:"batch_dpr_ids,omitempty"`
+	ResolvedByBatch  bool     `json:"resolved_by_batch,omitempty"`
+	BatchApprovalID  string   `json:"batch_approval_id,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -50,36 +98,54 @@ type Record struct {
 // used to compute record_hash. The previous record's hash is included so the
 // chain forms a linked list of SHA256 hashes.
 func (r *Record) CanonicalBytes() []byte {
-	// Exclude record_hash itself from the canonical form.
+	// Exclude record_hash and hmac_signature from the canonical form.
 	type canon struct {
-		SchemaVersion    string    `json:"schema_version"`
-		RecordID         string    `json:"record_id"`
-		PrevRecordHash   string    `json:"prev_record_hash"`
-		AgentID          string    `json:"agent_id"`
-		SessionID        string    `json:"session_id"`
-		ToolID           string    `json:"tool_id"`
-		InterceptAdapter string    `json:"intercept_adapter"`
-		Effect           string    `json:"effect"`
-		MatchedRuleID    string    `json:"matched_rule_id"`
-		ReasonCode       string    `json:"reason_code"`
-		PolicyVersion    string    `json:"policy_version"`
-		ArgsStructuralSig string   `json:"args_structural_sig"`
-		CreatedAt        time.Time `json:"created_at"`
+		SchemaVersion      string    `json:"schema_version"`
+		FPLVersion         string    `json:"fpl_version,omitempty"`
+		CARVersion         string    `json:"car_version,omitempty"`
+		RecordID           string    `json:"record_id"`
+		PrevRecordHash     string    `json:"prev_record_hash"`
+		AgentID            string    `json:"agent_id"`
+		SessionID          string    `json:"session_id"`
+		ToolID             string    `json:"tool_id"`
+		InterceptAdapter   string    `json:"intercept_adapter"`
+		PrincipalIDHash    string    `json:"principal_id_hash,omitempty"`
+		Effect             string    `json:"effect"`
+		MatchedRuleID      string    `json:"matched_rule_id"`
+		ReasonCode         string    `json:"reason_code"`
+		DenialToken        string    `json:"denial_token,omitempty"`
+		IncidentCategory   string    `json:"incident_category,omitempty"`
+		IncidentSeverity   string    `json:"incident_severity,omitempty"`
+		PolicyVersion      string    `json:"policy_version"`
+		ArgsStructuralSig  string    `json:"args_structural_sig"`
+		WorkflowPhase      string    `json:"workflow_phase,omitempty"`
+		CredentialBrokered bool      `json:"credential_brokered,omitempty"`
+		DegradedMode       string    `json:"degraded_mode,omitempty"`
+		CreatedAt          time.Time `json:"created_at"`
 	}
 	b, _ := json.Marshal(canon{
-		SchemaVersion:     r.SchemaVersion,
-		RecordID:          r.RecordID,
-		PrevRecordHash:    r.PrevRecordHash,
-		AgentID:           r.AgentID,
-		SessionID:         r.SessionID,
-		ToolID:            r.ToolID,
-		InterceptAdapter:  r.InterceptAdapter,
-		Effect:            r.Effect,
-		MatchedRuleID:     r.MatchedRuleID,
-		ReasonCode:        r.ReasonCode,
-		PolicyVersion:     r.PolicyVersion,
-		ArgsStructuralSig: r.ArgsStructuralSig,
-		CreatedAt:         r.CreatedAt,
+		SchemaVersion:      r.SchemaVersion,
+		FPLVersion:         r.FPLVersion,
+		CARVersion:         r.CARVersion,
+		RecordID:           r.RecordID,
+		PrevRecordHash:     r.PrevRecordHash,
+		AgentID:            r.AgentID,
+		SessionID:          r.SessionID,
+		ToolID:             r.ToolID,
+		InterceptAdapter:   r.InterceptAdapter,
+		PrincipalIDHash:    r.PrincipalIDHash,
+		Effect:             r.Effect,
+		MatchedRuleID:      r.MatchedRuleID,
+		ReasonCode:         r.ReasonCode,
+		DenialToken:        r.DenialToken,
+		IncidentCategory:   r.IncidentCategory,
+		IncidentSeverity:   r.IncidentSeverity,
+		PolicyVersion:      r.PolicyVersion,
+		ArgsStructuralSig:  r.ArgsStructuralSig,
+		WorkflowPhase:      r.WorkflowPhase,
+		CredentialBrokered: r.CredentialBrokered,
+		DegradedMode:       r.DegradedMode,
+		CreatedAt:          r.CreatedAt,
 	})
 	return b
 }

@@ -36,10 +36,13 @@ func NewEngine(doc *Doc, version string) (*Engine, error) {
 
 // EvalContext is the runtime data available to policy conditions.
 type EvalContext struct {
-	Args    map[string]any `expr:"args"`
-	Vars    map[string]any `expr:"vars"`
-	Session SessionCtx     `expr:"session"`
-	Tool    ToolCtx        `expr:"tool"`
+	Args       map[string]any `expr:"args"`
+	Vars       map[string]any `expr:"vars"`
+	Session    SessionCtx     `expr:"session"`
+	Tool       ToolCtx        `expr:"tool"`
+	Principal  *PrincipalCtx  `expr:"principal"`
+	Delegation *DelegationCtx `expr:"delegation"`
+	Time       TimeCtx        `expr:"time"`
 }
 
 // SessionCtx exposes session-level data to policy conditions.
@@ -66,6 +69,50 @@ type ToolCtx struct {
 	Reversibility string   `expr:"reversibility"`
 	BlastRadius   string   `expr:"blast_radius"`
 	Tags          []string `expr:"tags"`
+}
+
+// PrincipalCtx exposes the invoking principal's identity to policy conditions.
+//
+// Available in policy when: expressions as:
+//   principal.id               — IDP-verified identity (e.g. "user@company.com")
+//   principal.tier             — SaaS tier (free, pro, enterprise)
+//   principal.role             — organizational role (analyst, operator, admin)
+//   principal.org              — organization identifier
+//   principal.verified         — whether identity is IDP-verified
+type PrincipalCtx struct {
+	ID       string `expr:"id"`
+	Tier     string `expr:"tier"`
+	Role     string `expr:"role"`
+	Org      string `expr:"org"`
+	Verified bool   `expr:"verified"`
+}
+
+// DelegationCtx exposes the delegation chain to policy conditions.
+//
+// Available in policy when: expressions as:
+//   delegation.depth                — delegation chain depth (0 = direct)
+//   delegation.origin_agent         — root orchestrator agent ID
+//   delegation.origin_org           — root orchestrator organization
+//   delegation.agent_identity_verified — all agents in chain verified
+type DelegationCtx struct {
+	Depth                  int    `expr:"depth"`
+	OriginAgent            string `expr:"origin_agent"`
+	OriginOrg              string `expr:"origin_org"`
+	AgentIdentityVerified  bool   `expr:"agent_identity_verified"`
+}
+
+// TimeCtx exposes temporal conditions to policy rules.
+//
+// Available in policy when: expressions as:
+//   time.hour                — current hour (0-23, UTC)
+//   time.weekday             — current day of week (1=Mon, 7=Sun)
+//   time.month               — current month (1-12)
+//   time.day                 — current day of month (1-31)
+type TimeCtx struct {
+	Hour    int `expr:"hour"`
+	Weekday int `expr:"weekday"`
+	Month   int `expr:"month"`
+	Day     int `expr:"day"`
 }
 
 // EvalResult is returned by Evaluate.
@@ -187,9 +234,29 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 			"blast_radius":  "",
 			"tags":          []string{},
 		},
+		"principal": map[string]any{
+			"id":       "",
+			"tier":     "",
+			"role":     "",
+			"org":      "",
+			"verified": false,
+		},
+		"delegation": map[string]any{
+			"depth":                    0,
+			"origin_agent":            "",
+			"origin_org":              "",
+			"agent_identity_verified": false,
+		},
+		"time": map[string]any{
+			"hour":    0,
+			"weekday": 0,
+			"month":   0,
+			"day":     0,
+		},
 		"history_contains_within": sentinelHistoryContainsWithin,
 		"history_sequence":        sentinelHistorySequence,
 		"history_tool_count":      sentinelHistoryToolCount,
+		"contains":                func(arr []string, s string) bool { return false },
 	}
 	if ctx == nil {
 		return env
@@ -221,12 +288,52 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 		"tags":          tags,
 	}
 
+	// Inject principal context if available.
+	if ctx.Principal != nil {
+		env["principal"] = map[string]any{
+			"id":       ctx.Principal.ID,
+			"tier":     ctx.Principal.Tier,
+			"role":     ctx.Principal.Role,
+			"org":      ctx.Principal.Org,
+			"verified": ctx.Principal.Verified,
+		}
+	}
+
+	// Inject delegation context if available.
+	if ctx.Delegation != nil {
+		env["delegation"] = map[string]any{
+			"depth":                    ctx.Delegation.Depth,
+			"origin_agent":            ctx.Delegation.OriginAgent,
+			"origin_org":              ctx.Delegation.OriginOrg,
+			"agent_identity_verified": ctx.Delegation.AgentIdentityVerified,
+		}
+	}
+
+	// Inject time context (wall-clock UTC at evaluation time).
+	now := time.Now().UTC()
+	env["time"] = map[string]any{
+		"hour":    now.Hour(),
+		"weekday": int(now.Weekday()),
+		"month":   int(now.Month()),
+		"day":     now.Day(),
+	}
+
 	// Inject live history helper functions using the actual history snapshot.
 	// These closures are re-created per evaluation so they operate on the current
 	// session history, not a stale snapshot.
 	env["history_contains_within"] = historyContainsWithin(history)
 	env["history_sequence"] = historySequence(history)
 	env["history_tool_count"] = historyToolCount(history)
+
+	// contains helper: check if a string slice contains a given string.
+	env["contains"] = func(arr []string, s string) bool {
+		for _, v := range arr {
+			if v == s {
+				return true
+			}
+		}
+		return false
+	}
 
 	return env
 }

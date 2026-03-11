@@ -113,4 +113,51 @@ const (
 	BudgetDailyExceeded   = "BUDGET_DAILY_EXCEEDED"
 	BudgetSessionExceeded = "BUDGET_SESSION_EXCEEDED"
 	BudgetRollingExceeded = "BUDGET_ROLLING_EXCEEDED"
+
+	// Degraded mode codes
+	GovernanceDegradedStateless  = "GOVERNANCE_DEGRADED_STATELESS"
+	GovernanceDegradedMinimal    = "GOVERNANCE_DEGRADED_MINIMAL"
+	GovernanceDegradedEmergency  = "GOVERNANCE_DEGRADED_EMERGENCY"
+	GovernanceShutdown           = "GOVERNANCE_SHUTDOWN"
+	DPRBufferOverflow            = "DPR_BUFFER_OVERFLOW"
+
+	// Workflow phase codes
+	PhaseTransitionPermit = "PHASE_TRANSITION_PERMIT"
+	PhaseTransitionDefer  = "PHASE_TRANSITION_DEFER"
+
+	// Custom operator codes
+	OperatorTimeout = "OPERATOR_TIMEOUT"
+
+	// Multi-agent codes
+	SessionStateNamespaceViolation = "SESSION_STATE_NAMESPACE_VIOLATION"
+	PipelineTamperDetected         = "PIPELINE_TAMPER_DETECTED"
+	PriorPhaseIncomplete           = "PRIOR_PHASE_INCOMPLETE"
+	AggregateBudgetExceeded        = "AGGREGATE_BUDGET_EXCEEDED"
+	ParallelAgentCancelled         = "PARALLEL_AGENT_CANCELLED"
+	SyncGateIncomplete             = "SYNC_GATE_INCOMPLETE"
+	LoopConvergenceEvasion         = "LOOP_CONVERGENCE_EVASION"
+	LoopMaxIterations              = "LOOP_MAX_ITERATIONS"
+	LoopMaxCost                    = "LOOP_MAX_COST"
+	LoopMaxDuration                = "LOOP_MAX_DURATION"
+	RoutingUndeclaredInvocation    = "ROUTING_UNDECLARED_INVOCATION"
+	RoutingManifestViolation       = "ROUTING_MANIFEST_VIOLATION"
+
+	// Chain analysis / lazy validation codes
+	ProbableDataExfiltration     = "PROBABLE_DATA_EXFILTRATION"
+	CredentialReuseForEscalation = "CREDENTIAL_REUSE_FOR_ESCALATION"
+
+	// Principal lifecycle codes
+	PrincipalElevationApproved = "PRINCIPAL_ELEVATION_APPROVED"
+	PrincipalElevationDenied   = "PRINCIPAL_ELEVATION_DENIED"
+
+	// Bootstrapping codes
+	GovernanceBootstrapRequired = "GOVERNANCE_BOOTSTRAP_REQUIRED"
+
+	// Callback codes
+	CallbackError           = "CALLBACK_ERROR"
+	CallbackUnsafeArgsAccess = "CALLBACK_UNSAFE_ARGS_ACCESS"
+
+	// Policy source codes
+	PolicyValidationFailed = "POLICY_VALIDATION_FAILED"
+	PolicySourceDegraded   = "POLICY_SOURCE_DEGRADED"
 )
