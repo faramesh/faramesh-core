@@ -21,6 +21,40 @@
 
 ---
 
+## The Faramesh Ecosystem
+
+Faramesh is a suite of standalone tools that work together as a unified governance plane. Each tool is fully functional on its own and connects to the **Faramesh Cloud Platform** for advanced capabilities.
+
+| Tool | Repo | Purpose |
+|------|------|---------|
+| **Core** | [faramesh-core](https://github.com/faramesh/faramesh-core) | Pre-execution policy engine, DPR audit chain, DEFER workflow |
+| **Tesseract** | [tesseract](https://github.com/faramesh/tesseract) | Pre-governance observation — see what agents do before writing policies |
+| **Hub** | [hub](https://github.com/faramesh/hub) | Open-source policy pack registry with community packs |
+| **Sverm** | [sverm](https://github.com/faramesh/sverm) | Cross-agent behavioral analysis and swarm governance |
+| **CostShield** | [costshield](https://github.com/faramesh/costshield) | Pre-execution cost governance — prevent runaway LLM/API spend |
+| **Supply Chain** | [supply-chain](https://github.com/faramesh/supply-chain) | Cryptographic signing, SBOM, reproducible build verification |
+| **Cloud SDK** | [cloud-sdk](https://github.com/faramesh/cloud-sdk) | Shared auth, plan gating, and inter-tool mesh connectivity |
+
+All tools connect via the **Mesh** protocol — when multiple tools run on the same machine, they discover each other automatically and exchange data through authenticated Unix domain sockets.
+
+### Open Source + Cloud Model
+
+Every tool ships with **all features included** in the open-source distribution. Advanced capabilities are plan-gated via Faramesh Cloud:
+
+| Tier | What You Get | Auth Required? |
+|------|-------------|----------------|
+| **Community** | Full core functionality — policies, budgets, observation, signing, SBOM, delegation | No |
+| **Pro** | Cloud sync, rolling window budgets, cloud registry, cloud attestation | Yes (free account) |
+| **Team** | Anomaly detection, cost forecasting, private packs, cross-org swarm | Yes (Team plan) |
+| **Enterprise** | Fleet management, compliance exports, org-wide policies, fleet budgets | Yes (Enterprise plan) |
+
+```bash
+# Login to Faramesh Cloud for advanced features
+faramesh auth login
+```
+
+---
+
 ## See it work in 30 seconds
 
 ```bash
@@ -56,8 +90,8 @@ Every successful infrastructure control plane — Terraform, Vault, Datadog, OPA
 
 ```
 ┌──────────────────────── FARAMESH INVARIANT CORE ────────────────────────┐
-│  Policy Engine │ DPR Chain │ Session State │ DEFER Workflow │ Horizon   │
-│  (YAML+expr)   │ (WAL-first│               │ (channel park) │ (SaaS)    │
+│  Policy Engine │ DPR Chain │ Session State │ DEFER Workflow │ Cloud     │
+│  (YAML+expr)   │ (WAL-first│               │ (channel park) │ Platform  │
 └────────────────────────────────┬────────────────────────────────────────┘
                                  │ CanonicalActionRequest + DPR write
                                  │ (same format regardless of adapter)
@@ -259,17 +293,111 @@ faramesh audit verify ~/.faramesh/faramesh.db
 
 ---
 
-## Architecture: OSS Core + Horizon
+## Architecture: OSS Core + Cloud Platform
 
-| OSS Core (this repo) | Horizon (enterprise) |
+| OSS Core (this repo) | Faramesh Cloud Platform |
 |---|---|
 | `govern()` decorator + context manager | Multi-tenant fleet management |
 | Policy YAML + expr-lang conditions | SSO + SCIM |
 | DPR chain (SQLite + WAL) | Compliance exports (SOC 2, HIPAA, EU AI Act) |
 | `faramesh` CLI | Managed approval workflows |
 | All 6 adapters (SDK → eBPF) | Drift detection + PIE analysis |
+| Session state + history ring | Cost analytics dashboard |
+| CostShield budget enforcement | Cost anomaly detection + forecasting |
+| Multi-agent governance | Cross-org swarm policies |
+| Pre/post-condition scanning | Fleet-wide observability |
+| Credential routing + workload identity | Org trust policies |
+| Compensation engine | Automated compliance reporting |
 
-The OSS Core gives away everything that runs at the execution boundary — the part every engineer needs. Horizon sells the management layer that large organizations require.
+### Internal Package Map
+
+```
+internal/
+├── core/
+│   ├── pipeline.go          — Main governance pipeline (WAL-first, atomic)
+│   ├── types.go             — Core types (CanonicalActionRequest, Decision)
+│   ├── bootstrap.go         — Auto-detection and init
+│   ├── canonicalize/        — Tool ID normalization (Unicode, path traversal)
+│   ├── callbacks/           — Pre/post execution callbacks
+│   ├── compensation/        — Compensation engine for failed operations
+│   ├── contextguard/        — Context-aware governance constraints
+│   ├── credential/          — Credential broker and routing
+│   ├── defer/               — DEFER workflow (park, poll, approve/deny)
+│   │   ├── backends/        — Pluggable DEFER backends
+│   │   ├── channels/        — Channel-based DEFER signaling
+│   │   ├── batch.go         — Batch DEFER operations
+│   │   ├── context.go       — DEFER context management
+│   │   └── triage.go        — DEFER triage and routing
+│   ├── degraded/            — Graceful degradation under failures
+│   ├── dpr/                 — Decision-Provenance Record chain
+│   │   ├── record.go        — DPR record types
+│   │   ├── sqlite.go        — SQLite backend
+│   │   ├── postgres.go      — PostgreSQL backend
+│   │   └── store_backend.go — Store interface
+│   ├── multiagent/          — Multi-agent governance
+│   │   ├── aggregation.go   — Cross-agent decision aggregation
+│   │   ├── budget.go        — Shared budget management
+│   │   ├── linkage.go       — Agent linkage tracking
+│   │   ├── loops.go         — Loop detection
+│   │   ├── phases.go        — Multi-agent phase management
+│   │   ├── routing.go       — Inter-agent request routing
+│   │   ├── seals.go         — Cryptographic session seals
+│   │   ├── sessiongov.go    — Session governance
+│   │   ├── subpolicy.go     — Sub-agent policy delegation
+│   │   └── sync.go          — Cross-agent state synchronization
+│   ├── observe/             — Observability and telemetry
+│   │   ├── crosssession.go  — Cross-session analytics
+│   │   ├── lazyval.go       — Lazy evaluation metrics
+│   │   ├── logschema.go     — Structured log schema
+│   │   ├── metrics.go       — Metrics collection
+│   │   ├── otel.go          — OpenTelemetry integration
+│   │   ├── pie.go           — PIE (Policy Impact Estimation)
+│   │   └── provenance.go    — Decision provenance tracking
+│   ├── phases/              — Workflow phase management
+│   ├── policy/              — Policy engine
+│   │   ├── engine.go        — Rule evaluation engine
+│   │   ├── schema.go        — Policy YAML schema
+│   │   ├── atomic.go        — Atomic policy updates
+│   │   ├── operators.go     — Custom policy operators
+│   │   ├── selectors.go     — External data selectors
+│   │   ├── source.go        — Policy source management
+│   │   └── toolschema.go    — Tool schema validation
+│   ├── postcondition/       — Post-execution verification
+│   │   ├── scanner.go       — Output scanning
+│   │   └── multimodal.go    — Multi-modal content analysis
+│   ├── principal/           — Identity and access
+│   │   ├── identity.go      — Principal identity management
+│   │   ├── elevation.go     — Privilege elevation tracking
+│   │   ├── federation.go    — Identity federation
+│   │   ├── revocation.go    — Credential revocation
+│   │   ├── spiffe.go        — SPIFFE workload identity
+│   │   ├── workload.go      — Workload attestation
+│   │   └── idp/             — Identity provider verifiers
+│   ├── reasons/             — Structured denial reason codes
+│   ├── sandbox/             — Sandboxed execution environment
+│   ├── session/             — Session state management
+│   │   ├── backend.go       — Session backend interface
+│   │   ├── memory_backend.go— In-memory backend
+│   │   └── redis_backend.go — Redis backend
+│   └── webhook/             — Webhook notification sender
+├── adapter/
+│   ├── daemon/              — Local daemon (Unix socket)
+│   ├── ebpf/                — eBPF kernel probes (Linux)
+│   └── serverless/          — Lambda/Cloud Run handler
+├── cmd/faramesh/
+│   ├── audit_extended.go    — Extended audit commands
+│   ├── chaos.go             — Chaos testing commands
+│   ├── compensate.go        — Compensation commands
+│   ├── explain.go           — Decision explanation
+│   ├── fleet.go             — Fleet management
+│   ├── hub.go               — Policy pack hub
+│   └── policy_extended.go   — Extended policy commands
+└── tests/adversarial/       — 22-test adversarial test suite
+    ├── properties_test.go   — Property-based invariant tests
+    ├── bypass_test.go       — Policy bypass detection
+    ├── oracle_test.go       — Dual-engine oracle tests
+    └── doubleguard_test.go  — Double-guard enforcement
+```
 
 ---
 
