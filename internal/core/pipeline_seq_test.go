@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/faramesh/faramesh-core/internal/core/canonicalize"
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/session"
@@ -149,7 +150,7 @@ func TestArgsNullStripping(t *testing.T) {
 			"drop": nil,
 		},
 	}
-	canon := canonicalizeArgs(args)
+	canon := canonicalize.Args(args)
 	if _, has := canon["extra_null"]; has {
 		t.Fatal("null key 'extra_null' should be stripped")
 	}
@@ -170,7 +171,7 @@ func TestFloatNormalization(t *testing.T) {
 	args := map[string]any{
 		"amount": 0.1 + 0.2, // = 0.30000000000000004
 	}
-	canon := canonicalizeArgs(args)
+	canon := canonicalize.Args(args)
 	v, _ := canon["amount"].(float64)
 	// After normalization should equal 0.3 to 9 decimal places.
 	if v < 0.29999999 || v > 0.30000001 {
