@@ -107,6 +107,18 @@ type Decision struct {
 	// DPRRecordID is the ID of the DPR record created for this decision.
 	DPRRecordID string `json:"dpr_record_id,omitempty"`
 
+	// AgentID is the request agent ID associated with this decision.
+	AgentID string `json:"agent_id,omitempty"`
+
+	// ToolID is the request tool ID associated with this decision.
+	ToolID string `json:"tool_id,omitempty"`
+
+	// SessionID is the request session ID associated with this decision.
+	SessionID string `json:"session_id,omitempty"`
+
+	// Timestamp is when the adapter received this request.
+	Timestamp time.Time `json:"timestamp,omitempty"`
+
 	// Latency is how long the pipeline took.
 	Latency time.Duration `json:"-"`
 }
@@ -130,9 +142,9 @@ type GovernanceUnavailableError struct{ GovernanceError }
 
 // DeferResolution is the outcome when a DEFERed call is resolved.
 type DeferResolution struct {
-	DeferToken string `json:"defer_token"`
-	Approved   bool   `json:"approved"`
-	Reason     string `json:"reason"`
+	DeferToken string    `json:"defer_token"`
+	Approved   bool      `json:"approved"`
+	Reason     string    `json:"reason"`
 	ResolvedAt time.Time `json:"resolved_at"`
 }
 

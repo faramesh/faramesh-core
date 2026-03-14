@@ -60,7 +60,7 @@ func buildSeqPipeline(t *testing.T) *Pipeline {
 		t.Fatalf("compile policy: %v", err)
 	}
 	return NewPipeline(Config{
-		Engine:   eng,
+		Engine:   policy.NewAtomicEngine(eng),
 		Sessions: session.NewManager(),
 		Defers:   deferwork.NewWorkflow(""),
 	})

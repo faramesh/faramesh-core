@@ -7,6 +7,9 @@ type StoreBackend interface {
 	// Save persists a DPR record. Called asynchronously after WAL write.
 	Save(rec *Record) error
 
+	// ByID returns one record by its record_id.
+	ByID(recordID string) (*Record, error)
+
 	// RecentByAgent returns records for a specific agent, newest first.
 	RecentByAgent(agentID string, limit int) ([]*Record, error)
 

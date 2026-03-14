@@ -11,6 +11,7 @@ import (
 
 	"github.com/faramesh/faramesh-core/internal/core"
 	"github.com/faramesh/faramesh-core/internal/core/dpr"
+	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/session"
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
@@ -72,6 +73,7 @@ var (
 	replayJSON  bool
 	debugTool   string
 	debugArgs   string
+	debugUnsafeRawArgs bool
 	coverTools  string
 )
 
@@ -81,6 +83,7 @@ func init() {
 
 	policyDebugCmd.Flags().StringVar(&debugTool, "tool", "", "tool ID to debug (required)")
 	policyDebugCmd.Flags().StringVar(&debugArgs, "args", "{}", "tool arguments as JSON")
+	policyDebugCmd.Flags().BoolVar(&debugUnsafeRawArgs, "unsafe-raw-args", false, "print raw argument JSON without redaction")
 	_ = policyDebugCmd.MarkFlagRequired("tool")
 
 	policyCoverCmd.Flags().StringVar(&coverTools, "tools", "", "comma-separated tool IDs to check (in addition to declared tools)")
@@ -121,7 +124,7 @@ func runPolicyReplay(cmd *cobra.Command, args []string) error {
 	dim := color.New(color.FgHiBlack)
 
 	pip := core.NewPipeline(core.Config{
-		Engine:   engine,
+		Engine:   policy.NewAtomicEngine(engine),
 		Sessions: session.NewManager(),
 		Defers:   deferwork.NewWorkflow(""),
 	})
@@ -235,7 +238,12 @@ func runPolicyDebug(cmd *cobra.Command, args []string) error {
 	bold.Printf("Policy Debug — rule-by-rule trace\n")
 	fmt.Printf("  policy : %s [%s]\n", policyPath, version)
 	fmt.Printf("  tool   : %s\n", debugTool)
-	fmt.Printf("  args   : %s\n", debugArgs)
+	if debugUnsafeRawArgs {
+		fmt.Printf("  args   : %s\n", debugArgs)
+	} else {
+		fmt.Printf("  args   : %s\n", observe.RedactString(debugArgs))
+		dim.Printf("  note   : argument display is redacted by default; use --unsafe-raw-args to print raw values\n")
+	}
 	fmt.Println()
 
 	// Compile the engine to check for compilation errors.
