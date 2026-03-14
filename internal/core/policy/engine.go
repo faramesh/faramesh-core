@@ -1,7 +1,9 @@
 package policy
 
 import (
+	"fmt"
 	"path"
+	"reflect"
 	"strings"
 	"time"
 
@@ -207,6 +209,18 @@ func matchTool(pattern, toolID string) bool {
 //	history_tool_count(tool_pattern) int
 //	  Returns how many calls to tools matching the pattern are in the history window.
 //	  Example: history_tool_count("stripe/*") > 3
+//
+//	args_array_len(path) int
+//	  Returns the length of an array argument at the given path.
+//	  Example: args_array_len("recipients") > 10
+//
+//	args_array_contains(path, value) bool
+//	  Returns true if an array argument contains value.
+//	  Example: args_array_contains("recipients", "ceo@company.com")
+//
+//	args_array_any_match(path, pattern) bool
+//	  Returns true if any array element matches a glob pattern.
+//	  Example: args_array_any_match("recipients", "*@external.com")
 func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 	vars := make(map[string]any)
 	for k, v := range doc.Vars {
@@ -218,6 +232,10 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 	sentinelHistoryContainsWithin := func(toolPattern string, seconds int) bool { return false }
 	sentinelHistorySequence := func(tools ...string) bool { return false }
 	sentinelHistoryToolCount := func(toolPattern string) int { return 0 }
+	sentinelDenyCountWithin := func(seconds int) int { return 0 }
+	sentinelArgsArrayLen := func(path string) int { return 0 }
+	sentinelArgsArrayContains := func(path, value string) bool { return false }
+	sentinelArgsArrayAnyMatch := func(path, pattern string) bool { return false }
 
 	// Default zero-value environment (used at compile time for type checking).
 	env := map[string]any{
@@ -256,6 +274,10 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 		"history_contains_within": sentinelHistoryContainsWithin,
 		"history_sequence":        sentinelHistorySequence,
 		"history_tool_count":      sentinelHistoryToolCount,
+		"deny_count_within":       sentinelDenyCountWithin,
+		"args_array_len":          sentinelArgsArrayLen,
+		"args_array_contains":     sentinelArgsArrayContains,
+		"args_array_any_match":    sentinelArgsArrayAnyMatch,
 		"contains":                func(arr []string, s string) bool { return false },
 	}
 	if ctx == nil {
@@ -324,6 +346,10 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 	env["history_contains_within"] = historyContainsWithin(history)
 	env["history_sequence"] = historySequence(history)
 	env["history_tool_count"] = historyToolCount(history)
+	env["deny_count_within"] = denyCountWithin(history)
+	env["args_array_len"] = argsArrayLen(ctx.Args)
+	env["args_array_contains"] = argsArrayContains(ctx.Args)
+	env["args_array_any_match"] = argsArrayAnyMatch(ctx.Args)
 
 	// contains helper: check if a string slice contains a given string.
 	env["contains"] = func(arr []string, s string) bool {
@@ -419,6 +445,26 @@ func historyToolCount(history []map[string]any) func(string) int {
 	}
 }
 
+// denyCountWithin returns a function that counts DENY outcomes in the recent
+// history window.
+func denyCountWithin(history []map[string]any) func(int) int {
+	return func(seconds int) int {
+		cutoff := time.Now().Unix() - int64(seconds)
+		count := 0
+		for _, entry := range history {
+			ts, ok := entry["timestamp"].(int64)
+			if !ok || ts < cutoff {
+				continue
+			}
+			effect, _ := entry["effect"].(string)
+			if strings.EqualFold(effect, "DENY") {
+				count++
+			}
+		}
+		return count
+	}
+}
+
 // matchToolPattern matches a tool ID against a glob-style pattern.
 // Supports: "*", "prefix/*", "exact/match".
 func matchToolPattern(pattern, toolID string) bool {
@@ -430,6 +476,75 @@ func matchToolPattern(pattern, toolID string) bool {
 		return strings.HasPrefix(toolID, strings.TrimSuffix(pattern, "*"))
 	}
 	return matched
+}
+
+func argsArrayLen(args map[string]any) func(string) int {
+	return func(path string) int {
+		arr := arrayAtPath(args, path)
+		return len(arr)
+	}
+}
+
+func argsArrayContains(args map[string]any) func(string, string) bool {
+	return func(path, value string) bool {
+		arr := arrayAtPath(args, path)
+		for _, item := range arr {
+			if fmt.Sprint(item) == value {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+func argsArrayAnyMatch(args map[string]any) func(string, string) bool {
+	return func(path, pattern string) bool {
+		arr := arrayAtPath(args, path)
+		for _, item := range arr {
+			if matchToolPattern(pattern, fmt.Sprint(item)) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+func arrayAtPath(args map[string]any, path string) []any {
+	if args == nil || path == "" {
+		return nil
+	}
+	parts := strings.Split(path, ".")
+	var cur any = args
+	for _, p := range parts {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil
+		}
+		next, exists := m[p]
+		if !exists {
+			return nil
+		}
+		cur = next
+	}
+	return toAnySlice(cur)
+}
+
+func toAnySlice(v any) []any {
+	if v == nil {
+		return nil
+	}
+	if arr, ok := v.([]any); ok {
+		return arr
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+		return nil
+	}
+	out := make([]any, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		out[i] = rv.Index(i).Interface()
+	}
+	return out
 }
 
 // compileExpr compiles an expr-lang expression string to bytecode.

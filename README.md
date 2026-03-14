@@ -14,6 +14,12 @@
 </p>
 
 <p align="center">
+  <a href="docs/MVP_PRODUCTION_RUNBOOK.md">MVP Production Runbook</a> &nbsp;·&nbsp;
+  <a href="docs/LAUNCH_POST_KIT.md">Launch Post Kit</a> &nbsp;·&nbsp;
+  <a href="docs/simple/README.md">Simple User Docs</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/faramesh/faramesh-core/releases"><img src="https://img.shields.io/github/v/release/faramesh/faramesh-core?color=blue" alt="Release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Elastic%202.0-orange.svg" alt="License" /></a>
   <a href="https://github.com/faramesh/faramesh-core/actions"><img src="https://github.com/faramesh/faramesh-core/workflows/CI/badge.svg" alt="CI" /></a>

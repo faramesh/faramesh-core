@@ -84,7 +84,7 @@ func runDemo(cmd *cobra.Command, args []string) error {
 	}
 
 	pipeline := core.NewPipeline(core.Config{
-		Engine:   engine,
+		Engine:   policy.NewAtomicEngine(engine),
 		WAL:      &dpr.NullWAL{},
 		Sessions: session.NewManager(),
 		Defers:   deferwork.NewWorkflow(""),

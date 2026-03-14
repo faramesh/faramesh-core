@@ -4,14 +4,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 	"github.com/faramesh/faramesh-core/internal/core"
+	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/session"
-	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 )
 
 var policyCmd = &cobra.Command{
@@ -63,6 +68,27 @@ Useful before deploying a policy update.`,
 	RunE: runPolicyDiff,
 }
 
+var policyReloadCmd = &cobra.Command{
+	Use:   "reload",
+	Short: "Signal the running daemon to hot-reload the policy file",
+	Long: `Send SIGHUP to the running faramesh daemon, which causes it to re-read
+the policy file from disk and atomically swap in the new policy. In-flight
+evaluations complete on the old policy; new evaluations use the new policy.
+
+The daemon must be running (faramesh serve). The PID file is read from
+$TMPDIR/faramesh/faramesh.pid (or --data-dir if set).
+
+  faramesh policy reload
+  faramesh policy reload --data-dir /var/lib/faramesh`,
+	RunE: runPolicyReload,
+}
+
+var reloadDataDir string
+
+func init() {
+	policyReloadCmd.Flags().StringVar(&reloadDataDir, "data-dir", "", "data directory (default: $TMPDIR/faramesh)")
+}
+
 var (
 	policyTestTool string
 	policyTestArgs string
@@ -79,6 +105,7 @@ func init() {
 	policyCmd.AddCommand(policyInspectCmd)
 	policyCmd.AddCommand(policyTestCmd)
 	policyCmd.AddCommand(policyDiffCmd)
+	policyCmd.AddCommand(policyReloadCmd)
 }
 
 func runPolicyValidate(cmd *cobra.Command, args []string) error {
@@ -185,7 +212,7 @@ func runPolicyTest(cmd *cobra.Command, args []string) error {
 
 	// Build a minimal pipeline (no WAL, no SQLite, no deferrals).
 	pip := core.NewPipeline(core.Config{
-		Engine:   engine,
+		Engine:   policy.NewAtomicEngine(engine),
 		Sessions: session.NewManager(),
 		Defers:   deferwork.NewWorkflow(""),
 	})
@@ -307,4 +334,34 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-3] + "..."
+}
+
+func runPolicyReload(cmd *cobra.Command, args []string) error {
+	dataDir := reloadDataDir
+	if dataDir == "" {
+		dataDir = filepath.Join(os.TempDir(), "faramesh")
+	}
+	pidPath := filepath.Join(dataDir, "faramesh.pid")
+	raw, err := os.ReadFile(pidPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("no daemon PID file found at %s\nIs the daemon running? Try: faramesh serve --policy policy.yaml", pidPath)
+		}
+		return fmt.Errorf("read PID file: %w", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		return fmt.Errorf("invalid PID in %s: %w", pidPath, err)
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return fmt.Errorf("find process %d: %w", pid, err)
+	}
+	if err := proc.Signal(syscall.SIGHUP); err != nil {
+		return fmt.Errorf("signal daemon (pid %d): %w\nIs faramesh serve still running?", pid, err)
+	}
+	color.New(color.FgGreen, color.Bold).Printf("✓ ")
+	fmt.Printf("Sent SIGHUP to daemon (pid %d) — policy reloading from %s\n",
+		pid, sdk.SocketPath)
+	return nil
 }

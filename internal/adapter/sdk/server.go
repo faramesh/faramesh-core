@@ -4,7 +4,7 @@
 //
 // Protocol:
 //   Client → Server: {"type":"govern","call_id":"...","agent_id":"...","session_id":"...","tool_id":"...","args":{...}}\n
-//   Server → Client: {"call_id":"...","effect":"PERMIT","rule_id":"...","reason":"...","reason_code":"...","defer_token":"...","latency_ms":11}\n
+//   Server → Client: {"call_id":"...","effect":"PERMIT|DENY|DEFER","denial_token":"...","retry_permitted":false,"defer_token":"...","latency_ms":11}\n
 //
 //   Client → Server: {"type":"poll_defer","agent_id":"...","defer_token":"..."}\n
 //   Server → Client: {"defer_token":"...","status":"pending|approved|denied|expired"}\n
@@ -47,13 +47,18 @@ type governRequest struct {
 
 // governResponse is the server → client message for a decision.
 type governResponse struct {
-	CallID     string `json:"call_id"`
-	Effect     string `json:"effect"`
-	RuleID     string `json:"rule_id"`
-	Reason     string `json:"reason"`
-	ReasonCode string `json:"reason_code"`
-	DeferToken string `json:"defer_token,omitempty"`
-	LatencyMs  int64  `json:"latency_ms"`
+	CallID         string `json:"call_id"`
+	Effect         string `json:"effect"`
+	DenialToken    string `json:"denial_token,omitempty"`
+	RetryPermitted bool   `json:"retry_permitted,omitempty"`
+	DeferToken     string `json:"defer_token,omitempty"`
+	LatencyMs      int64  `json:"latency_ms"`
+}
+
+type auditEvent struct {
+	Decision core.Decision
+	AgentID  string
+	ToolID   string
 }
 
 // pollDeferRequest is the client → server message for polling a DEFER.
@@ -84,7 +89,7 @@ type Server struct {
 	listener net.Listener
 	// subscribers receive copies of every decision for audit tail.
 	subsMu sync.Mutex
-	subs   []chan core.Decision
+	subs   []chan auditEvent
 }
 
 // NewServer creates a new SDK socket server.
@@ -115,8 +120,8 @@ func (s *Server) Listen(socketPath string) error {
 
 // Subscribe returns a channel that receives a copy of every Decision.
 // Used by audit tail.
-func (s *Server) Subscribe() chan core.Decision {
-	ch := make(chan core.Decision, 64)
+func (s *Server) Subscribe() chan auditEvent {
+	ch := make(chan auditEvent, 64)
 	s.subsMu.Lock()
 	s.subs = append(s.subs, ch)
 	s.subsMu.Unlock()
@@ -124,7 +129,7 @@ func (s *Server) Subscribe() chan core.Decision {
 }
 
 // Unsubscribe removes a subscription channel.
-func (s *Server) Unsubscribe(ch chan core.Decision) {
+func (s *Server) Unsubscribe(ch chan auditEvent) {
 	s.subsMu.Lock()
 	defer s.subsMu.Unlock()
 	for i, sub := range s.subs {
@@ -209,18 +214,17 @@ func (s *Server) handleGovern(conn net.Conn, line []byte) {
 	decision := s.pipeline.Evaluate(car)
 
 	resp := governResponse{
-		CallID:     req.CallID,
-		Effect:     string(decision.Effect),
-		RuleID:     decision.RuleID,
-		Reason:     decision.Reason,
-		ReasonCode: decision.ReasonCode,
-		DeferToken: decision.DeferToken,
-		LatencyMs:  decision.Latency.Milliseconds(),
+		CallID:         req.CallID,
+		Effect:         string(decision.Effect),
+		DenialToken:    decision.DenialToken,
+		RetryPermitted: decision.RetryPermitted,
+		DeferToken:     decision.DeferToken,
+		LatencyMs:      decision.Latency.Milliseconds(),
 	}
 	writeJSON(conn, resp)
 
 	// Fan out to audit subscribers.
-	s.broadcast(decision)
+	s.broadcast(auditEvent{Decision: decision, AgentID: req.AgentID, ToolID: req.ToolID})
 
 	s.log.Info("governed",
 		zap.String("agent", req.AgentID),
@@ -286,12 +290,14 @@ func (s *Server) handleAuditSubscribe(conn net.Conn) {
 
 	writeJSON(conn, map[string]any{"subscribed": true})
 
-	for decision := range ch {
+	for event := range ch {
+		decision := event.Decision
 		writeJSON(conn, map[string]any{
 			"effect":      string(decision.Effect),
+			"agent_id":    event.AgentID,
+			"tool_id":     event.ToolID,
 			"rule_id":     decision.RuleID,
 			"reason_code": decision.ReasonCode,
-			"reason":      decision.Reason,
 			"defer_token": decision.DeferToken,
 			"latency_ms":  decision.Latency.Milliseconds(),
 		})
@@ -299,12 +305,12 @@ func (s *Server) handleAuditSubscribe(conn net.Conn) {
 }
 
 // broadcast sends a decision to all subscribed audit tail channels.
-func (s *Server) broadcast(d core.Decision) {
+func (s *Server) broadcast(e auditEvent) {
 	s.subsMu.Lock()
 	defer s.subsMu.Unlock()
 	for _, ch := range s.subs {
 		select {
-		case ch <- d:
+		case ch <- e:
 		default:
 		}
 	}
