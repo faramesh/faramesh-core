@@ -5,7 +5,7 @@
 package observe
 
 import (
-	"strings"
+	"regexp"
 	"time"
 )
 
@@ -145,8 +145,26 @@ func ValidateLogEntry(fields map[string]string) []string {
 
 // RedactString replaces PII patterns in a string.
 func RedactString(s string) string {
-	// Placeholder: in production, replace known PII patterns.
-	// This is intentionally simple — real implementation uses regex scanners
-	// from sessiongov.go patterns.
-	return strings.ReplaceAll(s, "\n", "\n")
+	redacted := s
+	for _, re := range piiPatterns {
+		redacted = re.ReplaceAllString(redacted, "[REDACTED]")
+	}
+	for _, re := range secretPatterns {
+		redacted = re.ReplaceAllString(redacted, "[SECRET_REDACTED]")
+	}
+	return redacted
+}
+
+var piiPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`\b[\w.%+-]+@[\w.-]+\.[A-Za-z]{2,}\b`),
+	regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`),
+	regexp.MustCompile(`\b(?:\+?\d{1,3}[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b`),
+	regexp.MustCompile(`\b(?:\d[ -]*?){13,19}\b`),
+}
+
+var secretPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)\b(api[_-]?key|token|password|secret)\s*[:=]\s*[^\s,;]+`),
+	regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`),
+	regexp.MustCompile(`\bghp_[A-Za-z0-9]{36}\b`),
+	regexp.MustCompile(`\bsk-[A-Za-z0-9]{20,}\b`),
 }

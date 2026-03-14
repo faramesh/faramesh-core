@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/faramesh/faramesh-core/internal/core/observe"
 )
 
 // DefaultTimeout is how long a DEFER waits before auto-expiring.
@@ -227,10 +229,14 @@ func (w *Workflow) Pending() []map[string]string {
 }
 
 func (w *Workflow) notifySlack(h *Handle) {
+	safeReason := observe.RedactString(h.Reason)
+	if safeReason != "" {
+		safeReason = "[Context redacted for security. Use `faramesh explain --token` for authorized details.]"
+	}
 	msg := map[string]any{
 		"text": fmt.Sprintf(
 			"*Faramesh DEFER* | Agent: `%s` | Tool: `%s`\n>%s\n\nToken: `%s` | Expires: %s\n\nApprove: `faramesh agent approve %s`\nDeny:    `faramesh agent deny %s`",
-			h.AgentID, h.ToolID, h.Reason, h.Token,
+			h.AgentID, h.ToolID, safeReason, h.Token,
 			h.Deadline.Format("15:04:05"),
 			h.Token, h.Token,
 		),

@@ -23,11 +23,16 @@ import (
 // DecisionEvent is the wire-format struct sent to Horizon.
 // It mirrors the fields of core.Decision that are meaningful for cloud sync.
 type DecisionEvent struct {
-	Effect        string        `json:"effect"`
-	RuleID        string        `json:"rule_id,omitempty"`
-	ReasonCode    string        `json:"reason_code"`
-	PolicyVersion string        `json:"policy_version,omitempty"`
-	LatencyMs     int64         `json:"latency_ms"`
+	Effect        string    `json:"effect"`
+	RuleID        string    `json:"rule_id,omitempty"`
+	ReasonCode    string    `json:"reason_code"`
+	PolicyVersion string    `json:"policy_version,omitempty"`
+	LatencyMs     int64     `json:"latency_ms"`
+	AgentID       string    `json:"agent_id,omitempty"`
+	ToolID        string    `json:"tool_id,omitempty"`
+	SessionID     string    `json:"session_id,omitempty"`
+	RecordID      string    `json:"record_id,omitempty"`
+	Timestamp     time.Time `json:"timestamp,omitempty"`
 }
 
 // Sendable is the subset of core.Decision the syncer cares about.
@@ -74,13 +79,18 @@ func NewSyncer(cfg SyncConfig) *Syncer {
 // SendDecision queues a governance decision for async sync to Horizon.
 // Accepts individual fields to avoid importing core from the cloud package.
 // Non-blocking: if the buffer is full the record is dropped with a warning.
-func (s *Syncer) SendDecision(effect, ruleID, reasonCode, policyVersion string, latency time.Duration) {
+func (s *Syncer) SendDecision(effect, ruleID, reasonCode, policyVersion string, latency time.Duration, agentID, toolID, sessionID, recordID string, timestamp time.Time) {
 	ev := DecisionEvent{
 		Effect:        effect,
 		RuleID:        ruleID,
 		ReasonCode:    reasonCode,
 		PolicyVersion: policyVersion,
 		LatencyMs:     latency.Milliseconds(),
+		AgentID:       agentID,
+		ToolID:        toolID,
+		SessionID:     sessionID,
+		RecordID:      recordID,
+		Timestamp:     timestamp,
 	}
 	select {
 	case s.ch <- ev:
