@@ -24,7 +24,7 @@ func testPipeline(t *testing.T, rules []policy.Rule, tools map[string]policy.Too
 	if err != nil {
 		t.Fatalf("NewEngine: %v", err)
 	}
-	return core.NewPipeline(core.Config{Engine: eng})
+	return core.NewPipeline(core.Config{Engine: policy.NewAtomicEngine(eng)})
 }
 
 func testCAR(toolID string, args map[string]any) core.CanonicalActionRequest {
@@ -79,7 +79,7 @@ func TestProperty_KillSwitchOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := core.NewPipeline(core.Config{Engine: eng})
+	p := core.NewPipeline(core.Config{Engine: policy.NewAtomicEngine(eng)})
 
 	// First call should be PERMIT.
 	d := p.Evaluate(testCAR("any/tool", nil))
@@ -183,7 +183,7 @@ func TestProperty_BudgetMonotonicity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := core.NewPipeline(core.Config{Engine: eng})
+	p := core.NewPipeline(core.Config{Engine: policy.NewAtomicEngine(eng)})
 
 	sm := p.SessionManager()
 	var prevCost float64

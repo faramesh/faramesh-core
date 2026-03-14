@@ -98,7 +98,7 @@ func NewGuard(cfg GuardConfig) (*Guard, error) {
 	}
 
 	pipeline := core.NewPipeline(core.Config{
-		Engine: engine,
+		Engine: policy.NewAtomicEngine(engine),
 		Store:  store,
 	})
 

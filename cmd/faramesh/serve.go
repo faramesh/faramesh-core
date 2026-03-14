@@ -34,6 +34,12 @@ var (
 	serveSlack      string
 	serveLogLevel   string
 	serveSyncHorizon bool
+	serveProxyPort   int
+	serveGRPCPort    int
+	serveMCPProxyPort int
+	serveMCPTarget   string
+	serveMetricsPort int
+	serveDPRDSN      string
 )
 
 func init() {
@@ -43,6 +49,12 @@ func init() {
 	serveCmd.Flags().StringVar(&serveSlack, "slack-webhook", "", "Slack webhook URL for DEFER notifications")
 	serveCmd.Flags().StringVar(&serveLogLevel, "log-level", "info", "log level: debug|info|warn|error")
 	serveCmd.Flags().BoolVar(&serveSyncHorizon, "sync-horizon", false, "stream DPR records to Faramesh Horizon cloud (requires: faramesh auth login)")
+	serveCmd.Flags().IntVar(&serveProxyPort, "proxy-port", 0, "start HTTP proxy adapter on this port (0 disables)")
+	serveCmd.Flags().IntVar(&serveGRPCPort, "grpc-port", 0, "start gRPC daemon adapter on this port (0 disables)")
+	serveCmd.Flags().IntVar(&serveMCPProxyPort, "mcp-proxy-port", 0, "start MCP HTTP gateway on this port (0 disables)")
+	serveCmd.Flags().StringVar(&serveMCPTarget, "mcp-target", "", "upstream MCP HTTP server base URL (required when --mcp-proxy-port is set)")
+	serveCmd.Flags().IntVar(&serveMetricsPort, "metrics-port", 0, "start Prometheus metrics endpoint on this port (0 disables)")
+	serveCmd.Flags().StringVar(&serveDPRDSN, "dpr-dsn", "", "PostgreSQL DSN for mirrored DPR writes")
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
@@ -58,6 +70,12 @@ func runServe(cmd *cobra.Command, args []string) error {
 		SocketPath:   serveSocket,
 		SlackWebhook: serveSlack,
 		Log:          log,
+		ProxyPort:    serveProxyPort,
+		GRPCPort:     serveGRPCPort,
+		MCPProxyPort: serveMCPProxyPort,
+		MCPTarget:    serveMCPTarget,
+		MetricsPort:  serveMetricsPort,
+		DPRDSN:       serveDPRDSN,
 	}
 
 	if serveSyncHorizon {

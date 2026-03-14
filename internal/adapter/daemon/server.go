@@ -4,7 +4,8 @@
 // where multiple agents on the same host share a single governance daemon.
 //
 // Architecture:
-//   Agent Process → gRPC → Daemon Process → Pipeline → Decision → gRPC → Agent
+//
+//	Agent Process → gRPC → Daemon Process → Pipeline → Decision → gRPC → Agent
 //
 // The daemon manages DEFER by parking the gRPC stream until approval arrives.
 package daemon
@@ -57,7 +58,10 @@ func NewServer(cfg Config) *Server {
 			Time:              30 * time.Second,
 			Timeout:           10 * time.Second,
 		}),
-		grpc.MaxRecvMsgSize(4 * 1024 * 1024), // 4MB
+		grpc.MaxRecvMsgSize(4*1024*1024), // 4MB
+		// This service uses plain Go structs, not generated protobuf messages.
+		// Force JSON codec so manual clients can marshal/unmarshal safely.
+		grpc.ForceServerCodec(jsonCodec{}),
 	)
 
 	RegisterFarameshDaemonServer(gs, s)

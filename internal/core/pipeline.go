@@ -36,23 +36,23 @@ type DecisionSyncer interface {
 // before the Decision is returned. If the WAL write fails, DENY is returned.
 // Execution must never precede the audit record.
 type Pipeline struct {
-	engine      *policy.Engine
+	engine      *policy.AtomicEngine
 	wal         dpr.Writer
-	store       *dpr.Store      // may be nil (in-memory / demo mode)
+	store       dpr.StoreBackend // may be nil (in-memory / demo mode)
 	sessions    *session.Manager
 	defers      *deferwork.Workflow
-	chainMu     map[string]string // agentID -> last record hash (in-memory cache)
-	chainLock   sync.Mutex        // protects chainMu
-	syncer      DecisionSyncer    // optional Horizon sync (nil = disabled)
+	chainMu     map[string]string      // agentID -> last record hash (in-memory cache)
+	chainLock   sync.Mutex             // protects chainMu
+	syncer      DecisionSyncer         // optional Horizon sync (nil = disabled)
 	postScanner *postcondition.Scanner // post-execution output scanner (nil = disabled)
-	httpClient  *http.Client          // shared HTTP client for context guards
+	httpClient  *http.Client           // shared HTTP client for context guards
 }
 
 // Config holds construction parameters for the Pipeline.
 type Config struct {
-	Engine   *policy.Engine
+	Engine   *policy.AtomicEngine
 	WAL      dpr.Writer
-	Store    *dpr.Store // optional
+	Store    dpr.StoreBackend // optional
 	Sessions *session.Manager
 	Defers   *deferwork.Workflow
 }
@@ -81,8 +81,8 @@ func NewPipeline(cfg Config) *Pipeline {
 	}
 
 	// Compile post-condition scanner from policy if post_rules are defined.
-	if cfg.Engine != nil && cfg.Engine.Doc() != nil {
-		doc := cfg.Engine.Doc()
+	if cfg.Engine != nil && cfg.Engine.Get() != nil && cfg.Engine.Get().Doc() != nil {
+		doc := cfg.Engine.Get().Doc()
 		if len(doc.PostRules) > 0 {
 			scanner, err := postcondition.NewScanner(doc.PostRules, doc.MaxOutputBytes)
 			if err == nil {
@@ -157,7 +157,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	}
 
 	// [3.2] Context guard check — verify external context freshness.
-	doc := p.engine.Doc()
+	doc := p.engine.Get().Doc()
 	if len(doc.ContextGuards) > 0 {
 		guardResult := contextguard.Check(doc.ContextGuards, p.httpClient)
 		if !guardResult.Passed {
@@ -178,7 +178,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 
 	// [5] Budget enforcement — check session and daily limits.
 	if doc == nil {
-		doc = p.engine.Doc()
+		doc = p.engine.Get().Doc()
 	}
 	if doc.Budget != nil {
 		if denied, code, reason := p.checkBudget(req.AgentID, doc.Budget, callCount); denied {
@@ -219,8 +219,10 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	ctx := policy.EvalContext{
 		Args: req.Args,
 		Session: policy.SessionCtx{
-			CallCount: callCount,
-			History:   historyEntries,
+			CallCount:    callCount,
+			History:      historyEntries,
+			CostUSD:      sess.CurrentCostUSD(),
+			DailyCostUSD: sess.DailyCostUSD(),
 		},
 		Tool: toolMeta,
 	}
@@ -239,14 +241,14 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	// Wire delegation context if present in the request.
 	if req.Delegation != nil {
 		ctx.Delegation = &policy.DelegationCtx{
-			Depth:                  req.Delegation.Depth(),
-			OriginAgent:            req.Delegation.OriginAgent(),
-			OriginOrg:              req.Delegation.OriginOrg(),
-			AgentIdentityVerified:  req.Delegation.AllIdentitiesVerified(),
+			Depth:                 req.Delegation.Depth(),
+			OriginAgent:           req.Delegation.OriginAgent(),
+			OriginOrg:             req.Delegation.OriginOrg(),
+			AgentIdentityVerified: req.Delegation.AllIdentitiesVerified(),
 		}
 	}
 
-	result := p.engine.Evaluate(req.ToolID, ctx)
+	result := p.engine.Get().Evaluate(req.ToolID, ctx)
 
 	var d Decision
 	switch strings.ToLower(result.Effect) {
@@ -256,19 +258,20 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			RuleID:        result.RuleID,
 			ReasonCode:    result.ReasonCode,
 			Reason:        result.Reason,
-			PolicyVersion: p.engine.Version(),
+			PolicyVersion: p.engine.Get().Version(),
 		}
 	case "deny", "halt":
 		// Generate an opaque denial token — keyed to call context, not to the
 		// rule that matched, so agents cannot reverse-engineer policy structure.
-		denialTok := fmt.Sprintf("%x", sha256.Sum256([]byte(req.CallID+req.ToolID+req.AgentID+result.RuleID)))[:16]
+		denialTok := "dnl_" + fmt.Sprintf("%x", sha256.Sum256([]byte(req.CallID+req.ToolID+req.AgentID+result.RuleID)))[:16]
 		d = Decision{
-			Effect:        EffectDeny,
-			RuleID:        result.RuleID,
-			ReasonCode:    result.ReasonCode,
-			Reason:        result.Reason,
-			DenialToken:   denialTok,
-			PolicyVersion: p.engine.Version(),
+			Effect:         EffectDeny,
+			RuleID:         result.RuleID,
+			ReasonCode:     result.ReasonCode,
+			Reason:         result.Reason,
+			DenialToken:    denialTok,
+			RetryPermitted: false,
+			PolicyVersion:  p.engine.Get().Version(),
 		}
 	case "defer", "abstain", "pending":
 		reason := result.Reason
@@ -289,7 +292,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			ReasonCode:    result.ReasonCode,
 			Reason:        reason,
 			DeferToken:    token,
-			PolicyVersion: p.engine.Version(),
+			PolicyVersion: p.engine.Get().Version(),
 		}
 	case "shadow":
 		d = Decision{
@@ -297,14 +300,14 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			RuleID:        result.RuleID,
 			ReasonCode:    result.ReasonCode,
 			Reason:        result.Reason,
-			PolicyVersion: p.engine.Version(),
+			PolicyVersion: p.engine.Get().Version(),
 		}
 	default:
 		d = Decision{
 			Effect:        EffectDeny,
 			ReasonCode:    reasons.UnknownEffect,
 			Reason:        "policy returned unknown effect: " + result.Effect,
-			PolicyVersion: p.engine.Version(),
+			PolicyVersion: p.engine.Get().Version(),
 		}
 	}
 
@@ -341,6 +344,10 @@ func (p *Pipeline) checkBudget(agentID string, budget *policy.Budget, callCount 
 // no decision is returned until the record is fsynced.
 func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.State, start time.Time) Decision {
 	d.Latency = time.Since(start)
+	d.AgentID = req.AgentID
+	d.ToolID = req.ToolID
+	d.SessionID = req.SessionID
+	d.Timestamp = req.Timestamp
 
 	// Record metrics.
 	observe.Default.RecordDecision(string(d.Effect), d.ReasonCode, d.Latency)
@@ -370,7 +377,10 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 			_ = p.store.Save(rec)
 		}()
 	}
-	go sess.RecordHistory(req.ToolID, string(d.Effect))
+	// History must be updated synchronously so sequence/deny-escalation
+	// controls (e.g. deny_count_within) observe the latest decision
+	// deterministically on the very next Evaluate() call.
+	sess.RecordHistory(req.ToolID, string(d.Effect))
 	if d.Effect == EffectPermit || d.Effect == EffectShadow {
 		go p.accountCost(req.AgentID, req.ToolID, sess)
 	}
@@ -385,7 +395,7 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 // accountCost looks up the declared cost_usd for the tool and records it.
 // Called asynchronously after a PERMIT so it does not add latency.
 func (p *Pipeline) accountCost(agentID, toolID string, sess *session.State) {
-	doc := p.engine.Doc()
+	doc := p.engine.Get().Doc()
 	if doc.Tools == nil {
 		return
 	}
@@ -433,7 +443,7 @@ func (p *Pipeline) buildRecord(req CanonicalActionRequest, d Decision) *dpr.Reco
 	}
 
 	// Store FPL version from current policy.
-	if doc := p.engine.Doc(); doc != nil {
+	if doc := p.engine.Get().Doc(); doc != nil {
 		rec.FPLVersion = doc.FarameshVersion
 	}
 
