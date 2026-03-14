@@ -2,6 +2,7 @@ package dpr
 
 import (
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -80,6 +81,25 @@ func (s *Store) Save(rec *Record) error {
 		rec.CreatedAt.UTC().Format(time.RFC3339Nano),
 	)
 	return err
+}
+
+// ByID returns one DPR record by record_id.
+func (s *Store) ByID(recordID string) (*Record, error) {
+	rows, err := s.db.Query(
+		`SELECT `+dprSelectCols+` FROM dpr_records WHERE record_id = ? LIMIT 1`, recordID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recs, err := scanRecords(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(recs) == 0 {
+		return nil, errors.New("record not found")
+	}
+	return recs[0], nil
 }
 
 // dprSelectCols is the full column list for DPR v1.0 SELECTs.

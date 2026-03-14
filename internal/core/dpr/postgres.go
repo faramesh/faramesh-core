@@ -3,6 +3,7 @@ package dpr
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -88,6 +89,26 @@ func (s *PGStore) Save(rec *Record) error {
 		rec.CreatedAt.UTC(),
 	)
 	return err
+}
+
+// ByID returns one DPR record by record_id.
+func (s *PGStore) ByID(recordID string) (*Record, error) {
+	rows, err := s.db.Query(`
+		SELECT `+pgSelectCols+`
+		FROM dpr_records WHERE record_id = $1 LIMIT 1`, recordID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recs, err := pgScanRecords(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(recs) == 0 {
+		return nil, errors.New("record not found")
+	}
+	return recs[0], nil
 }
 
 // RecentByAgent returns the most recent records for an agent, newest first.
