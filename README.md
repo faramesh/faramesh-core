@@ -8,11 +8,58 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License" /></a>
-  <a href="https://github.com/faramesh/faramesh-core/actions/workflows/ci.yml"><img src="https://github.com/faramesh/faramesh-core/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <a href="https://github.com/faramesh/faramesh-core/releases"><img src="https://img.shields.io/github/v/release/faramesh/faramesh-core?include_prereleases" alt="Release" /></a>
-  <a href="https://goreportcard.com/report/github.com/faramesh/faramesh-core"><img src="https://goreportcard.com/badge/github.com/faramesh/faramesh-core" alt="Go Report Card" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge" alt="MIT License" /></a>
+  <a href="https://github.com/faramesh/faramesh-core/releases"><img src="https://img.shields.io/github/v/release/faramesh/faramesh-core?style=for-the-badge&color=2563eb" alt="Latest Release" /></a>
+  <a href="https://goreportcard.com/report/github.com/faramesh/faramesh-core"><img src="https://img.shields.io/badge/Go%20Report-Card-06b6d4?style=for-the-badge" alt="Go Report Card" /></a>
+  <a href="https://github.com/faramesh/faramesh-core"><img src="https://img.shields.io/github/stars/faramesh/faramesh-core?style=for-the-badge&color=f59e0b" alt="GitHub Stars" /></a>
 </p>
+
+<p align="center">
+  <a href="https://github.com/faramesh/faramesh-core/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/faramesh/faramesh-core/ci.yml?branch=main&label=CI&style=flat-square" alt="CI Status" /></a>
+  <a href="https://github.com/faramesh/faramesh-core/actions/workflows/release-gate.yml"><img src="https://img.shields.io/github/actions/workflow/status/faramesh/faramesh-core/release-gate.yml?branch=main&label=Release%20Gate&style=flat-square" alt="Release Gate Status" /></a>
+  <a href="https://github.com/faramesh/faramesh-core/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/faramesh/faramesh-core/release.yml?branch=main&label=Release&style=flat-square" alt="Release Workflow Status" /></a>
+  <a href="https://github.com/faramesh/faramesh-core/blob/main/cmd/faramesh/main.go"><img src="https://img.shields.io/badge/CLI-Tooling%20Active-a855f7?style=flat-square" alt="CLI Tooling" /></a>
+</p>
+
+<p align="center">
+  <img src="demo-repo.png" alt="Faramesh repository demo" width="980" />
+</p>
+
+<p align="center">
+  <sub>Governance demo view: policy, enforcement, and runtime workflow at a glance.</sub>
+</p>
+
+<p align="center">
+  <a href="#install"><img src="https://img.shields.io/badge/Install-Start%20Here-111111?style=flat-square" alt="Install" /></a>
+  <a href="#quick-start"><img src="https://img.shields.io/badge/Quick%20Start-One%20Command-111111?style=flat-square" alt="Quick Start" /></a>
+  <a href="#fpl--faramesh-policy-language"><img src="https://img.shields.io/badge/FPL-Policy%20Language-111111?style=flat-square" alt="FPL" /></a>
+  <a href="#supported-frameworks"><img src="https://img.shields.io/badge/Frameworks-13%20Auto--Patched-111111?style=flat-square" alt="Frameworks" /></a>
+  <a href="#architecture"><img src="https://img.shields.io/badge/Architecture-Overview-111111?style=flat-square" alt="Architecture" /></a>
+</p>
+
+<details>
+<summary><strong>Contents</strong></summary>
+
+- [What is Faramesh?](#what-is-faramesh)
+- [Install](#install)
+- [Quick Start](#quick-start)
+- [FPL - Faramesh Policy Language](#fpl--faramesh-policy-language)
+- [Supported Frameworks](#supported-frameworks)
+- [Governing Real Runtimes](#governing-real-runtimes)
+- [Credential Broker](#credential-broker)
+- [Workload Identity (SPIFFE/SPIRE)](#workload-identity-spiffespire)
+- [Observability Integrations](#observability-integrations)
+- [Cross-Platform Enforcement](#cross-platform-enforcement)
+- [Policy Packs](#policy-packs)
+- [CLI Reference](#cli-reference)
+- [Architecture](#architecture)
+- [SDKs](#sdks)
+- [Documentation](#documentation)
+- [Community](#community)
+- [Contributing](#contributing)
+- [License](#license)
+
+</details>
 
 ---
 
@@ -198,6 +245,24 @@ Faramesh strips API keys from the agent's environment. Credentials are only issu
 | 1Password Connect | `FARAMESH_CREDENTIAL_1PASSWORD_HOST` |
 | Infisical | `FARAMESH_CREDENTIAL_INFISICAL_HOST` |
 
+## Workload Identity (SPIFFE/SPIRE)
+
+Faramesh can consume SPIFFE workload identity at runtime and expose identity controls in the CLI.
+
+- `faramesh serve --spiffe-socket <path>` enables SPIFFE workload identity resolution from the Workload API socket.
+- `faramesh identity verify --spiffe spiffe://example.org/agent` verifies workload identity state.
+- `faramesh identity trust --domain example.org --bundle /path/to/bundle.pem` configures trust domain and bundle.
+
+In a SPIRE-based deployment, CA issuance and SVID lifecycle management are handled by SPIRE/SPIFFE components. Faramesh consumes the resulting SPIFFE identity and trust data for policy decisions and credential brokering.
+
+## Observability Integrations
+
+Faramesh exposes Prometheus-compatible metrics on `/metrics` via `--metrics-port`. This is the integration point for common observability platforms:
+
+- Grafana: scrape via Prometheus or Grafana Alloy, then build dashboards and alerts.
+- Datadog: use OpenMetrics scraping against `/metrics` and correlate with decision/audit events.
+- New Relic: ingest Prometheus/OpenMetrics data from `/metrics` for governance and runtime monitoring.
+
 ## Cross-Platform Enforcement
 
 | Platform | Layers | Trust Level |
@@ -298,6 +363,22 @@ Both SDKs provide `govern()`, `GovernedTool`, policy helpers, snapshot canonical
 ## Documentation
 
 Full documentation at [faramesh.dev/docs](https://faramesh.dev/docs).
+
+## Community
+
+<p>
+  Help shape Faramesh and track what is next:
+</p>
+
+- Contribution guidelines: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Roadmap and milestones: [GitHub Milestones](https://github.com/faramesh/faramesh-core/milestones)
+- Roadmap discussions/issues: [Roadmap-labeled issues](https://github.com/faramesh/faramesh-core/issues?q=is%3Aissue+label%3Aroadmap)
+
+<p align="center">
+  <a href="https://github.com/faramesh/faramesh-core/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=faramesh/faramesh-core" alt="Contributors" />
+  </a>
+</p>
 
 ## Contributing
 
