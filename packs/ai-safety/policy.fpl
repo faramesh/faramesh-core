@@ -1,0 +1,8 @@
+agent ai-safety {
+  default deny
+
+  rules {
+    defer http/post reason: "POST requests require approval"
+    permit http/get
+  }
+}

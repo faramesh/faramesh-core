@@ -9,6 +9,9 @@ import (
 )
 
 const (
+	// O_PATH is not in Go's syscall package; Linux value for amd64/arm64.
+	oPath = 0x200000
+
 	// Landlock syscall numbers (amd64).
 	sysLandlockCreateRuleset = 444
 	sysLandlockAddRule       = 445
@@ -74,7 +77,7 @@ func ApplyLandlockRules(rules []LandlockRule) error {
 	defer syscall.Close(int(rulesetFd))
 
 	for _, rule := range rules {
-		fd, err := syscall.Open(rule.Path, syscall.O_PATH|syscall.O_CLOEXEC, 0)
+		fd, err := syscall.Open(rule.Path, oPath|syscall.O_CLOEXEC, 0)
 		if err != nil {
 			return fmt.Errorf("open path %q for Landlock: %w", rule.Path, err)
 		}

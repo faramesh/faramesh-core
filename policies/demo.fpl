@@ -1,0 +1,13 @@
+agent demo {
+  default permit
+
+  rules {
+    deny! shell/run when cmd matches "rm\\s+-[rf]|mkfs|dd if="
+      reason: "destructive shell command blocked by policy"
+    defer stripe/refund when amount > 500
+      reason: "refund exceeds threshold and requires finance approval"
+    deny send_email when recipients > 50
+      reason: "mass email to more than 50 recipients requires manual review"
+    permit stripe/refund when amount <= 500
+  }
+}

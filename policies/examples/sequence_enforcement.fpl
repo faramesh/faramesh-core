@@ -1,0 +1,15 @@
+agent exfil-monitor {
+  default deny
+
+  rules {
+    defer delete/* when history_contains_within("http/post", 120)
+      reason: "delete blocked: data was sent to external endpoint in the last 2 minutes"
+    defer http/* when history_contains_within("secrets/*", 300)
+      reason: "outbound HTTP blocked: credential access occurred in this session"
+    deny shell/* when history_sequence("read_file", "http/post")
+      reason: "shell execution denied: session exhibits read-then-exfil pattern"
+    defer stripe/* when history_tool_count("stripe/*") >= 5
+      reason: "stripe call rate anomaly: more than 5 calls in current session"
+    permit *
+  }
+}

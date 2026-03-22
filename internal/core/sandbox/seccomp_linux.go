@@ -10,6 +10,11 @@ import (
 	"unsafe"
 )
 
+const (
+	// SYS_SECCOMP is not in Go's syscall package; amd64 syscall number.
+	sysSeccomp = 317
+)
+
 // SeccompProfile is an OCI-compatible seccomp profile derived from policy.
 type SeccompProfile struct {
 	DefaultAction string         `json:"defaultAction"`
@@ -81,7 +86,7 @@ func InstallSeccompFilter(cfg *SandboxConfig) error {
 	}
 
 	// SECCOMP_SET_MODE_FILTER = 1
-	if _, _, errno := syscall.RawSyscall(syscall.SYS_SECCOMP,
+	if _, _, errno := syscall.RawSyscall(uintptr(sysSeccomp),
 		1, // SECCOMP_SET_MODE_FILTER
 		0, // flags
 		uintptr(unsafe.Pointer(&prog))); errno != 0 {
