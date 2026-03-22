@@ -25,11 +25,9 @@ Paste relevant logs or error output here
 
 ### Environment
 - OS:
-- Python version:
-- Node version (if applicable):
-- Faramesh version:
-- Deployment (local/docker/other):
+- Go version:
+- Faramesh version (`faramesh version`):
+- Deployment (local / Docker / Kubernetes / other):
 
 ### Additional Context
 <!-- Add any other context, screenshots, or notes here. -->
-

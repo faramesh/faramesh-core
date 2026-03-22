@@ -1,22 +1,27 @@
 # Contributing to Faramesh
 
-Thank you for your interest in contributing to Faramesh! This guide will help you get started.
+Thank you for your interest in contributing to Faramesh! This guide covers everything you need to get started.
 
 ## Project Layout
 
 ```
 faramesh-core/
-├── src/faramesh/          # Main source code
-│   ├── server/           # FastAPI server
-│   ├── sdk/              # Python SDK
-│   ├── cli.py            # CLI interface
-│   └── integrations/     # Framework integrations
-├── web/                  # React UI (frontend)
-├── policies/             # Policy examples and packs
-├── examples/             # Integration examples
-├── tests/                # Test suite
-├── alembic/              # Database migrations
-└── docs/                 # Documentation
+├── cmd/faramesh/          # CLI entry point (Cobra commands)
+├── internal/
+│   ├── core/              # Core logic
+│   │   ├── engine/        # Policy engine and decision pipeline
+│   │   ├── fpl/           # FPL parser, compiler, decompiler
+│   │   ├── credential/    # Credential broker backends
+│   │   └── sandbox/       # Kernel sandbox (seccomp, Landlock, eBPF)
+│   ├── daemon/            # HTTP/gRPC daemon
+│   └── adapter/           # Framework auto-patchers
+├── examples/              # FPL policy examples
+├── npm/                   # npm package (npx faramesh)
+├── docs/                  # Documentation
+├── tests/                 # Integration and end-to-end tests
+├── deploy/                # Deployment manifests (Docker, Helm, systemd)
+├── Formula/               # Homebrew formula
+└── Makefile               # Build, test, release targets
 ```
 
 ---
@@ -25,84 +30,61 @@ faramesh-core/
 
 ### Prerequisites
 
-- Python 3.9+
-- pip
-- Node.js 18+ (for UI development)
+- Go 1.22+
 - Git
+- Make (optional but recommended)
 
-### Installation
+### Building from Source
 
 ```bash
-# Clone repository
 git clone https://github.com/faramesh/faramesh-core.git
-cd faramesh
+cd faramesh-core
 
-# Install in development mode with test dependencies
-pip install -e ".[test,cli]"
+# Build
+go build -o faramesh ./cmd/faramesh
 
-# Or install all optional dependencies
-pip install -e ".[test,cli,dev]"
+# Verify
+./faramesh version
 ```
 
-### Verify Installation
+### Running Tests
 
 ```bash
-# Check CLI works
-python3 -m faramesh.cli --help
+# All tests
+go test -race ./...
 
-# Run tests
-python3 -m pytest
+# Specific package
+go test -race ./internal/core/fpl/...
+
+# With verbose output
+go test -race -v ./...
 ```
 
 ---
 
 ## Coding Standards
 
-### Python Code
+### Go Code
 
-- **Imports**: Use `faramesh.*` imports (e.g., `from faramesh.sdk import ...`)
-- **Type Hints**: Add type hints for function parameters and return values
-- **Docstrings**: Add docstrings for public functions and classes
-- **Formatting**: Follow PEP 8 style guide
+- Follow the [Effective Go](https://go.dev/doc/effective_go) guide and [Go Code Review Comments](https://github.com/golang/go/wiki/CodeReviewComments).
+- Use `go vet` and `golangci-lint` before committing.
+- Add tests for new functionality. Aim for high coverage on policy engine and FPL parser code.
+- Keep packages small and focused. Avoid circular imports.
+
+### FPL Policies
+
+- Example policies in `examples/` must be valid FPL that passes `faramesh policy validate`.
+- When adding new FPL features, add golden test vectors in `internal/core/fpl/testdata/`.
 
 ### Linting
 
-We use `ruff` for linting:
-
 ```bash
-# Check linting
-ruff check src/
+# Vet
+go vet ./...
 
-# Auto-fix issues
-ruff check --fix src/
+# golangci-lint (if installed)
+golangci-lint run
 ```
-
-Configuration is in `ruff.toml`.
-
-### Testing
-
-- **Framework**: Use `pytest`
-- **Fixtures**: Use fixtures from `tests/conftest.py`
-- **HTTP Testing**: Use `httpx` for API tests
-- **Coverage**: Aim for high test coverage
-
-**Run Tests:**
-```bash
-# All tests
-python3 -m pytest
-
-# Specific test file
-python3 -m pytest tests/test_api.py
-
-# With coverage
-python3 -m pytest --cov=src/faramesh
-```
-
-### CLI Commands
-
-- **Command Name**: Use `faramesh` (or `python3 -m faramesh.cli`)
-- **Supported Commands**: `list`, `get`, `approve`, `deny`, `serve`, `migrate`, `policy-*`, etc.
-- **Error Handling**: Return appropriate exit codes (0=success, 1=error, 130=interrupted)
 
 ---
 
@@ -118,25 +100,22 @@ git checkout -b fix/your-bug-fix
 
 ### 2. Make Changes
 
-- Write code following coding standards
-- Add tests for new features
-- Update documentation as needed
+- Write code following coding standards.
+- Add tests for new features.
+- Update documentation as needed.
 
 ### 3. Test Your Changes
 
 ```bash
 # Run tests
-python3 -m pytest
+go test -race ./...
 
-# Run linting
-ruff check src/
+# Build and verify
+go build -o faramesh ./cmd/faramesh
+./faramesh version
 
-# Test CLI commands
-python3 -m faramesh.cli --help
-python3 -m faramesh.cli list
-
-# Test server
-python3 -m faramesh.cli serve
+# Validate example policies
+./faramesh policy validate examples/payment-bot.fpl
 ```
 
 ### 4. Commit Changes
@@ -144,17 +123,15 @@ python3 -m faramesh.cli serve
 ```bash
 git add .
 git commit -m "feat: add new feature"
-# or
-git commit -m "fix: fix bug in policy evaluation"
 ```
 
 **Commit Message Format:**
-- `feat:` - New feature
-- `fix:` - Bug fix
-- `docs:` - Documentation changes
-- `test:` - Test additions/changes
-- `refactor:` - Code refactoring
-- `chore:` - Maintenance tasks
+- `feat:` — New feature
+- `fix:` — Bug fix
+- `docs:` — Documentation changes
+- `test:` — Test additions/changes
+- `refactor:` — Code refactoring
+- `chore:` — Maintenance tasks
 
 ### 5. Push and Create Pull Request
 
@@ -166,79 +143,17 @@ Then create a pull request on GitHub.
 
 ---
 
-## Running the Server
-
-### Development Server
-
-```bash
-# Basic server
-python3 -m faramesh.cli serve
-
-# With hot reload (for policy changes)
-python3 -m faramesh.cli serve --hot-reload
-
-# With code auto-reload (for Python changes)
-python3 -m faramesh.cli serve --reload
-```
-
-### Database Migrations
-
-```bash
-# Run migrations
-python3 -m faramesh.cli migrate
-```
-
-### Policy Validation
-
-```bash
-# Validate policy file
-python3 -m faramesh.cli policy-validate policies/default.yaml
-```
-
----
-
-## UI Development
-
-### Setup
-
-```bash
-cd web
-npm install
-```
-
-### Development Mode
-
-```bash
-# Start Vite dev server (with hot reload)
-npm run dev
-```
-
-Access UI at `http://localhost:5173` (or Vite's default port).
-
-### Build
-
-```bash
-# Build for production
-npm run build
-```
-
-Built files go to `src/faramesh/web/` and are served by the FastAPI server.
-
----
-
 ## Pull Request Checklist
 
 Before submitting a pull request, ensure:
 
-- [ ] **Tests pass**: `python3 -m pytest` passes
-- [ ] **Linting passes**: `ruff check src/` passes
-- [ ] **Documentation updated**: README, docs, or examples updated as needed
-- [ ] **No new unused dependencies**: Check `pyproject.toml`
-- [ ] **Imports use `faramesh.*`**: No relative imports in public APIs
-- [ ] **Error messages consistent**: Use proper HTTP status codes and JSON error format
-- [ ] **Type hints added**: For new functions and classes
-- [ ] **Docstrings added**: For public APIs
-- [ ] **Breaking changes documented**: If any, update CHANGELOG.md
+- [ ] `go test -race ./...` passes
+- [ ] `go vet ./...` passes
+- [ ] Documentation updated if the change is user-facing
+- [ ] Example FPL policies still validate
+- [ ] No hardcoded secrets or credentials
+- [ ] Commit messages follow the format above
+- [ ] Breaking changes documented in the PR description
 
 ---
 
@@ -246,89 +161,46 @@ Before submitting a pull request, ensure:
 
 ### Unit Tests
 
-Test individual functions and classes:
+Test individual functions:
 
-```python
-def test_policy_evaluation():
-    engine = PolicyEngine("policies/default.yaml")
-    decision, reason, risk = engine.evaluate("shell", "run", {"cmd": "echo hello"})
-    assert decision == Decision.REQUIRE_APPROVAL
+```go
+func TestPolicyEvaluation(t *testing.T) {
+    engine := NewEngine("examples/payment-bot.fpl")
+    result := engine.Evaluate("shell/run", map[string]any{"cmd": "echo hello"})
+    if result.Effect != Deny {
+        t.Errorf("expected deny, got %s", result.Effect)
+    }
+}
 ```
+
+### Golden Tests
+
+FPL parser and compiler changes should update golden test files in `internal/core/fpl/testdata/`.
 
 ### Integration Tests
 
-Test API endpoints and workflows:
-
-```python
-def test_action_submission(client):
-    response = client.post("/v1/actions", json={
-        "agent_id": "test",
-        "tool": "http",
-        "operation": "get",
-        "params": {"url": "https://example.com"}
-    })
-    assert response.status_code == 200
-    assert response.json()["status"] in ("allowed", "pending_approval", "denied")
-```
-
-### CLI Tests
-
-Test CLI commands:
-
-```python
-def test_list_command(cli_runner):
-    result = cli_runner.invoke(cli.list, [])
-    assert result.exit_code == 0
-```
-
----
-
-## Documentation
-
-### When to Update Documentation
-
-- **New features**: Update relevant docs
-- **API changes**: Update API.md
-- **CLI changes**: Update CLI.md
-- **Breaking changes**: Update CHANGELOG.md
-- **Examples**: Update example READMEs
-
-### Documentation Structure
-
-- **README.md**: Primary landing page and overview
-- **QUICKSTART.md**: Getting started guide
-- **docs/**: Detailed topic-specific guides
-- **examples/*/README.md**: Example-specific instructions
+End-to-end tests in `tests/` exercise the daemon, CLI, and policy pipeline together.
 
 ---
 
 ## Code Review Process
 
-1. **Automated Checks**: CI runs tests and linting
-2. **Review**: Maintainers review code
-3. **Feedback**: Address any feedback
-4. **Merge**: Once approved, maintainers merge
-
-**Review Criteria:**
-- Code quality and style
-- Test coverage
-- Documentation completeness
-- Backward compatibility
-- Performance considerations
+1. **CI runs** — tests, vet, build, cross-compile.
+2. **Maintainer review** — code quality, tests, docs.
+3. **Address feedback** — iterate.
+4. **Merge** — once approved, maintainers merge.
 
 ---
 
 ## Getting Help
 
-- **GitHub Issues**: [Create an issue](https://github.com/faramesh/faramesh-core/issues/new)
-- **GitHub Discussions**: [Ask questions](https://github.com/faramesh/faramesh-core/discussions)
-- **Documentation**: See [docs/](docs/) for detailed guides
+- [GitHub Issues](https://github.com/faramesh/faramesh-core/issues/new) — bug reports and feature requests
+- [GitHub Discussions](https://github.com/faramesh/faramesh-core/discussions) — questions and ideas
+- [Documentation](https://faramesh.dev/docs) — guides and reference
 
 ---
 
 ## See Also
 
-- [Code of Conduct](CODE_OF_CONDUCT.md) - Community guidelines
-- [Security Policy](SECURITY.md) - Security reporting
-- [Architecture](ARCHITECTURE.md) - System architecture
-- [Roadmap](ROADMAP.md) - Product roadmap
+- [Code of Conduct](CODE_OF_CONDUCT.md) — community guidelines
+- [Security Policy](SECURITY.md) — vulnerability reporting
