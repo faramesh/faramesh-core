@@ -40,11 +40,83 @@ var chaosFaultCmd = &cobra.Command{
 	RunE:  runChaosFault,
 }
 
+var (
+	chaosRunAgent    string
+	chaosRunScenario string
+)
+
+var chaosRunCmd = &cobra.Command{
+	Use:   "run",
+	Short: "Execute a chaos scenario against an agent",
+	Args:  cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		raw, err := daemonPost("/api/v1/chaos/run", map[string]string{
+			"agent":    chaosRunAgent,
+			"scenario": chaosRunScenario,
+		})
+		if err != nil {
+			return err
+		}
+		printResponse("Chaos Run", raw)
+		return nil
+	},
+}
+
+var chaosScenarios = []string{
+	"prompt-injection",
+	"delegation-expansion",
+	"budget-exhaustion",
+	"policy-bypass",
+	"circular-delegation",
+	"toctou-defer",
+	"credential-theft",
+	"session-replay",
+	"loop-runaway",
+	"swarm-flood",
+	"privilege-escalation",
+	"data-exfiltration",
+	"model-poisoning",
+	"tool-injection",
+	"rate-limit-bypass",
+	"audit-tampering",
+	"sandbox-escape",
+	"cross-agent-escalation",
+	"phantom-approval",
+	"race-condition",
+	"replay-attack",
+	"supply-chain-attack",
+}
+
+var chaosListScenariosCmd = &cobra.Command{
+	Use:   "list-scenarios",
+	Short: "List available chaos test scenarios",
+	Args:  cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		raw, err := daemonGet("/api/v1/chaos/scenarios")
+		if err == nil {
+			printResponse("Chaos Scenarios", raw)
+			return nil
+		}
+		printHeader("Chaos Scenarios (built-in)")
+		for i, s := range chaosScenarios {
+			fmt.Printf("  %2d. %s\n", i+1, s)
+		}
+		fmt.Println()
+		return nil
+	},
+}
+
 func init() {
 	chaosCmd.PersistentFlags().StringVar(&chaosDataDir, "data-dir", "", "daemon data directory for PID lookup (default: $TMPDIR/faramesh)")
 	chaosCmd.PersistentFlags().IntVar(&chaosPID, "pid", 0, "override daemon PID (skips PID file lookup)")
+
+	chaosRunCmd.Flags().StringVar(&chaosRunAgent, "agent", "", "agent ID to target")
+	chaosRunCmd.Flags().StringVar(&chaosRunScenario, "scenario", "", "scenario name to execute")
+
 	chaosCmd.AddCommand(chaosDegradedCmd)
 	chaosCmd.AddCommand(chaosFaultCmd)
+	chaosCmd.AddCommand(chaosRunCmd)
+	chaosCmd.AddCommand(chaosListScenariosCmd)
 }
 
 func runChaosDegraded(_ *cobra.Command, args []string) error {
