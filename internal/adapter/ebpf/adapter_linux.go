@@ -109,7 +109,7 @@ func (a *adapter) Close() error {
 	}
 	a.attachedLinks = nil
 	if a.collection != nil {
-		_ = a.collection.Close()
+		a.collection.Close()
 		a.collection = nil
 	}
 	a.attached = false

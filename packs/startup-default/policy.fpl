@@ -1,0 +1,8 @@
+agent startup-default {
+  default deny
+
+  rules {
+    permit file/read
+    defer file/write reason: "writes need a quick human check"
+  }
+}

@@ -1,6 +1,3 @@
-# Use this file when `faramesh-core` is the Git repository root.
-# For the Faramesh-Nexus monorepo, GitHub runs `.github/workflows/faramesh-core-release-gate.yml` at repo root instead.
-# Monorepo layout: module at `faramesh-core/`, `defaults.run.working-directory: faramesh-core`.
 name: release-gate
 
 on:
@@ -19,10 +16,6 @@ permissions:
 env:
   GOFLAGS: -mod=readonly
 
-defaults:
-  run:
-    working-directory: faramesh-core
-
 jobs:
   policy-replay:
     name: Policy Replay (P8)
@@ -35,7 +28,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: faramesh-core/go.mod
+          go-version-file: go.mod
           cache: true
 
       - name: Run deterministic policy replay fixtures
@@ -52,7 +45,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: faramesh-core/go.mod
+          go-version-file: go.mod
           cache: true
 
       - name: Run policy fixture suite
@@ -69,7 +62,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: faramesh-core/go.mod
+          go-version-file: go.mod
           cache: true
 
       - name: Compile FPL golden file
@@ -87,7 +80,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: faramesh-core/go.mod
+          go-version-file: go.mod
           cache: true
 
       - name: Emit and validate buildinfo JSON
@@ -119,7 +112,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: faramesh-core/go.mod
+          go-version-file: go.mod
           cache: true
 
       - name: Run deterministic policy backtest
@@ -136,7 +129,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: faramesh-core/go.mod
+          go-version-file: go.mod
           cache: true
 
       - name: Run full go test
@@ -153,7 +146,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: faramesh-core/go.mod
+          go-version-file: go.mod
           cache: true
 
       - name: Run adversarial profile
@@ -174,7 +167,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version-file: faramesh-core/go.mod
+          go-version-file: go.mod
           cache: true
 
       - name: Run integration default profile

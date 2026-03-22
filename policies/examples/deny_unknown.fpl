@@ -1,0 +1,7 @@
+agent deny-unknown {
+  default deny
+
+  rules {
+    permit trusted_tool/*
+  }
+}

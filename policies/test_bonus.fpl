@@ -1,0 +1,11 @@
+agent test-bonus {
+  default deny
+
+  rules {
+    deny! shell/* when cmd matches "rm -rf|shutdown|reboot|mkfs|format"
+      reason: "dangerous shell commands blocked"
+    defer shell/* reason: "shell commands require approval"
+    defer kubernetes/* reason: "kubernetes operations require approval"
+    permit http/get
+  }
+}
