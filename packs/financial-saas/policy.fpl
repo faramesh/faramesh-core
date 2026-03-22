@@ -1,0 +1,8 @@
+agent financial-saas {
+  default deny
+
+  rules {
+    deny! shell/* reason: "shell not permitted on financial profile"
+    defer stripe/refund reason: "refunds require approval on this profile"
+  }
+}

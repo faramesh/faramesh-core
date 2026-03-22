@@ -1,0 +1,8 @@
+agent test-policy {
+  default deny
+
+  rules {
+    permit http/get
+    defer shell/* reason: "shell commands require approval"
+  }
+}

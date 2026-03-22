@@ -1,0 +1,12 @@
+agent infra-shell-limits {
+  default deny
+
+  rules {
+    deny! shell/* when cmd matches "rm -rf|shutdown|reboot|mkfs|dd if=|format"
+      reason: "destructive commands blocked"
+    defer shell/* when cmd matches "apt install|yum install|pip install|npm install|systemctl|service"
+      reason: "system modifications require approval"
+    permit shell/* when cmd matches "ls|cat|grep|find|ps|df|free|uptime|date|echo"
+    defer shell/* reason: "unknown shell commands require approval"
+  }
+}

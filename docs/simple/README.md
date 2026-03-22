@@ -13,7 +13,3 @@ Read in this order:
 7. `06_ADAPTERS.md`
 8. `07_PRODUCTION_SETUP.md`
 9. `08_TROUBLESHOOTING.md`
-
-If you need a production runbook, also read:
-
-- `../MVP_PRODUCTION_RUNBOOK.md`

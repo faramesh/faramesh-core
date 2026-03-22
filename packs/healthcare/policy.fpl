@@ -1,0 +1,7 @@
+agent healthcare {
+  default deny
+
+  rules {
+    defer patient/* reason: "patient tools require approval"
+  }
+}
