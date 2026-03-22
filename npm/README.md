@@ -25,7 +25,7 @@ Faramesh sits between your AI agent and the tools it calls. Every tool call is c
 ## Quick start
 
 ```bash
-faramesh run python agent.py
+faramesh run -- python agent.py
 ```
 
 ## Learn more
