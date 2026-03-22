@@ -151,10 +151,19 @@ step "Resolving version"
 
 if [ "${VERSION}" = "latest" ]; then
     info "Fetching latest release tag…"
-    VERSION="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-        | grep '"tag_name"' \
-        | sed -E 's/.*"tag_name":\s*"v?([^"]+)".*/\1/')" \
+    RELEASE_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")" \
         || die "Failed to fetch latest release. Check your network or pass --version explicitly."
+
+    if command -v jq >/dev/null 2>&1; then
+        VERSION="$(printf '%s' "${RELEASE_JSON}" | jq -r '.tag_name' | sed 's/^v//')"
+    else
+        VERSION="$(printf '%s\n' "${RELEASE_JSON}" \
+            | grep '"tag_name"' \
+            | head -n 1 \
+            | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v?([^"]+)".*/\1/')"
+    fi
+
+    [ -n "${VERSION}" ] || die "Failed to parse latest release tag from GitHub response."
 fi
 
 success "Version: ${VERSION}"
