@@ -1,31 +1,35 @@
-# CODEOWNERS file for Faramesh Core
+# CODEOWNERS — Faramesh Core
 # See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
 
-# Core maintainers - review all PRs
+# Core maintainers review all PRs
 * @faramesh/maintainers
 
-# Server and API
-/src/faramesh/server/ @faramesh/core-team
+# Policy engine and FPL
+/internal/core/engine/ @faramesh/core-team
+/internal/core/fpl/ @faramesh/core-team
 
-# Policy engine
-/src/faramesh/server/policy_engine.py @faramesh/core-team
-/src/faramesh/server/models.py @faramesh/core-team
+# Sandbox and kernel enforcement
+/internal/core/sandbox/ @faramesh/core-team
 
-# Integrations
-/src/faramesh/integrations/ @faramesh/integrations-team
+# Credential broker
+/internal/core/credential/ @faramesh/core-team
+
+# Framework adapters
+/internal/adapter/ @faramesh/integrations-team
 
 # CLI
-/src/faramesh/cli*.py @faramesh/core-team
+/cmd/faramesh/ @faramesh/core-team
 
-# Configuration files
-/pyproject.toml @faramesh/core-team
+# CI and config
 /.github/ @faramesh/core-team
+/Makefile @faramesh/core-team
 /Dockerfile @faramesh/core-team
+/go.mod @faramesh/core-team
+/go.sum @faramesh/core-team
 
 # Documentation
 /docs/ @faramesh/docs-team
 /README.md @faramesh/core-team
-/CHANGELOG.md @faramesh/core-team
 
-# Tests
-/tests/ @faramesh/core-team
+# Examples and policies
+/examples/ @faramesh/core-team
