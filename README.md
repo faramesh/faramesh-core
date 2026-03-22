@@ -31,8 +31,8 @@ curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install
 # Homebrew
 brew install faramesh/tap/faramesh
 
-# npx
-npx faramesh@latest init
+# npm package
+# coming soon: npx faramesh@latest init
 
 # Go toolchain
 go install github.com/faramesh/faramesh-core/cmd/faramesh@latest
