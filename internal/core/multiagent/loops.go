@@ -44,15 +44,83 @@ type LoopState struct {
 
 // LoopGovernor manages critique loop governance.
 type LoopGovernor struct {
-	mu    sync.Mutex
-	loops map[string]*LoopState
+	mu         sync.Mutex
+	loops      map[string]*LoopState
+	runtimeCfg LoopRuntimeConfig
+	runtime    map[string][]loopRuntimeCall
+}
+
+type LoopRuntimeConfig struct {
+	Enabled     bool
+	Window      time.Duration
+	MaxRepeats  int
+	MaxCalls    int
+	MaxArgBytes int
+}
+
+type loopRuntimeCall struct {
+	ts        time.Time
+	signature string
 }
 
 // NewLoopGovernor creates a loop governor.
 func NewLoopGovernor() *LoopGovernor {
 	return &LoopGovernor{
-		loops: make(map[string]*LoopState),
+		loops:   make(map[string]*LoopState),
+		runtime: make(map[string][]loopRuntimeCall),
 	}
+}
+
+func (lg *LoopGovernor) ConfigureRuntime(cfg LoopRuntimeConfig) {
+	lg.mu.Lock()
+	defer lg.mu.Unlock()
+	lg.runtimeCfg = cfg
+}
+
+func (lg *LoopGovernor) CheckAndTrack(agentID, sessionID, toolID string, args map[string]any, now time.Time) (bool, string, string) {
+	lg.mu.Lock()
+	defer lg.mu.Unlock()
+	cfg := lg.runtimeCfg
+	if !cfg.Enabled || cfg.Window <= 0 {
+		return true, "", ""
+	}
+	if cfg.MaxCalls <= 0 && cfg.MaxRepeats <= 0 {
+		return true, "", ""
+	}
+	key := agentID + "|" + sessionID
+	calls := lg.runtime[key]
+	cutoff := now.Add(-cfg.Window)
+	kept := calls[:0]
+	for _, c := range calls {
+		if c.ts.After(cutoff) || c.ts.Equal(cutoff) {
+			kept = append(kept, c)
+		}
+	}
+	sig := toolID + "|" + boundedArgsSignature(args, cfg.MaxArgBytes)
+	repeats := 1
+	for i := len(kept) - 1; i >= 0; i-- {
+		if kept[i].signature == sig {
+			repeats++
+		}
+	}
+	if cfg.MaxCalls > 0 && len(kept)+1 > cfg.MaxCalls {
+		lg.runtime[key] = append(kept, loopRuntimeCall{ts: now, signature: sig})
+		return false, "AGENT_LOOP_DETECTED", fmt.Sprintf("loop governor blocked burst activity (%d calls/%s)", len(kept)+1, cfg.Window)
+	}
+	if cfg.MaxRepeats > 0 && repeats > cfg.MaxRepeats {
+		lg.runtime[key] = append(kept, loopRuntimeCall{ts: now, signature: sig})
+		return false, "LOOP_DETECTION", fmt.Sprintf("loop governor blocked repetitive pattern on %q (%d repeats/%s)", toolID, repeats, cfg.Window)
+	}
+	lg.runtime[key] = append(kept, loopRuntimeCall{ts: now, signature: sig})
+	return true, "", ""
+}
+
+func boundedArgsSignature(args map[string]any, max int) string {
+	s := fmt.Sprintf("%v", args)
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max]
 }
 
 // StartLoop begins a governed critique loop.

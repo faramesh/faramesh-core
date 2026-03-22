@@ -52,6 +52,19 @@ type AggregationGovernor struct {
 	mu       sync.Mutex
 	policy   AggregatePolicy
 	patterns map[string]*regexp.Regexp
+	runtime  AggregationRuntimeConfig
+	sessions map[string][]aggregationRuntimeEvent
+}
+
+type AggregationRuntimeConfig struct {
+	Enabled         bool
+	Window          time.Duration
+	MaxRiskyActions int
+}
+
+type aggregationRuntimeEvent struct {
+	ts     time.Time
+	weight int
 }
 
 // NewAggregationGovernor creates an aggregation governor.
@@ -65,8 +78,43 @@ func NewAggregationGovernor(policy AggregatePolicy) *AggregationGovernor {
 			"ssn":        regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`),
 			"credit_card": regexp.MustCompile(`\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b`),
 		},
+		sessions: make(map[string][]aggregationRuntimeEvent),
 	}
 	return ag
+}
+
+func (ag *AggregationGovernor) ConfigureRuntime(cfg AggregationRuntimeConfig) {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	ag.runtime = cfg
+}
+
+func (ag *AggregationGovernor) CheckAndTrack(sessionID string, riskyWeight int, now time.Time) (bool, string, string) {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	cfg := ag.runtime
+	if !cfg.Enabled || cfg.Window <= 0 || cfg.MaxRiskyActions <= 0 {
+		return true, "", ""
+	}
+	if riskyWeight <= 0 {
+		return true, "", ""
+	}
+	events := ag.sessions[sessionID]
+	cutoff := now.Add(-cfg.Window)
+	kept := events[:0]
+	total := 0
+	for _, evt := range events {
+		if evt.ts.After(cutoff) || evt.ts.Equal(cutoff) {
+			kept = append(kept, evt)
+			total += evt.weight
+		}
+	}
+	if total+riskyWeight > cfg.MaxRiskyActions {
+		ag.sessions[sessionID] = append(kept, aggregationRuntimeEvent{ts: now, weight: riskyWeight})
+		return false, "AGGREGATE_BUDGET_EXCEEDED", fmt.Sprintf("aggregation governor blocked risky action budget (%d/%d in %s)", total+riskyWeight, cfg.MaxRiskyActions, cfg.Window)
+	}
+	ag.sessions[sessionID] = append(kept, aggregationRuntimeEvent{ts: now, weight: riskyWeight})
+	return true, "", ""
 }
 
 // GoverOutput applies governance to an aggregated result.

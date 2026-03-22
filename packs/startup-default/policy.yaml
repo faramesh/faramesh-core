@@ -1,0 +1,20 @@
+# Seed pack: small-team default — deny-by-default with explicit safe paths.
+faramesh-version: "1.0"
+agent-id: "startup-default"
+
+rules:
+  - id: allow-safe-reads
+    match:
+      tool: "file/read"
+    effect: permit
+    reason: "read-only file access"
+    reason_code: RULE_PERMIT
+
+  - id: defer-writes
+    match:
+      tool: "file/write"
+    effect: defer
+    reason: "writes need a quick human check"
+    reason_code: RULE_DEFER
+
+default_effect: deny

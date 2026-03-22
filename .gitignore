@@ -1,35 +1,3 @@
-# Build artifacts
-/faramesh
-/dist/
-*.exe
-
-# Data files
-*.db
-*.wal
-*.db-shm
-*.db-wal
-
-# Faramesh runtime
-/faramesh/
-
-# Go
-vendor/
+/bin/
 *.test
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.venv/
-venv/
-*.egg-info/
-dist/
-build/
-.eggs/
-
-# Editor
-.DS_Store
-*.swp
-*.swo
-.idea/
-.vscode/
+coverage.out

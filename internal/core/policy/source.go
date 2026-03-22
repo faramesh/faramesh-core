@@ -14,16 +14,14 @@ package policy
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 // SourceType identifies how a policy was loaded.
@@ -78,7 +76,7 @@ func NewPolicyLoader() *PolicyLoader {
 
 // FromString loads a policy from inline YAML content.
 func (pl *PolicyLoader) FromString(content string) (*PolicySource, error) {
-	return pl.load([]byte(content), SourceString, "inline")
+	return pl.loadFromData([]byte(content), SourceString, "inline", "")
 }
 
 // FromFile loads a policy from a local file.
@@ -87,7 +85,7 @@ func (pl *PolicyLoader) FromFile(path string) (*PolicySource, error) {
 	if err != nil {
 		return nil, fmt.Errorf("policy file: %w", err)
 	}
-	return pl.load(data, SourceFile, path)
+	return pl.loadFromData(data, SourceFile, path, filepath.Dir(path))
 }
 
 // FromURL loads a policy from an HTTP/HTTPS endpoint.
@@ -109,7 +107,7 @@ func (pl *PolicyLoader) FromURL(ctx context.Context, url string) (*PolicySource,
 	if err != nil {
 		return nil, fmt.Errorf("policy URL read: %w", err)
 	}
-	return pl.load(data, SourceURL, url)
+	return pl.loadFromData(data, SourceURL, url, "")
 }
 
 // FromCallable loads a policy from a Go function that returns YAML bytes.
@@ -118,7 +116,7 @@ func (pl *PolicyLoader) FromCallable(fn func() ([]byte, error), name string) (*P
 	if err != nil {
 		return nil, fmt.Errorf("policy callable: %w", err)
 	}
-	return pl.load(data, SourceCallable, name)
+	return pl.loadFromData(data, SourceCallable, name, "")
 }
 
 // FromEnv loads a policy from the FARAMESH_POLICY environment variable.
@@ -127,7 +125,7 @@ func (pl *PolicyLoader) FromEnv() (*PolicySource, error) {
 	if content == "" {
 		return nil, fmt.Errorf("FARAMESH_POLICY environment variable not set")
 	}
-	return pl.load([]byte(content), SourceEnv, "FARAMESH_POLICY")
+	return pl.loadFromData([]byte(content), SourceEnv, "FARAMESH_POLICY", "")
 }
 
 // Activate makes a validated policy source the current active policy.
@@ -163,56 +161,27 @@ func (pl *PolicyLoader) Rollback() error {
 	return nil
 }
 
-// load parses, validates, and compiles a policy from raw bytes.
-func (pl *PolicyLoader) load(data []byte, sourceType SourceType, origin string) (*PolicySource, error) {
-	// Parse YAML.
-	var doc Doc
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("policy parse error: %w", err)
+// loadFromData parses, validates, and compiles a policy from raw bytes.
+// policyDir is used for FPL file resolution (see LoadFile); use "" for URL/string/env/callable.
+func (pl *PolicyLoader) loadFromData(data []byte, sourceType SourceType, origin string, policyDir string) (*PolicySource, error) {
+	doc, version, fullHash, err := loadPolicyDocument(data, policyDir)
+	if err != nil {
+		return nil, err
 	}
-
-	// Validate.
-	if err := validateDoc(&doc); err != nil {
-		return nil, fmt.Errorf("policy validation: %w", err)
+	if errs := ValidationErrorsOnly(Validate(doc)); len(errs) > 0 {
+		return nil, fmt.Errorf("policy validation: %s", strings.Join(errs, "; "))
 	}
-
-	// Compute hash.
-	h := sha256.Sum256(data)
-	hash := fmt.Sprintf("%x", h)
-
-	// Compile engine.
-	engine, err := NewEngine(&doc, hash[:16])
+	engine, err := NewEngine(doc, version)
 	if err != nil {
 		return nil, fmt.Errorf("policy compile: %w", err)
 	}
-
 	return &PolicySource{
-		Doc:      &doc,
+		Doc:      doc,
 		Engine:   engine,
 		Type:     sourceType,
 		Origin:   origin,
-		Hash:     hash,
+		Hash:     fullHash,
 		LoadedAt: time.Now(),
-		Version:  hash[:16],
+		Version:  version,
 	}, nil
-}
-
-// validateDoc performs structural validation on a policy document.
-func validateDoc(doc *Doc) error {
-	if doc.DefaultEffect == "" {
-		return fmt.Errorf("default_effect is required")
-	}
-	effect := strings.ToLower(doc.DefaultEffect)
-	if effect != "deny" && effect != "permit" && effect != "halt" && effect != "shadow" {
-		return fmt.Errorf("invalid default_effect: %s", doc.DefaultEffect)
-	}
-	for i, rule := range doc.Rules {
-		if rule.ID == "" {
-			return fmt.Errorf("rule[%d] missing id", i)
-		}
-		if rule.Effect == "" {
-			return fmt.Errorf("rule[%d] (%s) missing effect", i, rule.ID)
-		}
-	}
-	return nil
 }

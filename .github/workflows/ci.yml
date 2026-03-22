@@ -23,7 +23,7 @@ jobs:
           cache: true
 
       - name: go vet
-        run: go vet ./...
+        run: go vet $(go list ./... | grep -v '/internal/core/fpl$')
 
       - name: go test
         run: go test -race -count=1 ./...

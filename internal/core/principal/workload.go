@@ -33,6 +33,9 @@ type WorkloadProvider interface {
 
 // DetectWorkloadProvider auto-detects the cloud environment.
 func DetectWorkloadProvider() WorkloadProvider {
+	if socketPath := strings.TrimSpace(os.Getenv("FARAMESH_SPIFFE_SOCKET_PATH")); socketPath != "" {
+		return NewSPIFFEProvider(socketPath)
+	}
 	// Check environment variables in priority order.
 	if os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE") != "" || os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") != "" {
 		return &AWSWorkloadProvider{}

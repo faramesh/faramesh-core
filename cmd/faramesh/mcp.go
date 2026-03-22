@@ -2,14 +2,14 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 
-	gatewaymcp "github.com/faramesh/faramesh-core/internal/adapter/mcp"
+	"github.com/faramesh/faramesh-core/internal/adapter/mcp"
 	"github.com/faramesh/faramesh-core/internal/core"
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
@@ -18,98 +18,89 @@ import (
 
 var mcpCmd = &cobra.Command{
 	Use:   "mcp",
-	Short: "MCP gateway operations",
-}
-
-var mcpWrapCmd = &cobra.Command{
-	Use:                "wrap -- <mcp-server-command> [args...]",
-	Short:              "Wrap a stdio MCP server with Faramesh governance",
-	Args:               cobra.ArbitraryArgs,
-	DisableFlagParsing: false,
-	RunE:               runMCPWrap,
+	Short: "MCP gateway helpers (stdio transport)",
 }
 
 var (
-	mcpWrapPolicy  string
-	mcpWrapAgentID string
+	mcpWrapPolicy string
+	mcpWrapAgent  string
 )
 
+var mcpWrapCmd = &cobra.Command{
+	Use:   "wrap -- <command> [args...]",
+	Short: "Wrap a stdio MCP server with governance (JSON-RPC over stdin/stdout)",
+	Long: `Runs the given command as a subprocess and proxies MCP JSON-RPC between the
+client (stdin) and the server (subprocess). Each tool call is evaluated against
+the policy before it reaches the upstream server.
+
+  faramesh mcp wrap --policy policy.yaml -- node ./mcp-server.js
+
+Lines may be a single JSON-RPC object or a JSON-RPC batch array (same semantics
+as the HTTP MCP gateway).`,
+	Args: cobra.MinimumNArgs(1),
+	RunE: runMCPWrap,
+}
+
 func init() {
-	mcpWrapCmd.Flags().StringVar(&mcpWrapPolicy, "policy", "policy.yaml", "path to policy YAML file")
-	mcpWrapCmd.Flags().StringVar(&mcpWrapAgentID, "agent-id", "mcp-wrapper", "agent ID used for governed MCP tool calls")
-	mcpCmd.AddCommand(mcpWrapCmd)
+	mcpWrapCmd.Flags().StringVar(&mcpWrapPolicy, "policy", "policy.yaml", "path to policy YAML")
+	mcpWrapCmd.Flags().StringVar(&mcpWrapAgent, "agent-id", "", "agent id for policy evaluation (default: policy agent-id)")
 	rootCmd.AddCommand(mcpCmd)
+	mcpCmd.AddCommand(mcpWrapCmd)
 }
 
 func runMCPWrap(_ *cobra.Command, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: faramesh mcp wrap -- <mcp-server-command> [args...]")
-	}
-
-	doc, version, err := policy.LoadFile(mcpWrapPolicy)
+	doc, ver, err := policy.LoadFile(mcpWrapPolicy)
 	if err != nil {
 		return fmt.Errorf("load policy: %w", err)
 	}
-	engine, err := policy.NewEngine(doc, version)
+	eng, err := policy.NewEngine(doc, ver)
 	if err != nil {
 		return fmt.Errorf("compile policy: %w", err)
 	}
+	agentID := strings.TrimSpace(mcpWrapAgent)
+	if agentID == "" {
+		agentID = doc.AgentID
+	}
+	if agentID == "" {
+		agentID = "mcp-wrap"
+	}
+	log, err := zap.NewProduction()
+	if err != nil {
+		return fmt.Errorf("logger: %w", err)
+	}
+	defer log.Sync()
 
-	pipeline := core.NewPipeline(core.Config{
-		Engine:   policy.NewAtomicEngine(engine),
+	pipe := core.NewPipeline(core.Config{
+		Engine:   policy.NewAtomicEngine(eng),
 		Sessions: session.NewManager(),
 		Defers:   deferwork.NewWorkflow(""),
 	})
 
-	log, _ := zap.NewProduction()
-	defer log.Sync()
-
-	gw, err := gatewaymcp.NewStdioGateway(pipeline, mcpWrapAgentID, log, args)
+	gw, err := mcp.NewStdioGateway(pipe, agentID, log, args)
 	if err != nil {
 		return err
 	}
 	defer gw.Close()
 
 	scanner := bufio.NewScanner(os.Stdin)
-	writer := bufio.NewWriter(os.Stdout)
-	defer writer.Flush()
-
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
-		var msg gatewaymcp.MCPMessage
-		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
-			resp := gatewaymcp.MCPMessage{
-				JSONRPC: "2.0",
-				ID:      nil,
-				Error: &gatewaymcp.MCPError{
-					Code:    -32700,
-					Message: "parse error: invalid JSON-RPC request",
-				},
-			}
-			b, _ := json.Marshal(resp)
-			_, _ = writer.Write(append(b, '\n'))
-			_ = writer.Flush()
+		out, err := gw.ProcessStdioLine(scanner.Bytes())
+		if err != nil {
+			return fmt.Errorf("json-rpc line: %w", err)
+		}
+		if len(out) == 0 {
 			continue
 		}
-
-		resp, err := gw.ProcessRequest(msg)
-		if err != nil {
-			resp = gatewaymcp.MCPMessage{
-				JSONRPC: "2.0",
-				ID:      msg.ID,
-				Error: &gatewaymcp.MCPError{
-					Code:    -32000,
-					Message: err.Error(),
-				},
-			}
+		if _, err := os.Stdout.Write(out); err != nil {
+			return err
 		}
-
-		b, _ := json.Marshal(resp)
-		_, _ = writer.Write(append(b, '\n'))
-		_ = writer.Flush()
+		if _, err := os.Stdout.Write([]byte("\n")); err != nil {
+			return err
+		}
 	}
-
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read MCP input: %w", err)
+		return err
 	}
 	return nil
 }

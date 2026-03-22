@@ -13,9 +13,9 @@ import (
 
 // RoutingManifest declares which agents an orchestrator may invoke.
 type RoutingManifest struct {
-	OrchestratorID string              `json:"orchestrator_id"`
-	Entries        []RoutingEntry      `json:"entries"`
-	UndeclaredPolicy string            `json:"undeclared_policy"` // "deny" (default) or "defer"
+	OrchestratorID   string         `json:"orchestrator_id"`
+	Entries          []RoutingEntry `json:"entries"`
+	UndeclaredPolicy string         `json:"undeclared_policy"` // "deny" (default) or "defer"
 }
 
 // RoutingEntry declares a permitted sub-agent invocation.
@@ -37,8 +37,8 @@ type InvocationRecord struct {
 // RoutingGovernor enforces routing manifests for orchestrator agents.
 type RoutingGovernor struct {
 	mu        sync.Mutex
-	manifests map[string]*RoutingManifest    // orchestratorID → manifest
-	counts    map[string]map[string]int      // orchestratorID:sessionID → agentID → count
+	manifests map[string]*RoutingManifest // orchestratorID → manifest
+	counts    map[string]map[string]int   // orchestratorID:sessionID → agentID → count
 }
 
 // NewRoutingGovernor creates a routing governor.
@@ -54,6 +54,29 @@ func (rg *RoutingGovernor) RegisterManifest(manifest RoutingManifest) {
 	rg.mu.Lock()
 	defer rg.mu.Unlock()
 	rg.manifests[manifest.OrchestratorID] = &manifest
+}
+
+// ReplaceManifests replaces all registered manifests (e.g. hot policy reload).
+// Session invocation counters are preserved so per-session caps remain consistent.
+func (rg *RoutingGovernor) ReplaceManifests(manifests []RoutingManifest) {
+	rg.mu.Lock()
+	defer rg.mu.Unlock()
+	rg.manifests = make(map[string]*RoutingManifest, len(manifests))
+	for i := range manifests {
+		m := manifests[i]
+		rg.manifests[m.OrchestratorID] = &m
+	}
+}
+
+// HasManifest reports whether an orchestrator has a declared topology manifest.
+func (rg *RoutingGovernor) HasManifest(orchestratorID string) bool {
+	if rg == nil {
+		return false
+	}
+	rg.mu.Lock()
+	defer rg.mu.Unlock()
+	_, ok := rg.manifests[orchestratorID]
+	return ok
 }
 
 // CheckInvocation checks whether an orchestrator can invoke a target agent.

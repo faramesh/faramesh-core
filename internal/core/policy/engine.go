@@ -1,10 +1,13 @@
 package policy
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"reflect"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/expr-lang/expr"
@@ -18,6 +21,35 @@ type Engine struct {
 	programs []*vm.Program // compiled expr programs, parallel to doc.Rules
 }
 
+const (
+	maxExpressionChars         = 1024
+	maxExpressionFunctionCalls = 32
+	maxExpressionDepth         = 16
+	maxExpressionOperators     = 96
+)
+
+var (
+	defaultRegistryMu       sync.RWMutex
+	defaultOperatorRegistry = NewOperatorRegistry()
+	defaultSelectorRegistry = NewSelectorRegistry()
+)
+
+// DefaultOperatorRegistry returns the process-wide operator registry used by
+// policy expression evaluation (compile-time and runtime env injection).
+func DefaultOperatorRegistry() *OperatorRegistry {
+	defaultRegistryMu.RLock()
+	defer defaultRegistryMu.RUnlock()
+	return defaultOperatorRegistry
+}
+
+// DefaultSelectorRegistry returns the process-wide selector registry used by
+// policy expression evaluation (compile-time and runtime env injection).
+func DefaultSelectorRegistry() *SelectorRegistry {
+	defaultRegistryMu.RLock()
+	defer defaultRegistryMu.RUnlock()
+	return defaultSelectorRegistry
+}
+
 // NewEngine compiles the policy doc into an evaluatable engine.
 // Compilation happens once at load time; evaluation is ~1μs per rule.
 func NewEngine(doc *Doc, version string) (*Engine, error) {
@@ -29,7 +61,11 @@ func NewEngine(doc *Doc, version string) (*Engine, error) {
 		}
 		prog, err := compileExpr(rule.Match.When, evalEnv(doc, nil))
 		if err != nil {
-			return nil, err
+			rid := rule.ID
+			if rid == "" {
+				rid = fmt.Sprintf("index:%d", i)
+			}
+			return nil, fmt.Errorf("rule %q: %w", rid, err)
 		}
 		programs[i] = prog
 	}
@@ -139,26 +175,23 @@ func (e *Engine) Evaluate(toolID string, ctx EvalContext) EvalResult {
 		if e.programs[i] != nil {
 			env := evalEnv(e.doc, &ctx)
 			out, err := vm.Run(e.programs[i], env)
-			if err != nil || out == nil {
-				continue
+			if err != nil {
+				return evalFailureResult(rule, err)
+			}
+			if out == nil {
+				return evalFailureResult(rule, errors.New("expression produced nil result"))
 			}
 			matched, ok := out.(bool)
-			if !ok || !matched {
+			if !ok {
+				return evalFailureResult(rule, fmt.Errorf("expression returned non-bool %T", out))
+			}
+			if !matched {
 				continue
 			}
 		}
 		rc := rule.ReasonCode
 		if rc == "" {
-			switch strings.ToLower(rule.Effect) {
-			case "permit", "allow":
-				rc = "RULE_PERMIT"
-			case "deny", "halt":
-				rc = "RULE_DENY"
-			case "defer", "abstain", "pending":
-				rc = "RULE_DEFER"
-			case "shadow":
-				rc = "SHADOW_DENY"
-			}
+			rc = defaultReasonCode(rule.Effect)
 		}
 		return EvalResult{
 			Effect:     rule.Effect,
@@ -171,8 +204,21 @@ func (e *Engine) Evaluate(toolID string, ctx EvalContext) EvalResult {
 	return EvalResult{
 		Effect:     e.doc.DefaultEffect,
 		RuleID:     "",
-		ReasonCode: "UNMATCHED_DENY",
+		ReasonCode: unmatchedReasonCode(e.doc.DefaultEffect),
 		Reason:     "no rule matched; applying default_effect",
+	}
+}
+
+func evalFailureResult(rule Rule, err error) EvalResult {
+	rid := rule.ID
+	if rid == "" {
+		rid = "unknown"
+	}
+	return EvalResult{
+		Effect:     "deny",
+		RuleID:     rid,
+		ReasonCode: "EXPR_RUNTIME_ERROR",
+		Reason:     fmt.Sprintf("rule expression runtime error (%s): %v", rid, err),
 	}
 }
 
@@ -281,6 +327,10 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 		"contains":                func(arr []string, s string) bool { return false },
 	}
 	if ctx == nil {
+		// Compile-time env must include registered operators/selectors or NewEngine
+		// cannot compile rules that reference them (Evaluate would skip to default_effect).
+		DefaultOperatorRegistry().InjectIntoEnv(env, nil)
+		DefaultSelectorRegistry().InjectIntoEnv(env, nil)
 		return env
 	}
 
@@ -331,11 +381,15 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 		}
 	}
 
-	// Inject time context (wall-clock UTC at evaluation time).
+	// Inject time context; allow explicit context to make replay deterministic.
 	now := time.Now().UTC()
+	if ctx.Time.Month >= 1 && ctx.Time.Month <= 12 && ctx.Time.Day >= 1 && ctx.Time.Day <= 31 &&
+		ctx.Time.Hour >= 0 && ctx.Time.Hour <= 23 && ctx.Time.Weekday >= 1 && ctx.Time.Weekday <= 7 {
+		now = time.Date(2000, time.Month(ctx.Time.Month), ctx.Time.Day, ctx.Time.Hour, 0, 0, 0, time.UTC)
+	}
 	env["time"] = map[string]any{
 		"hour":    now.Hour(),
-		"weekday": int(now.Weekday()),
+		"weekday": normalizeExprWeekday(int(now.Weekday())),
 		"month":   int(now.Month()),
 		"day":     now.Day(),
 	}
@@ -361,7 +415,20 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 		return false
 	}
 
+	// Inject custom operators and data selectors from the default registries.
+	// This closes the wiring gap where registered operators/selectors existed
+	// but were never visible to expression evaluation.
+	DefaultOperatorRegistry().InjectIntoEnv(env, nil)
+	DefaultSelectorRegistry().InjectIntoEnv(env, nil)
+
 	return env
+}
+
+func normalizeExprWeekday(day int) int {
+	if day == 0 {
+		return 7
+	}
+	return day
 }
 
 // historyContainsWithin returns a function that tests whether any call to
@@ -549,11 +616,119 @@ func toAnySlice(v any) []any {
 
 // compileExpr compiles an expr-lang expression string to bytecode.
 func compileExpr(expression string, env map[string]any) (*vm.Program, error) {
+	if err := validateExpressionBounds(expression); err != nil {
+		return nil, err
+	}
+	env = enrichEnvForExpression(expression, env)
 	opts := []expr.Option{
 		expr.AsBool(),
+		expr.AllowUndefinedVariables(),
 	}
 	if env != nil {
 		opts = append(opts, expr.Env(env))
 	}
 	return expr.Compile(expression, opts...)
+}
+
+var (
+	funcCallRe       = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	namespacedCallRe = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	operatorTokenRe  = regexp.MustCompile(`\&\&|\|\||==|!=|<=|>=|<|>|\+|-|\*|/|%`)
+)
+
+func validateExpressionBounds(expression string) error {
+	exprRunes := []rune(expression)
+	if len(exprRunes) > maxExpressionChars {
+		return fmt.Errorf("when expression exceeds max chars (%d > %d)", len(exprRunes), maxExpressionChars)
+	}
+
+	funcCalls := len(funcCallRe.FindAllStringSubmatch(expression, -1)) + len(namespacedCallRe.FindAllStringSubmatch(expression, -1))
+	if funcCalls > maxExpressionFunctionCalls {
+		return fmt.Errorf("when expression exceeds max function calls (%d > %d)", funcCalls, maxExpressionFunctionCalls)
+	}
+
+	operatorCount := len(operatorTokenRe.FindAllString(expression, -1))
+	if operatorCount > maxExpressionOperators {
+		return fmt.Errorf("when expression exceeds max operator complexity (%d > %d)", operatorCount, maxExpressionOperators)
+	}
+
+	depth, err := expressionDepthHeuristic(expression)
+	if err != nil {
+		return err
+	}
+	if depth > maxExpressionDepth {
+		return fmt.Errorf("when expression exceeds max nesting depth (%d > %d)", depth, maxExpressionDepth)
+	}
+	return nil
+}
+
+func expressionDepthHeuristic(expression string) (int, error) {
+	var (
+		maxDepth int
+		depth    int
+	)
+	for _, ch := range expression {
+		switch ch {
+		case '(', '[', '{':
+			depth++
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		case ')', ']', '}':
+			depth--
+			if depth < 0 {
+				return 0, errors.New("when expression has unbalanced closing delimiter")
+			}
+		}
+	}
+	if depth != 0 {
+		return 0, errors.New("when expression has unbalanced delimiters")
+	}
+	return maxDepth, nil
+}
+
+func enrichEnvForExpression(expression string, env map[string]any) map[string]any {
+	if env == nil {
+		env = map[string]any{}
+	}
+	out := make(map[string]any, len(env))
+	for k, v := range env {
+		out[k] = v
+	}
+	// Add placeholders for namespaced function calls (e.g. data.feature_flag()).
+	for _, m := range namespacedCallRe.FindAllStringSubmatch(expression, -1) {
+		ns := m[1]
+		fn := m[2]
+		nsMap, _ := out[ns].(map[string]any)
+		if nsMap == nil {
+			nsMap = map[string]any{}
+		}
+		if _, ok := nsMap[fn]; !ok {
+			nsMap[fn] = func(args ...any) any { return nil }
+		}
+		out[ns] = nsMap
+	}
+	// Add placeholders for bare function calls.
+	for _, m := range funcCallRe.FindAllStringSubmatch(expression, -1) {
+		name := m[1]
+		if _, exists := out[name]; !exists {
+			out[name] = func(args ...any) any { return nil }
+		}
+	}
+	return out
+}
+
+func unmatchedReasonCode(effect string) string {
+	switch strings.ToLower(effect) {
+	case "permit", "allow":
+		return "UNMATCHED_PERMIT"
+	case "deny", "halt":
+		return "UNMATCHED_DENY"
+	case "defer", "abstain", "pending":
+		return "UNMATCHED_DEFER"
+	case "shadow":
+		return "UNMATCHED_SHADOW"
+	default:
+		return "UNMATCHED_UNKNOWN"
+	}
 }

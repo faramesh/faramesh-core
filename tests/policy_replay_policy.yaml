@@ -1,0 +1,17 @@
+faramesh-version: "1.0"
+agent-id: "p8-policy-replay"
+default_effect: deny
+rules:
+  - id: permit-safe-http
+    match:
+      tool: "http/get"
+      when: "args.endpoint == 'https://safe.example'"
+    effect: permit
+    reason: "safe endpoint"
+    reason_code: RULE_PERMIT
+  - id: deny-shell
+    match:
+      tool: "shell/exec"
+    effect: deny
+    reason: "shell execution denied"
+    reason_code: RULE_DENY
