@@ -18,7 +18,7 @@ var (
 
 var (
 	chaosFindDaemonPID = findDaemonPID
-	chaosSendSignal    = func(pid int, sig syscall.Signal) error { return syscall.Kill(pid, sig) }
+	chaosSendSignal    = sendChaosSignal
 )
 
 var chaosCmd = &cobra.Command{
@@ -125,7 +125,11 @@ func runChaosDegraded(_ *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return dispatchChaosAction(pid, action, syscall.SIGUSR1)
+	sig, ok := chaosDegradedSignal()
+	if !ok {
+		return fmt.Errorf("chaos degraded toggles are not supported on this platform")
+	}
+	return dispatchChaosAction(pid, action, sig)
 }
 
 func runChaosFault(_ *cobra.Command, args []string) error {
@@ -134,7 +138,11 @@ func runChaosFault(_ *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return dispatchChaosAction(pid, action, syscall.SIGUSR2)
+	sig, ok := chaosFaultSignal()
+	if !ok {
+		return fmt.Errorf("chaos fault toggles are not supported on this platform")
+	}
+	return dispatchChaosAction(pid, action, sig)
 }
 
 func parseChaosAction(args []string) string {

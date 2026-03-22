@@ -31,6 +31,10 @@ jobs:
           - goos: darwin
             goarch: arm64
             suffix: darwin-arm64
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64
+            ext: .exe
 
     steps:
       - uses: actions/checkout@v4
@@ -162,6 +166,7 @@ jobs:
           | Linux arm64 | `faramesh-linux-arm64` |
           | macOS amd64 | `faramesh-darwin-amd64` |
           | macOS arm64 (Apple Silicon) | `faramesh-darwin-arm64` |
+          | Windows amd64 | `faramesh-windows-amd64.exe` |
 
           **Python SDK:**
           ```bash
@@ -338,3 +343,35 @@ jobs:
           packages-dir: sdk/python/dist/
           print-hash: true
         continue-on-error: true
+
+  # ─── Node CLI wrapper to npm ───────────────────────────────────────────────
+  publish-npm:
+    name: Publish npm package
+    runs-on: ubuntu-latest
+    needs: github-release
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Set npm package version
+        run: |
+          cd npm
+          npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
+
+      - name: Publish to npm
+        run: |
+          cd npm
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
