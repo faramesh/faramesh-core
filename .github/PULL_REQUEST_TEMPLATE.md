@@ -5,14 +5,13 @@
 
 ## Testing
 
-- [ ] `pytest`
-- [ ] `npm test` (sdk/node)
+- [ ] `go test -race ./...`
+- [ ] `go vet ./...`
+- [ ] Example FPL policies validate
 - [ ] Other (describe):
 
 ## Checklist
 
 - [ ] Changelog updated if user-facing
 - [ ] Docs updated or not needed
-- [ ] Screenshots added for UI changes (if applicable)
 - [ ] CI green
-
