@@ -1,23 +1,17 @@
-# Build stage
-FROM golang:1.22-alpine AS builder
-RUN apk add --no-cache ca-certificates
+# Multi-stage build: single static faramesh binary (open faramesh-core module).
+# Build: docker build -t faramesh:local -f Dockerfile .
+# Run:  docker run --rm faramesh:local faramesh version
 
+FROM golang:1.25-alpine AS build
 WORKDIR /src
+RUN apk add --no-cache git ca-certificates
 COPY go.mod go.sum ./
 RUN go mod download
-
 COPY . .
-ARG VERSION=dev
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags="-X main.version=${VERSION} -s -w" \
-    -o /faramesh \
-    ./cmd/faramesh
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=docker" -o /out/faramesh ./cmd/faramesh
 
-# Final image — distroless/static for minimal attack surface.
-# The binary is ~28MB; the image is ~30MB total.
-FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=builder /faramesh /faramesh
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-
-ENTRYPOINT ["/faramesh"]
-CMD ["--help"]
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates && adduser -D -u 65532 nonroot
+USER nonroot:nonroot
+COPY --from=build /out/faramesh /usr/local/bin/faramesh
+ENTRYPOINT ["/usr/local/bin/faramesh"]

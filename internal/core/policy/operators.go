@@ -185,7 +185,9 @@ func (r *OperatorRegistry) InjectIntoEnv(env map[string]any, results *[]Operator
 				*results = append(*results, *result)
 			}
 			if err != nil {
-				return nil
+				// expr-lang coerces nil to "false" for bool conditions; surfacing the error
+				// as a failed evaluation matches fail-closed semantics (see EXPR_RUNTIME_ERROR).
+				panic(err)
 			}
 			return val
 		}

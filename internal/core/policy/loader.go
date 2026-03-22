@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -24,6 +26,28 @@ var syntheticProbeIDs = []string{
 	"search", "browse", "summarize",
 }
 
+// loadPolicyDocument parses YAML, merges FPL (see mergeFPLIntoDoc), and returns the doc,
+// a 16-char version id (SHA-256 prefix of raw YAML || FPL digest), and the full 64-char hex hash.
+// policyDir is the directory containing the policy file; use "" for inline/URL/string loads
+// (fpl_files is rejected when policyDir is empty).
+func loadPolicyDocument(data []byte, policyDir string) (*Doc, string, string, error) {
+	doc, err := parsePolicyYAML(data)
+	if err != nil {
+		return nil, "", "", err
+	}
+	if policyDir == "" && len(doc.FPLFiles) > 0 {
+		return nil, "", "", fmt.Errorf("policy: fpl_files requires LoadFile (paths are relative to the YAML file)")
+	}
+	fplDigest, err := mergeFPLIntoDoc(doc, policyDir)
+	if err != nil {
+		return nil, "", "", err
+	}
+	combined := append(append([]byte{}, data...), fplDigest...)
+	h := sha256.Sum256(combined)
+	full := fmt.Sprintf("%x", h)
+	return doc, full[:16], full, nil
+}
+
 // LoadFile reads and parses a policy YAML file.
 // Returns the parsed Doc and its SHA256 version hash.
 func LoadFile(path string) (*Doc, string, error) {
@@ -31,34 +55,42 @@ func LoadFile(path string) (*Doc, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("read policy file %q: %w", path, err)
 	}
-	return LoadBytes(data)
+	doc, ver, _, err := loadPolicyDocument(data, filepath.Dir(path))
+	return doc, ver, err
 }
 
 // LoadBytes parses policy YAML from raw bytes.
+// If the document sets fpl_files, use LoadFile instead (relative paths need a policy directory).
 func LoadBytes(data []byte) (*Doc, string, error) {
+	doc, ver, _, err := loadPolicyDocument(data, "")
+	return doc, ver, err
+}
+
+func parsePolicyYAML(data []byte) (*Doc, error) {
 	var doc Doc
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, "", fmt.Errorf("parse policy YAML: %w", err)
+		return nil, fmt.Errorf("parse policy YAML: %w", err)
 	}
-
-	// Compute the version hash from raw bytes so it's stable across reloads
-	// of the same content.
-	hash := fmt.Sprintf("%x", sha256.Sum256(data))[:16]
-
 	if doc.FarameshVersion == "" {
 		doc.FarameshVersion = "1.0"
 	}
 	if doc.DefaultEffect == "" {
 		doc.DefaultEffect = "deny"
 	}
-
-	return &doc, hash, nil
+	return &doc, nil
 }
 
 // Validate checks policy structure and compiles all when-conditions
 // without evaluating them. Returns a list of human-readable errors and warnings.
 func Validate(doc *Doc) []string {
 	var errs []string
+
+	if doc.DefaultEffect != "" {
+		effect := strings.ToLower(doc.DefaultEffect)
+		if effect != "deny" && effect != "permit" && effect != "halt" && effect != "shadow" {
+			errs = append(errs, fmt.Sprintf("invalid default_effect: %q (must be deny|permit|halt|shadow)", doc.DefaultEffect))
+		}
+	}
 
 	// Structural checks.
 	seenIDs := make(map[string]int)
@@ -94,6 +126,19 @@ func Validate(doc *Doc) []string {
 	errs = append(errs, detectGlobOverlap(doc.Rules)...)
 
 	return errs
+}
+
+// ValidationErrorsOnly returns only hard validation errors and excludes
+// warning-prefixed advisory messages.
+func ValidationErrorsOnly(issues []string) []string {
+	out := make([]string, 0, len(issues))
+	for _, issue := range issues {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(issue)), "warning:") {
+			continue
+		}
+		out = append(out, issue)
+	}
+	return out
 }
 
 // detectGlobOverlap checks for rules that are unreachable because an earlier

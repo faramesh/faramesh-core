@@ -1,24 +1,43 @@
 package core
 
 import (
+	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"fmt"
 	"net/http"
+	"path"
+	"reflect"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/faramesh/faramesh-core/internal/core/callbacks"
 	"github.com/faramesh/faramesh-core/internal/core/canonicalize"
 	"github.com/faramesh/faramesh-core/internal/core/contextguard"
+	"github.com/faramesh/faramesh-core/internal/core/credential"
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
+	"github.com/faramesh/faramesh-core/internal/core/degraded"
 	"github.com/faramesh/faramesh-core/internal/core/dpr"
+	"github.com/faramesh/faramesh-core/internal/core/jobs"
+	"github.com/faramesh/faramesh-core/internal/core/multiagent"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
+	"github.com/faramesh/faramesh-core/internal/core/phases"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/postcondition"
+	"github.com/faramesh/faramesh-core/internal/core/principal"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
+	"github.com/faramesh/faramesh-core/internal/core/runtimeenv"
+	"github.com/faramesh/faramesh-core/internal/core/sandbox"
 	"github.com/faramesh/faramesh-core/internal/core/session"
+	"github.com/faramesh/faramesh-core/internal/core/webhook"
 	"github.com/google/uuid"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // DecisionSyncer is implemented by any component that wants to receive
@@ -26,6 +45,21 @@ import (
 // Using an interface here keeps core free of imports from the cloud package.
 type DecisionSyncer interface {
 	Send(Decision)
+}
+
+// PrincipalRevocationChecker checks if a principal is revoked.
+type PrincipalRevocationChecker interface {
+	IsRevoked(principalID string) bool
+}
+
+// PrincipalElevationResolver resolves active principal elevation grants.
+type PrincipalElevationResolver interface {
+	ActiveGrant(principalID string) *principal.ElevationGrant
+}
+
+// WorkloadIdentityDetector can resolve a workload principal identity.
+type WorkloadIdentityDetector interface {
+	Identity(ctx context.Context) (*principal.Identity, error)
 }
 
 // Pipeline is the invariant evaluation engine. It runs identically regardless
@@ -36,25 +70,77 @@ type DecisionSyncer interface {
 // before the Decision is returned. If the WAL write fails, DENY is returned.
 // Execution must never precede the audit record.
 type Pipeline struct {
-	engine      *policy.AtomicEngine
-	wal         dpr.Writer
-	store       dpr.StoreBackend // may be nil (in-memory / demo mode)
-	sessions    *session.Manager
-	defers      *deferwork.Workflow
-	chainMu     map[string]string      // agentID -> last record hash (in-memory cache)
-	chainLock   sync.Mutex             // protects chainMu
-	syncer      DecisionSyncer         // optional Horizon sync (nil = disabled)
-	postScanner *postcondition.Scanner // post-execution output scanner (nil = disabled)
-	httpClient  *http.Client           // shared HTTP client for context guards
+	engine           *policy.AtomicEngine
+	wal              dpr.Writer
+	store            dpr.StoreBackend // may be nil (in-memory / demo mode)
+	dprQueue         jobs.DPRQueue
+	sessions         *session.Manager
+	sessionGovernor  *session.Governor
+	defers           *deferwork.Workflow
+	chainMu          map[string]string      // agentID -> last record hash (in-memory cache)
+	chainLock        sync.Mutex             // protects chainMu
+	syncer           DecisionSyncer         // optional Horizon sync (nil = disabled)
+	postScanner      *postcondition.Scanner // post-execution output scanner (nil = disabled)
+	httpClient       *http.Client           // shared HTTP client for context guards
+	webhooks         *webhook.Sender
+	degraded         *degraded.Manager
+	subPolicies      *multiagent.SubPolicyManager
+	routingGovernor  *multiagent.RoutingGovernor
+	loopGovernor     *multiagent.LoopGovernor
+	aggGovernor      *multiagent.AggregationGovernor
+	callbacks        callbacks.Dispatcher
+	revocations      PrincipalRevocationChecker
+	elevations       PrincipalElevationResolver
+	workloadIdentity WorkloadIdentityDetector
+	credentialRouter *credential.Router
+	provenance       observe.ArgProvenanceTracker
+	phaseManager     *phases.PhaseManager
+	policySourceType string
+	policySourceID   string
+	hmacKey          []byte
+	log              *zap.Logger
+	artifacts        atomic.Value // *policyArtifacts
+	callChainMu      sync.Mutex
+	activeCallChains map[string]struct{}
 }
+
+type policyArtifacts struct {
+	engine      *policy.Engine
+	toolSchemas *policy.ToolSchemaRegistry
+	postScanner *postcondition.Scanner
+}
+
+const (
+	minExecutionTimeoutMS = 50
+	maxExecutionTimeoutMS = 60 * 60 * 1000
+)
 
 // Config holds construction parameters for the Pipeline.
 type Config struct {
-	Engine   *policy.AtomicEngine
-	WAL      dpr.Writer
-	Store    dpr.StoreBackend // optional
-	Sessions *session.Manager
-	Defers   *deferwork.Workflow
+	Engine           *policy.AtomicEngine
+	WAL              dpr.Writer
+	Store            dpr.StoreBackend // optional
+	DPRQueue         jobs.DPRQueue    // optional async persistence queue
+	Sessions         *session.Manager
+	SessionGovernor  *session.Governor
+	Defers           *deferwork.Workflow
+	Webhooks         *webhook.Sender
+	Degraded         *degraded.Manager
+	SubPolicies      *multiagent.SubPolicyManager
+	RoutingGovernor  *multiagent.RoutingGovernor
+	LoopGovernor     *multiagent.LoopGovernor
+	AggregationGov   *multiagent.AggregationGovernor
+	Callbacks        callbacks.Dispatcher
+	Revocations      PrincipalRevocationChecker
+	Elevations       PrincipalElevationResolver
+	WorkloadIdentity WorkloadIdentityDetector
+	CredentialRouter *credential.Router
+	Provenance       observe.ArgProvenanceTracker
+	PhaseManager     *phases.PhaseManager
+	PolicySourceType string
+	PolicySourceID   string
+	HMACKey          []byte
+	Log              *zap.Logger
 }
 
 // NewPipeline constructs a Pipeline from a Config.
@@ -67,29 +153,45 @@ func NewPipeline(cfg Config) *Pipeline {
 	if cfg.Sessions == nil {
 		cfg.Sessions = session.NewManager()
 	}
+	if cfg.SessionGovernor == nil {
+		cfg.SessionGovernor = session.NewGovernor()
+	}
 	if cfg.Defers == nil {
 		cfg.Defers = deferwork.NewWorkflow("")
 	}
 	p := &Pipeline{
-		engine:     cfg.Engine,
-		wal:        cfg.WAL,
-		store:      cfg.Store,
-		sessions:   cfg.Sessions,
-		defers:     cfg.Defers,
-		chainMu:    make(map[string]string),
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		engine:           cfg.Engine,
+		wal:              cfg.WAL,
+		store:            cfg.Store,
+		dprQueue:         cfg.DPRQueue,
+		sessions:         cfg.Sessions,
+		sessionGovernor:  cfg.SessionGovernor,
+		defers:           cfg.Defers,
+		chainMu:          make(map[string]string),
+		httpClient:       &http.Client{Timeout: 10 * time.Second},
+		webhooks:         cfg.Webhooks,
+		degraded:         cfg.Degraded,
+		subPolicies:      cfg.SubPolicies,
+		routingGovernor:  cfg.RoutingGovernor,
+		loopGovernor:     cfg.LoopGovernor,
+		aggGovernor:      cfg.AggregationGov,
+		callbacks:        cfg.Callbacks,
+		revocations:      cfg.Revocations,
+		elevations:       cfg.Elevations,
+		workloadIdentity: cfg.WorkloadIdentity,
+		credentialRouter: cfg.CredentialRouter,
+		provenance:       cfg.Provenance,
+		phaseManager:     cfg.PhaseManager,
+		policySourceType: cfg.PolicySourceType,
+		policySourceID:   cfg.PolicySourceID,
+		hmacKey:          cfg.HMACKey,
+		log:              cfg.Log,
+		activeCallChains: make(map[string]struct{}),
 	}
-
-	// Compile post-condition scanner from policy if post_rules are defined.
-	if cfg.Engine != nil && cfg.Engine.Get() != nil && cfg.Engine.Get().Doc() != nil {
-		doc := cfg.Engine.Get().Doc()
-		if len(doc.PostRules) > 0 {
-			scanner, err := postcondition.NewScanner(doc.PostRules, doc.MaxOutputBytes)
-			if err == nil {
-				p.postScanner = scanner
-			}
-		}
+	if p.log == nil {
+		p.log = zap.NewNop()
 	}
+	p.artifacts.Store(buildPolicyArtifacts(currentEngine(cfg.Engine)))
 	// Seed chain hashes from SQLite so the DPR chain is continuous across restarts.
 	if cfg.Store != nil {
 		if agents, err := cfg.Store.KnownAgents(); err == nil {
@@ -100,19 +202,147 @@ func NewPipeline(cfg Config) *Pipeline {
 			}
 		}
 	}
+	if cfg.RoutingGovernor != nil {
+		if eng := currentEngine(cfg.Engine); eng != nil && eng.Doc() != nil {
+			p.syncRoutingFromPolicy(eng.Doc())
+		}
+	}
 	return p
+}
+
+func buildPolicyArtifacts(engine *policy.Engine) *policyArtifacts {
+	art := &policyArtifacts{
+		engine:      engine,
+		toolSchemas: policy.NewToolSchemaRegistry(),
+	}
+	if engine == nil || engine.Doc() == nil {
+		return art
+	}
+	doc := engine.Doc()
+	for toolID, ts := range doc.ToolSchemas {
+		_ = art.toolSchemas.Register(policy.ToolSchemaEntry{
+			ToolID:        toolID,
+			Description:   ts.Name,
+			Reversibility: "",
+			BlastRadius:   "",
+			Params: func() []policy.ParamDecl {
+				out := make([]policy.ParamDecl, 0, len(ts.Parameters))
+				for name, pd := range ts.Parameters {
+					out = append(out, policy.ParamDecl{Name: name, Type: pd.Type, Required: pd.Required})
+				}
+				return out
+			}(),
+		})
+	}
+	if len(doc.PostRules) > 0 {
+		scanner, err := postcondition.NewScanner(doc.PostRules, doc.MaxOutputBytes)
+		if err == nil {
+			art.postScanner = scanner
+		}
+	}
+	return art
+}
+
+func currentEngine(a *policy.AtomicEngine) *policy.Engine {
+	if a == nil {
+		return nil
+	}
+	return a.Get()
+}
+
+func (p *Pipeline) currentArtifacts() *policyArtifacts {
+	if v := p.artifacts.Load(); v != nil {
+		if art, ok := v.(*policyArtifacts); ok && art != nil {
+			return art
+		}
+	}
+	return buildPolicyArtifacts(currentEngine(p.engine))
+}
+
+// ApplyPolicyBundle atomically applies a new policy generation bundle.
+// The bundle includes rule evaluation engine + pre/post scanner artifacts.
+func (p *Pipeline) ApplyPolicyBundle(doc *policy.Doc, newEngine *policy.Engine) error {
+	if p.engine == nil {
+		return fmt.Errorf("pipeline engine is nil")
+	}
+	if newEngine == nil {
+		return fmt.Errorf("new policy engine is nil")
+	}
+	if doc == nil {
+		doc = newEngine.Doc()
+	}
+	art := buildPolicyArtifacts(newEngine)
+	if doc != nil && len(doc.PostRules) > 0 && art.postScanner == nil {
+		return fmt.Errorf("failed to compile post-condition scanner")
+	}
+	p.engine.Swap(newEngine)
+	p.artifacts.Store(art)
+	p.syncRoutingFromPolicy(doc)
+	return nil
+}
+
+func routingManifestFromDoc(doc *policy.Doc) (multiagent.RoutingManifest, bool) {
+	if doc == nil || doc.OrchestratorManifest == nil || doc.OrchestratorManifest.AgentID == "" {
+		return multiagent.RoutingManifest{}, false
+	}
+	om := doc.OrchestratorManifest
+	m := multiagent.RoutingManifest{
+		OrchestratorID:   om.AgentID,
+		UndeclaredPolicy: om.UndeclaredInvocationPolicy,
+	}
+	if m.UndeclaredPolicy == "" {
+		m.UndeclaredPolicy = "deny"
+	}
+	for _, inv := range om.PermittedInvocations {
+		m.Entries = append(m.Entries, multiagent.RoutingEntry{
+			AgentID:                  inv.AgentID,
+			MaxInvocationsPerSession: inv.MaxInvocationsPerSession,
+			RequiresPriorApproval:    inv.RequiresPriorApproval,
+		})
+	}
+	return m, true
+}
+
+func (p *Pipeline) syncRoutingFromPolicy(doc *policy.Doc) {
+	if p.routingGovernor == nil || doc == nil {
+		return
+	}
+	if m, ok := routingManifestFromDoc(doc); ok {
+		p.routingGovernor.ReplaceManifests([]multiagent.RoutingManifest{m})
+	} else {
+		p.routingGovernor.ReplaceManifests(nil)
+	}
 }
 
 // Evaluate runs the 11-step evaluation pipeline and returns a Decision.
 // The WAL record is written and fsynced before this function returns.
 func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	start := time.Now()
+	art := p.currentArtifacts()
+	engine := art.engine
+	if engine == nil {
+		return p.decide(req, Decision{
+			Effect:     EffectDeny,
+			ReasonCode: reasons.PolicyLoadError,
+			Reason:     "policy engine not loaded",
+		}, p.sessions.Get(req.AgentID), start, nil)
+	}
 
 	if req.Timestamp.IsZero() {
 		req.Timestamp = start
 	}
 	if req.InterceptAdapter == "" {
 		req.InterceptAdapter = "sdk"
+	}
+	if req.CallID != "" {
+		if !p.enterCallChain(req.CallID) {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: reasons.GovernanceDoubleWrapDenied,
+				Reason:     "nested governance wrapping denied for active call chain",
+			}, p.sessions.Get(req.AgentID), start, nil)
+		}
+		defer p.leaveCallChain(req.CallID)
 	}
 
 	// [0] Canonicalize args (CAR v1.0): NFKC normalization, confusable mapping,
@@ -123,26 +353,168 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	// to prevent Unicode spoofing attacks on tool identifiers.
 	req.ToolID = canonicalize.ToolID(req.ToolID)
 
+	// [0.2] Workload identity fallback — if principal is missing or unverified,
+	// try to inject an auto-detected workload identity.
+	if (req.Principal == nil || !req.Principal.Verified) && p.workloadIdentity != nil {
+		detectCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		if detected, err := p.workloadIdentity.Identity(detectCtx); err == nil && detected != nil && detected.ID != "" {
+			// Runtime trust path: when workload identity resolution succeeds, ensure
+			// principal verification fields are populated for policy conditions.
+			if !detected.Verified {
+				detected.Verified = true
+			}
+			req.Principal = detected
+		}
+		cancel()
+	}
+
+	// [0.25] Principal verification source gate — accept verified=true only
+	// when the verification method is from an authoritative workload source.
+	if req.Principal != nil && req.Principal.Verified {
+		if !principal.IsTrustedVerificationMethod(req.Principal.Method) {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: reasons.PrincipalVerificationUntrusted,
+				Reason:     fmt.Sprintf("principal %q has untrusted or missing verification method", req.Principal.ID),
+			}, p.sessions.Get(req.AgentID), start, nil)
+		}
+	}
+
+	// [0.3] Principal revocation gate — revoked principals are hard denied.
+	if req.Principal != nil && req.Principal.ID != "" && p.revocations != nil && p.revocations.IsRevoked(req.Principal.ID) {
+		return p.decide(req, Decision{
+			Effect:     EffectDeny,
+			ReasonCode: reasons.PrincipalRevoked,
+			Reason:     fmt.Sprintf("principal %q is revoked", req.Principal.ID),
+		}, p.sessions.Get(req.AgentID), start, nil)
+	}
+
+	// [0.4] Principal elevation overlay — apply active grant tier before eval.
+	if req.Principal != nil && req.Principal.ID != "" && p.elevations != nil {
+		if grant := p.elevations.ActiveGrant(req.Principal.ID); grant != nil && grant.ElevatedTier != "" {
+			req.Principal.Tier = grant.ElevatedTier
+		}
+	}
+
 	// [1] Kill switch check — nanoseconds, no network.
 	sess := p.sessions.Get(req.AgentID)
+	if p.sessionGovernor != nil {
+		p.sessionGovernor.RegisterAgentNamespace(req.AgentID)
+	}
+	argProvenance := p.inferArgProvenance(req.AgentID, req.SessionID, req.Args)
 	if sess.IsKilled() {
 		return p.decide(req, Decision{
 			Effect:     EffectDeny,
 			ReasonCode: reasons.KillSwitchActive,
 			Reason:     "agent kill switch is active",
-		}, sess, start)
+		}, sess, start, argProvenance)
 	}
 
+	doc := engine.Doc()
+
 	// [2] Phase check — tool visibility.
-	// Future: check if tool is in the current workflow phase.
+	if len(doc.Phases) > 0 {
+		phaseName := sess.CurrentPhase()
+		if phaseName == "" {
+			phaseName = firstPhaseName(doc.Phases)
+			sess.EnsurePhase(phaseName)
+		}
+		if ph, ok := doc.Phases[phaseName]; ok && len(ph.Tools) > 0 {
+			phaseTools, stepToolAllowlist := splitPhaseAndStepToolVisibility(ph.Tools)
+			if !p.isToolAllowedInPhase(req.AgentID, phaseName, req.ToolID, phaseTools) {
+				return p.decide(req, Decision{
+					Effect:     EffectDeny,
+					ReasonCode: reasons.OutOfPhaseToolCall,
+					Reason:     fmt.Sprintf("tool %q not allowed in phase %q", req.ToolID, phaseName),
+				}, sess, start, argProvenance)
+			}
+			if req.WorkflowStep != "" && len(stepToolAllowlist) > 0 {
+				stepPatterns, ok := stepToolAllowlist[req.WorkflowStep]
+				if !ok {
+					return p.decide(req, Decision{
+						Effect:     EffectDeny,
+						ReasonCode: reasons.UnknownWorkflowStep,
+						Reason: fmt.Sprintf("workflow step %q is not configured in phase %q",
+							req.WorkflowStep, phaseName),
+					}, sess, start, argProvenance)
+				}
+				stepAllowed := false
+				for _, pattern := range stepPatterns {
+					if matchToolPattern(pattern, req.ToolID) {
+						stepAllowed = true
+						break
+					}
+				}
+				if !stepAllowed {
+					return p.decide(req, Decision{
+						Effect:     EffectDeny,
+						ReasonCode: reasons.OutOfWorkflowStepToolCall,
+						Reason: fmt.Sprintf("tool %q not allowed in workflow step %q (phase %q)",
+							req.ToolID, req.WorkflowStep, phaseName),
+					}, sess, start, argProvenance)
+				}
+			}
+		}
+	}
+
+	// [2.5] Execution isolation check — enforce sandbox requirements.
+	if doc.ExecutionIsolation != nil && doc.ExecutionIsolation.Enabled {
+		required := requiredIsolationForTool(doc.ExecutionIsolation, req.ToolID)
+		if required != sandbox.EnvNone {
+			current := currentExecutionEnvironment(req)
+			if current == sandbox.EnvNone {
+				return p.decide(req, Decision{
+					Effect:     EffectDeny,
+					ReasonCode: reasons.IsolationRequired,
+					Reason:     fmt.Sprintf("tool %q requires %s isolation", req.ToolID, required),
+				}, sess, start, argProvenance)
+			}
+			if !meetsIsolationRequirement(current, required) {
+				return p.decide(req, Decision{
+					Effect:     EffectDeny,
+					ReasonCode: reasons.IsolationRequired,
+					Reason:     fmt.Sprintf("tool %q requires %s isolation (current: %s)", req.ToolID, required, current),
+				}, sess, start, argProvenance)
+			}
+		}
+	}
+
+	// [2.6] Tool execution timeout contract — enforce canonical timeout semantics.
+	if denied, code, reason, normalized := enforceExecutionTimeoutContract(req.ExecutionTimeoutMS, req.Args, doc, req.ToolID); denied {
+		observe.EmitGovernanceLog(p.log, zapcore.WarnLevel, "execution timeout denied", observe.EventExecutionTimeoutDeny,
+			zap.String("agent_id", req.AgentID),
+			zap.String("session_id", req.SessionID),
+			zap.String("call_id", req.CallID),
+			zap.String("tool_id", req.ToolID),
+			zap.String("reason_code", code),
+			zap.String("reason", reason),
+			zap.Int("requested_execution_timeout_ms", req.ExecutionTimeoutMS),
+		)
+		return p.decide(req, Decision{
+			Effect:     EffectDeny,
+			ReasonCode: code,
+			Reason:     reason,
+		}, sess, start, argProvenance)
+	} else if normalized > 0 {
+		req.ExecutionTimeoutMS = normalized
+	}
 
 	// [3] Pre-execution scanners (parallel, ~0.1ms total).
+	if art.toolSchemas != nil {
+		if errs := art.toolSchemas.ValidateArgs(req.ToolID, req.Args); len(errs) > 0 {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: reasons.SchemaValidationFail,
+				Reason:     strings.Join(errs, "; "),
+			}, sess, start, argProvenance)
+		}
+	}
 	if denied, code, reason := runScanners(req); denied {
 		return p.decide(req, Decision{
 			Effect:     EffectDeny,
 			ReasonCode: code,
 			Reason:     reason,
-		}, sess, start)
+		}, sess, start, argProvenance)
 	}
 
 	// [3.1] Delegation scope check — ensure delegated calls are within scope.
@@ -152,12 +524,84 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 				Effect:     EffectDeny,
 				ReasonCode: reasons.DelegationExceedsAuthority,
 				Reason:     fmt.Sprintf("tool %q not in delegation scope", req.ToolID),
-			}, sess, start)
+			}, sess, start, argProvenance)
+		}
+	}
+	if req.Invocation != nil && req.Invocation.ID != "" && p.subPolicies != nil {
+		if !p.subPolicies.IsToolAllowed(req.Invocation.ID, req.ToolID, true) {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: reasons.RoutingInvocationSubPolicyDenied,
+				Reason:     fmt.Sprintf("tool %q denied by invocation sub-policy", req.ToolID),
+			}, sess, start, argProvenance)
+		}
+	}
+
+	// [3.11] Orchestrator topology — invoke_agent targets must match orchestrator_manifest.
+	if p.routingGovernor != nil && topologyInvokeTool(req.ToolID) && p.routingGovernor.HasManifest(req.AgentID) {
+		target := extractTargetAgentID(req.Args)
+		if target == "" {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: reasons.SchemaValidationFail,
+				Reason:     "invoke_agent requires target_agent_id (or agent_id) in args",
+			}, sess, start, argProvenance)
+		}
+		allowed, needApproval, routeReason := p.routingGovernor.CheckInvocation(req.AgentID, target, req.SessionID)
+		if !allowed {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: reasons.RoutingManifestViolation,
+				Reason:     routeReason,
+			}, sess, start, argProvenance)
+		}
+		if needApproval {
+			token := fmt.Sprintf("%x", sha256.Sum256([]byte(req.CallID+req.ToolID+target)))[:8]
+			if _, err := p.defers.DeferWithToken(token, req.AgentID, req.ToolID, routeReason); err != nil {
+				// duplicate token: keep same token semantics as policy defer
+			}
+			return p.decide(req, Decision{
+				Effect:        EffectDefer,
+				ReasonCode:    reasons.RoutingUndeclaredInvocation,
+				Reason:        routeReason,
+				DeferToken:    token,
+				PolicyVersion: engine.Version(),
+			}, sess, start, argProvenance)
+		}
+	}
+
+	// [3.15] Session state write governor — enforce namespace + content safety.
+	if strings.HasPrefix(req.ToolID, "session/write") && p.sessionGovernor != nil {
+		key, _ := req.Args["key"].(string)
+		if key == "" {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: reasons.SessionStateWriteBlocked,
+				Reason:     "session state write requires string argument 'key'",
+			}, sess, start, argProvenance)
+		}
+		value, _ := req.Args["value"]
+		if allowed, code, reason := p.sessionGovernor.CanWrite(req.AgentID, key, value); !allowed {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: code,
+				Reason:     reason,
+			}, sess, start, argProvenance)
+		}
+	}
+
+	// [3.16] Loop governor — deny burst loops/repetitive invocation patterns.
+	if p.loopGovernor != nil {
+		if allowed, code, reason := p.loopGovernor.CheckAndTrack(req.AgentID, req.SessionID, req.ToolID, req.Args, req.Timestamp); !allowed {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: code,
+				Reason:     reason,
+			}, sess, start, argProvenance)
 		}
 	}
 
 	// [3.2] Context guard check — verify external context freshness.
-	doc := p.engine.Get().Doc()
 	if len(doc.ContextGuards) > 0 {
 		guardResult := contextguard.Check(doc.ContextGuards, p.httpClient)
 		if !guardResult.Passed {
@@ -169,7 +613,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 				Effect:     effect,
 				ReasonCode: guardResult.ReasonCode,
 				Reason:     guardResult.Reason,
-			}, sess, start)
+			}, sess, start, argProvenance)
 		}
 	}
 
@@ -177,16 +621,13 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	callCount := sess.IncrCallCount()
 
 	// [5] Budget enforcement — check session and daily limits.
-	if doc == nil {
-		doc = p.engine.Get().Doc()
-	}
 	if doc.Budget != nil {
 		if denied, code, reason := p.checkBudget(req.AgentID, doc.Budget, callCount); denied {
 			return p.decide(req, Decision{
 				Effect:     EffectDeny,
 				ReasonCode: code,
 				Reason:     reason,
-			}, sess, start)
+			}, sess, start, argProvenance)
 		}
 	}
 
@@ -205,6 +646,17 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 		}
 	}
 
+	// [7.5] Aggregation governor — cap cumulative risky actions per window.
+	if p.aggGovernor != nil {
+		if allowed, code, reason := p.aggGovernor.CheckAndTrack(req.SessionID, riskWeight(req.ToolID, toolMeta), req.Timestamp); !allowed {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: code,
+				Reason:     reason,
+			}, sess, start, argProvenance)
+		}
+	}
+
 	// [8] Policy evaluation — expr-lang bytecode, first-match-wins.
 	// Build session history entries for condition evaluation.
 	historyEntries := make([]map[string]any, len(history))
@@ -218,6 +670,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 
 	ctx := policy.EvalContext{
 		Args: req.Args,
+		Vars: runtimeenv.MergeDocVars(doc.Vars, runtimeenv.PolicyVarOverlay()),
 		Session: policy.SessionCtx{
 			CallCount:    callCount,
 			History:      historyEntries,
@@ -248,7 +701,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 		}
 	}
 
-	result := p.engine.Get().Evaluate(req.ToolID, ctx)
+	result := engine.Evaluate(req.ToolID, ctx)
 
 	var d Decision
 	switch strings.ToLower(result.Effect) {
@@ -258,7 +711,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			RuleID:        result.RuleID,
 			ReasonCode:    result.ReasonCode,
 			Reason:        result.Reason,
-			PolicyVersion: p.engine.Get().Version(),
+			PolicyVersion: engine.Version(),
 		}
 	case "deny", "halt":
 		// Generate an opaque denial token — keyed to call context, not to the
@@ -271,7 +724,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			Reason:         result.Reason,
 			DenialToken:    denialTok,
 			RetryPermitted: false,
-			PolicyVersion:  p.engine.Get().Version(),
+			PolicyVersion:  engine.Version(),
 		}
 	case "defer", "abstain", "pending":
 		reason := result.Reason
@@ -292,7 +745,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			ReasonCode:    result.ReasonCode,
 			Reason:        reason,
 			DeferToken:    token,
-			PolicyVersion: p.engine.Get().Version(),
+			PolicyVersion: engine.Version(),
 		}
 	case "shadow":
 		d = Decision{
@@ -300,18 +753,99 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			RuleID:        result.RuleID,
 			ReasonCode:    result.ReasonCode,
 			Reason:        result.Reason,
-			PolicyVersion: p.engine.Get().Version(),
+			PolicyVersion: engine.Version(),
 		}
 	default:
 		d = Decision{
 			Effect:        EffectDeny,
 			ReasonCode:    reasons.UnknownEffect,
 			Reason:        "policy returned unknown effect: " + result.Effect,
-			PolicyVersion: p.engine.Get().Version(),
+			PolicyVersion: engine.Version(),
 		}
 	}
 
-	return p.decide(req, d, sess, start)
+	if cat, sev := incidentFromMatchedRule(engine.Doc(), result.RuleID); cat != "" || sev != "" {
+		d.IncidentCategory = cat
+		d.IncidentSeverity = sev
+	}
+
+	// [8.5] Credential broker injection for PERMIT path.
+	// Conservative convention (when policy schema has no explicit broker block):
+	// - enable when tool tag "credential:broker" exists OR args["_credential_broker"] is true
+	// - require fail-closed when tag "credential:required" exists OR args["_credential_required"] is true
+	// - scope from tag prefix "credential:scope:" OR args["_credential_scope"] (string)
+	// - injected deterministic key path: args._faramesh.credential.value
+	if d.Effect == EffectPermit {
+		useBroker, required, scope := credentialBrokerPlan(toolMeta, req.Args)
+		if useBroker {
+			if p.credentialRouter == nil {
+				if required {
+					return p.decide(req, Decision{
+						Effect:        EffectDeny,
+						ReasonCode:    reasons.ContextMissing,
+						Reason:        "credential broker required but not configured",
+						PolicyVersion: engine.Version(),
+					}, sess, start, argProvenance)
+				}
+			} else {
+				handle, err := p.credentialRouter.BrokerCall(context.Background(), credential.FetchRequest{
+					ToolID:    req.ToolID,
+					Operation: credentialOperation(req.Args),
+					Scope:     scope,
+					AgentID:   req.AgentID,
+				})
+				if err != nil {
+					if required {
+						return p.decide(req, Decision{
+							Effect:        EffectDeny,
+							ReasonCode:    reasons.PolicyLoadError,
+							Reason:        "credential broker required but fetch failed",
+							PolicyVersion: engine.Version(),
+						}, sess, start, argProvenance)
+					}
+				} else if handle != nil && handle.Credential != nil {
+					injectBrokerCredential(req.Args, handle.Credential)
+					_ = handle.Release(context.Background())
+				}
+			}
+		}
+	}
+
+	return p.decide(req, d, sess, start, argProvenance)
+}
+
+func (p *Pipeline) isToolAllowedInPhase(agentID, phaseName, toolID string, fallbackTools []string) bool {
+	if p.phaseManager != nil {
+		if p.phaseManager.CurrentPhase(agentID) == "" {
+			_ = p.phaseManager.SetPhase(agentID, phaseName)
+		}
+		if allowed, _ := p.phaseManager.IsToolAllowedInPhase(agentID, toolID); allowed {
+			return true
+		}
+		return false
+	}
+	for _, pattern := range fallbackTools {
+		if matchToolPattern(pattern, toolID) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *Pipeline) enterCallChain(callID string) bool {
+	p.callChainMu.Lock()
+	defer p.callChainMu.Unlock()
+	if _, exists := p.activeCallChains[callID]; exists {
+		return false
+	}
+	p.activeCallChains[callID] = struct{}{}
+	return true
+}
+
+func (p *Pipeline) leaveCallChain(callID string) {
+	p.callChainMu.Lock()
+	delete(p.activeCallChains, callID)
+	p.callChainMu.Unlock()
 }
 
 // checkBudget returns (true, code, reason) if the budget is exceeded.
@@ -342,18 +876,26 @@ func (p *Pipeline) checkBudget(agentID string, budget *policy.Budget, callCount 
 // decide writes the WAL record and returns the Decision.
 // This is the WAL ORDERING INVARIANT implementation:
 // no decision is returned until the record is fsynced.
-func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.State, start time.Time) Decision {
+func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.State, start time.Time, argProvenance map[string]string) Decision {
 	d.Latency = time.Since(start)
 	d.AgentID = req.AgentID
 	d.ToolID = req.ToolID
 	d.SessionID = req.SessionID
 	d.Timestamp = req.Timestamp
+	d.ReasonCode = reasons.Normalize(d.ReasonCode)
 
 	// Record metrics.
 	observe.Default.RecordDecision(string(d.Effect), d.ReasonCode, d.Latency)
+	if d.Effect == EffectDeny && d.IncidentCategory != "" {
+		sev := d.IncidentSeverity
+		if sev == "" {
+			sev = "unspecified"
+		}
+		observe.Default.RecordIncidentPrevented(d.IncidentCategory, sev)
+	}
 
 	// [9] WAL write — fsync before returning.
-	rec := p.buildRecord(req, d)
+	rec := p.buildRecord(req, d, argProvenance)
 	d.DPRRecordID = rec.RecordID
 	if err := p.wal.Write(rec); err != nil {
 		observe.Default.RecordWALWrite(false)
@@ -367,15 +909,69 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 		}
 	}
 	observe.Default.RecordWALWrite(true)
+	p.recordToolOutputs(req.AgentID, req.SessionID, req.ToolID, rec.RecordID, req.Args)
+
+	if p.routingGovernor != nil && d.Effect == EffectPermit && topologyInvokeTool(req.ToolID) && p.routingGovernor.HasManifest(req.AgentID) {
+		if target := extractTargetAgentID(req.Args); target != "" {
+			p.routingGovernor.RecordInvocation(req.AgentID, target, req.SessionID)
+		}
+	}
+
+	// Lifecycle callback: async + fail-open, must not alter governance decisions.
+	if p.callbacks != nil {
+		p.callbacks.FireOnDecision(callbacks.OnDecisionPayload{
+			AgentID:    req.AgentID,
+			ToolID:     req.ToolID,
+			Effect:     string(d.Effect),
+			RuleID:     d.RuleID,
+			ReasonCode: d.ReasonCode,
+			RecordID:   d.DPRRecordID,
+		})
+	}
+
+	// Fail-open telemetry hooks (P5): never block or alter decisions.
+	if d.Effect == EffectPermit {
+		principalID := ""
+		if req.Principal != nil {
+			principalID = req.Principal.ID
+		}
+		observe.Default.RecordPermitAccess(observe.AccessEvent{
+			AgentID:     req.AgentID,
+			SessionID:   req.SessionID,
+			ToolID:      req.ToolID,
+			RuleID:      d.RuleID,
+			Timestamp:   req.Timestamp,
+			PrincipalID: principalID,
+			DPRID:       d.DPRRecordID,
+		})
+	}
+	if d.RuleID != "" {
+		observe.Default.ObserveRule(observe.RuleObservation{
+			AgentID:   req.AgentID,
+			SessionID: req.SessionID,
+			ToolID:    req.ToolID,
+			RuleID:    d.RuleID,
+			Effect:    string(d.Effect),
+			Timestamp: req.Timestamp,
+		})
+	}
 
 	// [10] Async: replicate to SQLite, update session history, sync to Horizon.
 	// For PERMIT decisions: record cost against the session and daily accumulators
 	// using the tool's declared cost_usd from the policy. This closes the gap
 	// where sess.AddCost was never called, making USD budget enforcement inert.
 	if p.store != nil {
-		go func() {
-			_ = p.store.Save(rec)
-		}()
+		if p.dprQueue != nil {
+			if err := p.dprQueue.EnqueueDPR(rec); err != nil {
+				go func() {
+					_ = p.store.Save(rec)
+				}()
+			}
+		} else {
+			go func() {
+				_ = p.store.Save(rec)
+			}()
+		}
 	}
 	// History must be updated synchronously so sequence/deny-escalation
 	// controls (e.g. deny_count_within) observe the latest decision
@@ -387,6 +983,9 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 	if p.syncer != nil {
 		go p.syncer.Send(d)
 	}
+	if p.webhooks != nil {
+		go p.emitWebhook(req, d)
+	}
 
 	// [11] Return Decision.
 	return d
@@ -395,7 +994,11 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 // accountCost looks up the declared cost_usd for the tool and records it.
 // Called asynchronously after a PERMIT so it does not add latency.
 func (p *Pipeline) accountCost(agentID, toolID string, sess *session.State) {
-	doc := p.engine.Get().Doc()
+	art := p.currentArtifacts()
+	if art.engine == nil {
+		return
+	}
+	doc := art.engine.Doc()
 	if doc.Tools == nil {
 		return
 	}
@@ -407,34 +1010,42 @@ func (p *Pipeline) accountCost(agentID, toolID string, sess *session.State) {
 }
 
 // buildRecord constructs the DPR record for this decision.
-func (p *Pipeline) buildRecord(req CanonicalActionRequest, d Decision) *dpr.Record {
+func (p *Pipeline) buildRecord(req CanonicalActionRequest, d Decision, argProvenance map[string]string) *dpr.Record {
 	p.chainLock.Lock()
 	prevHash := p.chainMu[req.AgentID]
 	if prevHash == "" {
-		// Genesis record: deterministic hash from agent ID + session ID.
-		prevHash = fmt.Sprintf("%x", sha256.Sum256([]byte(req.AgentID+req.SessionID+"genesis")))
+		// Genesis record: deterministic chain-start marker per agent.
+		prevHash = dpr.GenesisPrevHash(req.AgentID)
 	}
 
 	rec := &dpr.Record{
-		SchemaVersion:     dpr.SchemaVersion,
-		CARVersion:        CARVersion,
-		RecordID:          uuid.New().String(),
-		PrevRecordHash:    prevHash,
-		AgentID:           req.AgentID,
-		SessionID:         req.SessionID,
-		ToolID:            req.ToolID,
-		InterceptAdapter:  req.InterceptAdapter,
-		Effect:            string(d.Effect),
-		MatchedRuleID:     d.RuleID,
-		ReasonCode:        d.ReasonCode,
-		Reason:            d.Reason,
-		DenialToken:       d.DenialToken,
-		IncidentCategory:  d.IncidentCategory,
-		IncidentSeverity:  d.IncidentSeverity,
-		PolicyVersion:     d.PolicyVersion,
-		ArgsStructuralSig: dpr.ArgsSignature(req.Args),
-		CreatedAt:         req.Timestamp,
+		SchemaVersion:      dpr.SchemaVersion,
+		CARVersion:         CARVersion,
+		RecordID:           uuid.New().String(),
+		PrevRecordHash:     prevHash,
+		AgentID:            req.AgentID,
+		SessionID:          req.SessionID,
+		ToolID:             req.ToolID,
+		InterceptAdapter:   req.InterceptAdapter,
+		ExecutionTimeoutMS: req.ExecutionTimeoutMS,
+		Effect:             string(d.Effect),
+		MatchedRuleID:      d.RuleID,
+		ReasonCode:         d.ReasonCode,
+		Reason:             d.Reason,
+		DenialToken:        d.DenialToken,
+		IncidentCategory:   d.IncidentCategory,
+		IncidentSeverity:   d.IncidentSeverity,
+		PolicyVersion:      d.PolicyVersion,
+		PolicySourceType:   p.policySourceType,
+		PolicySourceID:     p.policySourceID,
+		ArgsStructuralSig:  dpr.ArgsSignature(req.Args),
+		ArgProvenance:      argProvenance,
+		CreatedAt:          req.Timestamp,
 	}
+	if p.degraded != nil {
+		rec.DegradedMode = p.degraded.Current().String()
+	}
+	setRecordCredentialMeta(rec, credentialMetaFromArgs(req.Args))
 
 	// Populate principal hash if available.
 	if req.Principal != nil && req.Principal.ID != "" {
@@ -443,14 +1054,216 @@ func (p *Pipeline) buildRecord(req CanonicalActionRequest, d Decision) *dpr.Reco
 	}
 
 	// Store FPL version from current policy.
-	if doc := p.engine.Get().Doc(); doc != nil {
-		rec.FPLVersion = doc.FarameshVersion
+	art := p.currentArtifacts()
+	if art.engine != nil {
+		if doc := art.engine.Doc(); doc != nil {
+			rec.FPLVersion = doc.FarameshVersion
+		}
 	}
 
 	rec.ComputeHash()
+	if len(p.hmacKey) > 0 {
+		m := hmac.New(sha256.New, p.hmacKey)
+		_, _ = m.Write([]byte(rec.RecordID + rec.RecordHash))
+		rec.HMACSig = fmt.Sprintf("%x", m.Sum(nil))
+	}
 	p.chainMu[req.AgentID] = rec.RecordHash
 	p.chainLock.Unlock()
 	return rec
+}
+
+func enforceExecutionTimeoutContract(reqTimeoutMS int, args map[string]any, doc *policy.Doc, toolID string) (bool, string, string, int) {
+	normalized := reqTimeoutMS
+	if normalized <= 0 {
+		normalized = timeoutFromArgs(args)
+	}
+	if normalized > 0 && (normalized < minExecutionTimeoutMS || normalized > maxExecutionTimeoutMS) {
+		return true, reasons.ExecutionTimeoutInvalid,
+			fmt.Sprintf("execution timeout %dms out of bounds [%dms,%dms]", normalized, minExecutionTimeoutMS, maxExecutionTimeoutMS), 0
+	}
+
+	required := false
+	minMS := minExecutionTimeoutMS
+	maxMS := maxExecutionTimeoutMS
+	if doc != nil && doc.Tools != nil {
+		if t, ok := doc.Tools[toolID]; ok {
+			for _, raw := range t.Tags {
+				tag := strings.ToLower(strings.TrimSpace(raw))
+				switch {
+				case tag == "timeout:required":
+					required = true
+				case strings.HasPrefix(tag, "timeout:min_ms:"):
+					if v, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(tag, "timeout:min_ms:"))); err == nil && v > 0 {
+						minMS = v
+					}
+				case strings.HasPrefix(tag, "timeout:max_ms:"):
+					if v, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(tag, "timeout:max_ms:"))); err == nil && v > 0 {
+						maxMS = v
+					}
+				}
+			}
+		}
+	}
+	if minMS < minExecutionTimeoutMS {
+		minMS = minExecutionTimeoutMS
+	}
+	if maxMS > maxExecutionTimeoutMS {
+		maxMS = maxExecutionTimeoutMS
+	}
+	if minMS > maxMS {
+		minMS, maxMS = maxMS, minMS
+	}
+	if required && normalized <= 0 {
+		return true, reasons.ExecutionTimeoutRequired, "tool policy requires execution timeout", 0
+	}
+	if normalized > 0 && (normalized < minMS || normalized > maxMS) {
+		return true, reasons.ExecutionTimeoutPolicyViolation,
+			fmt.Sprintf("execution timeout %dms violates policy bounds [%dms,%dms]", normalized, minMS, maxMS), 0
+	}
+	return false, "", "", normalized
+}
+
+func timeoutFromArgs(args map[string]any) int {
+	if len(args) == 0 {
+		return 0
+	}
+	if v, ok := toPositiveIntMS(args["execution_timeout_ms"]); ok {
+		return v
+	}
+	if v, ok := toPositiveIntMS(args["timeout_ms"]); ok {
+		return v
+	}
+	if sec, ok := toPositiveIntMS(args["execution_timeout_secs"]); ok {
+		return sec * 1000
+	}
+	if sec, ok := toPositiveIntMS(args["timeout_secs"]); ok {
+		return sec * 1000
+	}
+	return 0
+}
+
+func toPositiveIntMS(v any) (int, bool) {
+	switch n := v.(type) {
+	case int:
+		if n > 0 {
+			return n, true
+		}
+	case int64:
+		if n > 0 && n <= int64(^uint(0)>>1) {
+			return int(n), true
+		}
+	case float64:
+		if n > 0 {
+			return int(n), true
+		}
+	case string:
+		if i, err := strconv.Atoi(strings.TrimSpace(n)); err == nil && i > 0 {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+func credentialBrokerPlan(toolMeta policy.ToolCtx, args map[string]any) (use bool, required bool, scope string) {
+	for _, tag := range toolMeta.Tags {
+		t := strings.ToLower(strings.TrimSpace(tag))
+		if t == "credential:broker" {
+			use = true
+		}
+		if t == "credential:required" {
+			use = true
+			required = true
+		}
+		if strings.HasPrefix(t, "credential:scope:") {
+			use = true
+			scope = strings.TrimPrefix(tag, "credential:scope:")
+		}
+	}
+	if v, ok := args["_credential_broker"].(bool); ok && v {
+		use = true
+	}
+	if v, ok := args["_credential_required"].(bool); ok && v {
+		use = true
+		required = true
+	}
+	if scope == "" {
+		if s, ok := args["_credential_scope"].(string); ok {
+			scope = strings.TrimSpace(s)
+		}
+	}
+	return use, required, scope
+}
+
+func credentialOperation(args map[string]any) string {
+	if s, ok := args["_credential_operation"].(string); ok && strings.TrimSpace(s) != "" {
+		return strings.TrimSpace(s)
+	}
+	return "invoke"
+}
+
+func injectBrokerCredential(args map[string]any, cred *credential.Credential) {
+	if args == nil || cred == nil {
+		return
+	}
+	root, _ := args["_faramesh"].(map[string]any)
+	if root == nil {
+		root = map[string]any{}
+		args["_faramesh"] = root
+	}
+	root["credential"] = map[string]any{
+		"value":    cred.Value,
+		"source":   cred.Source,
+		"scope":    cred.Scope,
+		"brokered": true,
+	}
+}
+
+func credentialMetaFromArgs(args map[string]any) credential.DPRMeta {
+	if args == nil {
+		return credential.DPRMeta{}
+	}
+	root, _ := args["_faramesh"].(map[string]any)
+	if root == nil {
+		return credential.DPRMeta{}
+	}
+	cm, _ := root["credential"].(map[string]any)
+	if cm == nil {
+		return credential.DPRMeta{}
+	}
+	meta := credential.DPRMeta{}
+	if b, ok := cm["brokered"].(bool); ok {
+		meta.Brokered = b
+	}
+	if s, ok := cm["source"].(string); ok {
+		meta.Source = s
+	}
+	if s, ok := cm["scope"].(string); ok {
+		meta.Scope = s
+	}
+	return meta
+}
+
+func setRecordCredentialMeta(rec *dpr.Record, meta credential.DPRMeta) {
+	if rec == nil {
+		return
+	}
+	rv := reflect.ValueOf(rec)
+	if rv.Kind() != reflect.Pointer || rv.IsNil() {
+		return
+	}
+	elem := rv.Elem()
+	if elem.Kind() != reflect.Struct {
+		return
+	}
+	if f := elem.FieldByName("CredentialBrokered"); f.IsValid() && f.CanSet() && f.Kind() == reflect.Bool {
+		f.SetBool(meta.Brokered)
+	}
+	if f := elem.FieldByName("CredentialSource"); f.IsValid() && f.CanSet() && f.Kind() == reflect.String {
+		f.SetString(meta.Source)
+	}
+	if f := elem.FieldByName("CredentialScope"); f.IsValid() && f.CanSet() && f.Kind() == reflect.String {
+		f.SetString(meta.Scope)
+	}
 }
 
 // SetHorizonSyncer attaches a DecisionSyncer. Every governance decision will
@@ -469,15 +1282,95 @@ func (p *Pipeline) SessionManager() *session.Manager {
 	return p.sessions
 }
 
+// SessionGovernor returns the session write governor.
+func (p *Pipeline) SessionGovernor() *session.Governor {
+	return p.sessionGovernor
+}
+
+func (p *Pipeline) emitWebhook(req CanonicalActionRequest, d Decision) {
+	var t webhook.EventType
+	switch d.Effect {
+	case EffectPermit, EffectShadow:
+		t = webhook.EventPermit
+	case EffectDeny:
+		t = webhook.EventDeny
+	case EffectDefer:
+		t = webhook.EventDefer
+	default:
+		return
+	}
+	p.webhooks.Send(webhook.Event{
+		Version:    webhook.EventSchemaVersionV1,
+		Type:       t,
+		Timestamp:  req.Timestamp.UTC().Format(time.RFC3339),
+		AgentID:    req.AgentID,
+		SessionID:  req.SessionID,
+		ToolID:     req.ToolID,
+		Effect:     string(d.Effect),
+		RuleID:     d.RuleID,
+		ReasonCode: d.ReasonCode,
+		Reason:     d.Reason,
+		RecordID:   d.DPRRecordID,
+		Token:      d.DeferToken,
+	})
+}
+
 // ScanOutput runs post-execution output scanning on a tool's output.
 // Adapters call this after a PERMIT'd tool completes, before returning
 // the output to the agent's context. Returns the scan result which may
 // contain redacted output or a denial.
 func (p *Pipeline) ScanOutput(toolID, output string) postcondition.ScanResult {
-	if p.postScanner == nil {
+	p.recordToolOutputs("", "", toolID, "", map[string]any{"output": output})
+	scanner := p.currentArtifacts().postScanner
+	if scanner == nil {
 		return postcondition.ScanResult{Outcome: postcondition.OutcomePass, Output: output}
 	}
-	return p.postScanner.Scan(toolID, output)
+	res := scanner.Scan(toolID, output)
+	switch res.Outcome {
+	case postcondition.OutcomeRedacted:
+		observe.Default.RecordPostScan("REDACTED")
+	case postcondition.OutcomeDenied:
+		observe.Default.RecordPostScan("DENIED")
+	default:
+		observe.Default.RecordPostScan("pass")
+	}
+	return res
+}
+
+func (p *Pipeline) inferArgProvenance(agentID, sessionID string, args map[string]any) map[string]string {
+	if p.provenance == nil {
+		return nil
+	}
+	defer func() { _ = recover() }()
+	out, err := p.provenance.InferArgProvenance(agentID, sessionID, args)
+	if err != nil {
+		return nil
+	}
+	return out
+}
+
+func (p *Pipeline) recordToolOutputs(agentID, sessionID, toolID, recordID string, args map[string]any) {
+	if p.provenance == nil || len(args) == 0 {
+		return
+	}
+	// Best-effort, fail-open telemetry hook.
+	go func() {
+		defer func() { _ = recover() }()
+		const maxOutputs = 6
+		emitted := 0
+		for _, key := range []string{"output", "result", "response", "body", "stdout", "stderr"} {
+			v, ok := args[key]
+			if !ok {
+				continue
+			}
+			if err := p.provenance.RecordToolOutput(agentID, sessionID, toolID, recordID, v); err == nil {
+				emitted++
+			}
+			if emitted >= maxOutputs {
+				return
+			}
+		}
+	}()
 }
 
 // scanner patterns for pre-execution safety checks.
@@ -536,4 +1429,165 @@ func runScanners(req CanonicalActionRequest) (bool, string, string) {
 	}
 
 	return false, "", ""
+}
+
+func firstPhaseName(phases map[string]policy.Phase) string {
+	if _, ok := phases["init"]; ok {
+		return "init"
+	}
+	keys := make([]string, 0, len(phases))
+	for k := range phases {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
+}
+
+func matchToolPattern(pattern, toolID string) bool {
+	if pattern == "*" || pattern == "" {
+		return true
+	}
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		return strings.HasPrefix(toolID, prefix)
+	}
+	return toolID == pattern
+}
+
+func splitPhaseAndStepToolVisibility(tools []string) ([]string, map[string][]string) {
+	phaseTools := make([]string, 0, len(tools))
+	stepTools := make(map[string][]string)
+	for _, raw := range tools {
+		pattern := strings.TrimSpace(raw)
+		if pattern == "" {
+			continue
+		}
+		step, toolPattern, ok := parseStepScopedToolPattern(pattern)
+		if !ok {
+			phaseTools = append(phaseTools, pattern)
+			continue
+		}
+		stepTools[step] = append(stepTools[step], toolPattern)
+	}
+	return phaseTools, stepTools
+}
+
+func parseStepScopedToolPattern(pattern string) (step string, toolPattern string, ok bool) {
+	const prefix = "step:"
+	if !strings.HasPrefix(pattern, prefix) {
+		return "", "", false
+	}
+	rest := strings.TrimPrefix(pattern, prefix)
+	parts := strings.SplitN(rest, ":", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	step = strings.TrimSpace(parts[0])
+	toolPattern = strings.TrimSpace(parts[1])
+	if step == "" || toolPattern == "" {
+		return "", "", false
+	}
+	return step, toolPattern, true
+}
+
+func requiredIsolationForTool(cfg *policy.ExecutionIsolation, toolID string) sandbox.Environment {
+	if cfg == nil {
+		return sandbox.EnvNone
+	}
+	for pattern, mode := range cfg.ToolPolicy {
+		matched, err := path.Match(pattern, toolID)
+		if err != nil {
+			matched = matchToolPattern(pattern, toolID)
+		}
+		if !matched {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(mode)) {
+		case "required":
+			return mapBackendToEnvironment(cfg.DefaultBackend)
+		case "optional", "none":
+			return sandbox.EnvNone
+		}
+	}
+	return sandbox.EnvNone
+}
+
+func mapBackendToEnvironment(backend string) sandbox.Environment {
+	switch strings.ToLower(strings.TrimSpace(backend)) {
+	case "docker", "docker_sandbox":
+		return sandbox.EnvDocker
+	case "gvisor":
+		return sandbox.EnvGVisor
+	case "firecracker":
+		return sandbox.EnvFirecracker
+	case "wasm":
+		return sandbox.EnvWASM
+	default:
+		return sandbox.EnvNone
+	}
+}
+
+func currentExecutionEnvironment(req CanonicalActionRequest) sandbox.Environment {
+	if req.ExecutionEnvironment != "" {
+		return mapBackendToEnvironment(req.ExecutionEnvironment)
+	}
+	if raw, ok := req.Args["execution_environment"]; ok {
+		if s, ok := raw.(string); ok {
+			return mapBackendToEnvironment(s)
+		}
+	}
+	if raw, ok := req.Args["sandbox_environment"]; ok {
+		if s, ok := raw.(string); ok {
+			return mapBackendToEnvironment(s)
+		}
+	}
+	return sandbox.EnvNone
+}
+
+func meetsIsolationRequirement(current, required sandbox.Environment) bool {
+	rank := func(env sandbox.Environment) int {
+		switch env {
+		case sandbox.EnvNone:
+			return 0
+		case sandbox.EnvDocker, sandbox.EnvWASM:
+			return 1
+		case sandbox.EnvGVisor:
+			return 2
+		case sandbox.EnvFirecracker:
+			return 3
+		default:
+			return 0
+		}
+	}
+	return rank(current) >= rank(required)
+}
+
+func riskWeight(toolID string, meta policy.ToolCtx) int {
+	weight := 0
+	switch strings.ToLower(strings.TrimSpace(meta.BlastRadius)) {
+	case "scoped", "system", "external":
+		weight++
+	}
+	if strings.EqualFold(meta.Reversibility, "irreversible") {
+		weight++
+	}
+	if strings.HasPrefix(toolID, "danger/") {
+		weight++
+	}
+	return weight
+}
+
+func incidentFromMatchedRule(doc *policy.Doc, ruleID string) (category, severity string) {
+	if doc == nil || ruleID == "" {
+		return "", ""
+	}
+	for _, r := range doc.Rules {
+		if r.ID == ruleID {
+			return r.IncidentCategory, r.IncidentSeverity
+		}
+	}
+	return "", ""
 }

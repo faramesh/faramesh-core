@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -95,16 +96,26 @@ func (e *Engine) EvaluateWithTimeout(ctx context.Context, toolID string, evalCtx
 			select {
 			case result := <-resultCh:
 				timer.Stop()
-				if result.err != nil || result.out == nil {
-					continue
+				if result.err != nil {
+					return evalFailureResult(rule, result.err)
+				}
+				if result.out == nil {
+					return evalFailureResult(rule, fmt.Errorf("expression produced nil result"))
 				}
 				matched, ok := result.out.(bool)
-				if !ok || !matched {
+				if !ok {
+					return evalFailureResult(rule, fmt.Errorf("expression returned non-bool %T", result.out))
+				}
+				if !matched {
 					continue
 				}
 			case <-timer.C:
-				// Rule timed out — skip it. Log would go here.
-				continue
+				return EvalResult{
+					Effect:     "deny",
+					RuleID:     rule.ID,
+					ReasonCode: "GOVERNANCE_TIMEOUT",
+					Reason:     "rule evaluation timed out",
+				}
 			case <-ctx.Done():
 				timer.Stop()
 				return EvalResult{
@@ -128,7 +139,7 @@ func (e *Engine) EvaluateWithTimeout(ctx context.Context, toolID string, evalCtx
 
 	return EvalResult{
 		Effect:     e.doc.DefaultEffect,
-		ReasonCode: "UNMATCHED_DENY",
+		ReasonCode: unmatchedReasonCode(e.doc.DefaultEffect),
 		Reason:     "no rule matched; applying default_effect",
 	}
 }
@@ -177,7 +188,7 @@ func containsRegex(p string) bool {
 }
 
 func defaultReasonCode(effect string) string {
-	switch effect {
+	switch strings.ToLower(effect) {
 	case "permit", "allow":
 		return "RULE_PERMIT"
 	case "deny", "halt":

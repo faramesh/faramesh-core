@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
@@ -28,33 +31,84 @@ To stream DPR records to Faramesh Horizon, authenticate first:
 }
 
 var (
-	servePolicy     string
-	serveDataDir    string
-	serveSocket     string
-	serveSlack      string
-	serveLogLevel   string
-	serveSyncHorizon bool
-	serveProxyPort   int
-	serveGRPCPort    int
-	serveMCPProxyPort int
-	serveMCPTarget   string
-	serveMetricsPort int
-	serveDPRDSN      string
+	servePolicy              string
+	servePolicyURL           string
+	servePolicyPollInterval  time.Duration
+	serveDataDir             string
+	serveSocket              string
+	serveSlack               string
+	serveLogLevel            string
+	serveSyncHorizon         bool
+	serveProxyPort           int
+	serveProxyConnect        bool
+	serveProxyForward        bool
+	serveGRPCPort            int
+	serveMCPProxyPort        int
+	serveMCPTarget           string
+	serveMetricsPort         int
+	serveDPRDSN              string
+	serveRedisURL            string
+	serveDPRHMACKey          string
+	serveTLSCert             string
+	serveTLSKey              string
+	serveClientCA            string
+	servePagerDutyRoutingKey string
+	servePolicyAdminToken    string
+	serveEnableEBPF          bool
+	serveEBPFObjectPath      string
+	serveEBPFAttachTP        bool
+	serveSPIFFESocketPath    string
+	serveVaultAddr           string
+	serveVaultToken          string
+	serveVaultMount          string
+	serveVaultNamespace      string
+	serveAWSSecretsRegion    string
+	serveGCPSecretsProject   string
+	serveAzureKeyVaultURL    string
+	serveAzureTenantID       string
+	serveAzureClientID       string
+	serveAzureClientSecret   string
 )
 
 func init() {
 	serveCmd.Flags().StringVar(&servePolicy, "policy", "policy.yaml", "path to the policy YAML file")
+	serveCmd.Flags().StringVar(&servePolicyURL, "policy-url", "", "HTTP/HTTPS URL for policy YAML (mutually exclusive with --policy)")
+	serveCmd.Flags().DurationVar(&servePolicyPollInterval, "policy-poll-interval", 30*time.Second, "poll interval for --policy-url hot reload checks")
+	serveCmd.MarkFlagsMutuallyExclusive("policy", "policy-url")
 	serveCmd.Flags().StringVar(&serveDataDir, "data-dir", "", "directory for WAL and DPR SQLite (default: $TMPDIR/faramesh)")
 	serveCmd.Flags().StringVar(&serveSocket, "socket", sdk.SocketPath, "Unix socket path")
 	serveCmd.Flags().StringVar(&serveSlack, "slack-webhook", "", "Slack webhook URL for DEFER notifications")
 	serveCmd.Flags().StringVar(&serveLogLevel, "log-level", "info", "log level: debug|info|warn|error")
 	serveCmd.Flags().BoolVar(&serveSyncHorizon, "sync-horizon", false, "stream DPR records to Faramesh Horizon cloud (requires: faramesh auth login)")
 	serveCmd.Flags().IntVar(&serveProxyPort, "proxy-port", 0, "start HTTP proxy adapter on this port (0 disables)")
+	serveCmd.Flags().BoolVar(&serveProxyConnect, "proxy-connect", false, "with --proxy-port, enable governed HTTP CONNECT only (tool proxy/connect)")
+	serveCmd.Flags().BoolVar(&serveProxyForward, "proxy-forward", false, "with --proxy-port, enable full governed forward proxy: CONNECT + HTTP absolute-form (tools proxy/connect and proxy/http)")
 	serveCmd.Flags().IntVar(&serveGRPCPort, "grpc-port", 0, "start gRPC daemon adapter on this port (0 disables)")
 	serveCmd.Flags().IntVar(&serveMCPProxyPort, "mcp-proxy-port", 0, "start MCP HTTP gateway on this port (0 disables)")
 	serveCmd.Flags().StringVar(&serveMCPTarget, "mcp-target", "", "upstream MCP HTTP server base URL (required when --mcp-proxy-port is set)")
 	serveCmd.Flags().IntVar(&serveMetricsPort, "metrics-port", 0, "start Prometheus metrics endpoint on this port (0 disables)")
 	serveCmd.Flags().StringVar(&serveDPRDSN, "dpr-dsn", "", "PostgreSQL DSN for mirrored DPR writes")
+	serveCmd.Flags().StringVar(&serveRedisURL, "redis-url", "", "Redis URL for shared session backend (optional)")
+	serveCmd.Flags().StringVar(&serveDPRHMACKey, "dpr-hmac-key", "", "HMAC secret for DPR record signatures (default: ephemeral per daemon run)")
+	serveCmd.Flags().StringVar(&serveTLSCert, "tls-cert", "", "TLS certificate PEM for adapter listeners (proxy/gRPC/MCP)")
+	serveCmd.Flags().StringVar(&serveTLSKey, "tls-key", "", "TLS private key PEM for adapter listeners (proxy/gRPC/MCP)")
+	serveCmd.Flags().StringVar(&serveClientCA, "client-ca", "", "Optional client CA PEM to require and verify mTLS client certificates")
+	serveCmd.Flags().StringVar(&servePagerDutyRoutingKey, "pagerduty-routing-key", "", "PagerDuty Events v2 routing key for DEFER SLA escalations")
+	serveCmd.Flags().StringVar(&servePolicyAdminToken, "policy-admin-token", "", "admin token required for local programmatic policy push over gRPC")
+	serveCmd.Flags().BoolVar(&serveEnableEBPF, "ebpf", false, "enable minimal eBPF adapter bootstrap (also settable via FARAMESH_ENABLE_EBPF=true)")
+	serveCmd.Flags().StringVar(&serveEBPFObjectPath, "ebpf-object", "", "path to compiled eBPF ELF object (.o), required when eBPF is enabled")
+	serveCmd.Flags().BoolVar(&serveEBPFAttachTP, "ebpf-attach-tracepoints", false, "attempt best-effort tracepoint attach for tracepoint programs in the loaded object")
+	serveCmd.Flags().StringVar(&serveSPIFFESocketPath, "spiffe-socket", "", "SPIFFE Workload API Unix socket path for workload identity resolution")
+	serveCmd.Flags().StringVar(&serveVaultAddr, "vault-addr", "", "HashiCorp Vault address for credential broker (also: VAULT_ADDR)")
+	serveCmd.Flags().StringVar(&serveVaultToken, "vault-token", "", "Vault token for credential broker (also: VAULT_TOKEN)")
+	serveCmd.Flags().StringVar(&serveVaultMount, "vault-mount", "secret", "Vault mount path (e.g. secret, aws, database)")
+	serveCmd.Flags().StringVar(&serveVaultNamespace, "vault-namespace", "", "Vault enterprise namespace")
+	serveCmd.Flags().StringVar(&serveAWSSecretsRegion, "aws-secrets-region", "", "AWS Secrets Manager region for credential broker")
+	serveCmd.Flags().StringVar(&serveGCPSecretsProject, "gcp-secrets-project", "", "GCP Secret Manager project for credential broker")
+	serveCmd.Flags().StringVar(&serveAzureKeyVaultURL, "azure-vault-url", "", "Azure Key Vault URL (e.g. https://myvault.vault.azure.net)")
+	serveCmd.Flags().StringVar(&serveAzureTenantID, "azure-tenant-id", "", "Azure AD tenant ID for Key Vault auth")
+	serveCmd.Flags().StringVar(&serveAzureClientID, "azure-client-id", "", "Azure AD client ID for Key Vault auth")
+	serveCmd.Flags().StringVar(&serveAzureClientSecret, "azure-client-secret", "", "Azure AD client secret for Key Vault auth")
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
@@ -65,17 +119,42 @@ func runServe(cmd *cobra.Command, args []string) error {
 	defer log.Sync()
 
 	cfg := daemon.Config{
-		PolicyPath:   servePolicy,
-		DataDir:      serveDataDir,
-		SocketPath:   serveSocket,
-		SlackWebhook: serveSlack,
-		Log:          log,
-		ProxyPort:    serveProxyPort,
-		GRPCPort:     serveGRPCPort,
-		MCPProxyPort: serveMCPProxyPort,
-		MCPTarget:    serveMCPTarget,
-		MetricsPort:  serveMetricsPort,
-		DPRDSN:       serveDPRDSN,
+		PolicyPath:            servePolicy,
+		PolicyURL:             servePolicyURL,
+		PolicyPollInterval:    servePolicyPollInterval,
+		DataDir:               serveDataDir,
+		SocketPath:            serveSocket,
+		SlackWebhook:          serveSlack,
+		Log:                   log,
+		ProxyPort:             serveProxyPort,
+		ProxyConnect:          serveProxyConnect,
+		ProxyForward:          serveProxyForward,
+		GRPCPort:              serveGRPCPort,
+		MCPProxyPort:          serveMCPProxyPort,
+		MCPTarget:             serveMCPTarget,
+		MetricsPort:           serveMetricsPort,
+		DPRDSN:                serveDPRDSN,
+		RedisURL:              serveRedisURL,
+		DPRHMACKey:            serveDPRHMACKey,
+		TLSCertFile:           serveTLSCert,
+		TLSKeyFile:            serveTLSKey,
+		ClientCAFile:          serveClientCA,
+		PagerDutyRoutingKey:   servePagerDutyRoutingKey,
+		PolicyAdminToken:      resolvePolicyAdminToken(),
+		EnableEBPF:            resolveServeEBPFEnabled(),
+		EBPFObjectPath:        resolveServeEBPFObjectPath(),
+		EBPFAttachTracepoints: resolveServeEBPFAttachTracepoints(),
+		SPIFFESocketPath:      strings.TrimSpace(serveSPIFFESocketPath),
+		VaultAddr:             resolveVaultAddr(),
+		VaultToken:            resolveVaultToken(),
+		VaultMount:            serveVaultMount,
+		VaultNamespace:        serveVaultNamespace,
+		AWSSecretsRegion:      serveAWSSecretsRegion,
+		GCPSecretsProject:     serveGCPSecretsProject,
+		AzureKeyVaultURL:      serveAzureKeyVaultURL,
+		AzureTenantID:         serveAzureTenantID,
+		AzureClientID:         serveAzureClientID,
+		AzureClientSecret:     serveAzureClientSecret,
 	}
 
 	if serveSyncHorizon {
@@ -105,6 +184,48 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	return d.Run(context.Background())
+}
+
+func resolveServeEBPFEnabled() bool {
+	if serveEnableEBPF {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("FARAMESH_ENABLE_EBPF")), "true")
+}
+
+func resolveServeEBPFObjectPath() string {
+	if strings.TrimSpace(serveEBPFObjectPath) != "" {
+		return strings.TrimSpace(serveEBPFObjectPath)
+	}
+	return strings.TrimSpace(os.Getenv("FARAMESH_EBPF_OBJECT"))
+}
+
+func resolveServeEBPFAttachTracepoints() bool {
+	if serveEBPFAttachTP {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("FARAMESH_EBPF_ATTACH_TRACEPOINTS")), "true")
+}
+
+func resolvePolicyAdminToken() string {
+	if strings.TrimSpace(servePolicyAdminToken) != "" {
+		return strings.TrimSpace(servePolicyAdminToken)
+	}
+	return strings.TrimSpace(os.Getenv("FARAMESH_POLICY_ADMIN_TOKEN"))
+}
+
+func resolveVaultAddr() string {
+	if strings.TrimSpace(serveVaultAddr) != "" {
+		return strings.TrimSpace(serveVaultAddr)
+	}
+	return strings.TrimSpace(os.Getenv("VAULT_ADDR"))
+}
+
+func resolveVaultToken() string {
+	if strings.TrimSpace(serveVaultToken) != "" {
+		return strings.TrimSpace(serveVaultToken)
+	}
+	return strings.TrimSpace(os.Getenv("VAULT_TOKEN"))
 }
 
 func buildLogger(level string) (*zap.Logger, error) {

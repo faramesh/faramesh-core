@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -30,16 +31,44 @@ const (
 	EventKillSwitch     EventType = "kill_switch"
 )
 
+const EventSchemaVersionV1 = "1.0"
+
 // Event is the payload sent to webhook endpoints.
 type Event struct {
-	Type      EventType `json:"type"`
-	Timestamp string    `json:"timestamp"`
-	AgentID   string    `json:"agent_id,omitempty"`
-	ToolID    string    `json:"tool_id,omitempty"`
-	Effect    string    `json:"effect,omitempty"`
-	RuleID    string    `json:"rule_id,omitempty"`
-	Reason    string    `json:"reason,omitempty"`
-	Token     string    `json:"defer_token,omitempty"`
+	Version    string    `json:"version"`
+	Type       EventType `json:"type"`
+	Timestamp  string    `json:"timestamp"`
+	AgentID    string    `json:"agent_id,omitempty"`
+	SessionID  string    `json:"session_id,omitempty"`
+	ToolID     string    `json:"tool_id,omitempty"`
+	Effect     string    `json:"effect,omitempty"`
+	RuleID     string    `json:"rule_id,omitempty"`
+	ReasonCode string    `json:"reason_code,omitempty"`
+	Reason     string    `json:"reason,omitempty"`
+	RecordID   string    `json:"record_id,omitempty"`
+	Token      string    `json:"defer_token,omitempty"`
+}
+
+func (e *Event) normalize() {
+	if e.Version == "" {
+		e.Version = EventSchemaVersionV1
+	}
+	if e.Timestamp == "" {
+		e.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+}
+
+func (e Event) Validate() error {
+	if e.Version == "" {
+		return errors.New("missing required field: version")
+	}
+	if e.Type == "" {
+		return errors.New("missing required field: type")
+	}
+	if e.Timestamp == "" {
+		return errors.New("missing required field: timestamp")
+	}
+	return nil
 }
 
 // Sender delivers webhook events. It is safe for concurrent use.
@@ -72,8 +101,9 @@ func (s *Sender) Send(evt Event) {
 	if !s.subscribedTo(evt.Type) {
 		return
 	}
-	if evt.Timestamp == "" {
-		evt.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	evt.normalize()
+	if err := evt.Validate(); err != nil {
+		return
 	}
 	select {
 	case s.queue <- evt:

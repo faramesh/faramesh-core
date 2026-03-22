@@ -1,0 +1,2 @@
+# Overlay for fpl_merge tests
+permit overlay/tool when true

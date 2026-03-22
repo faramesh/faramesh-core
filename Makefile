@@ -1,64 +1,35 @@
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
-LDFLAGS = -X main.version=$(VERSION) -s -w
-CGO_ENABLED = 0
+# Faramesh Core — local developer entrypoints (CI: monorepo `.github/workflows/faramesh-core-release-gate.yml`).
+.PHONY: all build build-release compile clean test test-race vet sbom docker
 
-BINARY = faramesh
-CMD = ./cmd/faramesh
-DIST = dist
+all: vet compile test build
 
-.PHONY: all build test clean demo lint release
+# Compile every package (no link of cmd/faramesh); fast compile-only check.
+compile:
+	go build ./...
 
-all: build
-
-## build: Compile the faramesh binary for the current platform.
+# Dev binary → bin/faramesh (gitignored under /bin/).
 build:
-	CGO_ENABLED=$(CGO_ENABLED) go build -ldflags="$(LDFLAGS)" -o $(BINARY) $(CMD)
-	@echo "Built: ./$(BINARY)"
+	go build -o bin/faramesh ./cmd/faramesh
 
-## demo: Run faramesh demo using the just-built binary.
-demo: build
-	./$(BINARY) demo
+# Static binary flags aligned with Dockerfile (CGO off, trimpath, strip symbols).
+build-release:
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=dev" -o bin/faramesh ./cmd/faramesh
 
-## test: Run all Go tests.
-test:
-	go test -race ./...
-
-## lint: Run go vet and staticcheck.
-lint:
-	go vet ./...
-	@which staticcheck >/dev/null 2>&1 && staticcheck ./... || echo "(staticcheck not installed)"
-
-## release: Cross-compile binaries for all supported platforms.
-release: clean
-	@mkdir -p $(DIST)
-	GOOS=linux   GOARCH=amd64  CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY)-linux-amd64   $(CMD)
-	GOOS=linux   GOARCH=arm64  CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY)-linux-arm64   $(CMD)
-	GOOS=darwin  GOARCH=amd64  CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY)-darwin-amd64  $(CMD)
-	GOOS=darwin  GOARCH=arm64  CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY)-darwin-arm64  $(CMD)
-	GOOS=windows GOARCH=amd64  CGO_ENABLED=0 go build -ldflags="$(LDFLAGS)" -o $(DIST)/$(BINARY)-windows-amd64.exe $(CMD)
-	@echo "Release binaries in $(DIST)/"
-	@ls -lh $(DIST)/
-
-## docker: Build the Docker image.
-docker:
-	docker build -t faramesh/faramesh:$(VERSION) -t faramesh/faramesh:latest .
-
-## clean: Remove build artifacts.
 clean:
-	rm -f $(BINARY)
-	rm -rf $(DIST)/
+	rm -rf bin/
 
-## install: Install faramesh to /usr/local/bin.
-install: build
-	install -m 755 $(BINARY) /usr/local/bin/$(BINARY)
-	@echo "Installed: /usr/local/bin/$(BINARY)"
+test:
+	go test ./... -count=1
 
-## policy-check: Validate all policy files in policies/.
-policy-check: build
-	@for f in policies/*.yaml; do \
-		./$(BINARY) policy validate "$$f" || exit 1; \
-	done
+test-race:
+	go test ./... -count=1 -race
 
-## help: Show this help.
-help:
-	@grep -E '^## ' Makefile | sed 's/^## /  /'
+# participle grammar tags in internal/core/fpl are not valid reflect.StructTag (expected).
+vet:
+	go vet $$(go list ./... | grep -v '/internal/core/fpl$$')
+
+sbom:
+	go run ./cmd/faramesh sbom
+
+docker:
+	docker build -t faramesh:local -f Dockerfile .

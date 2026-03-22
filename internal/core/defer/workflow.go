@@ -6,12 +6,15 @@ package deferwork
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
 	"time"
 
 	"github.com/faramesh/faramesh-core/internal/core/observe"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // DefaultTimeout is how long a DEFER waits before auto-expiring.
@@ -52,22 +55,80 @@ type resolvedHandle struct {
 	resolution Resolution
 }
 
+// ResolveConflictCode identifies second-and-later resolution attempts
+// against a DEFER token that has already been finalized.
+const ResolveConflictCode = "DEFER_RESOLUTION_CONFLICT"
+
+// ResolveConflictError is returned when a resolver loses a concurrent race
+// and attempts to resolve an already finalized DEFER token.
+type ResolveConflictError struct {
+	Token  string
+	Code   string
+	Status DeferStatus
+}
+
+func (e *ResolveConflictError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("defer token %q already finalized with status %q (%s)", e.Token, e.Status, e.Code)
+}
+
+// Is allows errors.Is(err, &ResolveConflictError{}) to match by type.
+func (e *ResolveConflictError) Is(target error) bool {
+	_, ok := target.(*ResolveConflictError)
+	return ok
+}
+
+var errUnknownDeferToken = errors.New("unknown defer token")
+
 // Workflow manages all pending DEFER handles for a daemon instance.
 type Workflow struct {
-	mu       sync.Mutex
-	pending  map[string]*Handle
-	resolved map[string]*resolvedHandle // keeps last N resolved for status queries
-	slackURL string
+	mu                  sync.Mutex
+	pending             map[string]*Handle
+	resolved            map[string]*resolvedHandle // keeps last N resolved for status queries
+	slackURL            string
+	log                 *zap.Logger
+	pagerDutyRoutingKey string
+	triage              *Triage
 }
 
 // NewWorkflow creates a new DEFER workflow manager.
 // slackWebhookURL may be empty to disable Slack notifications.
 func NewWorkflow(slackWebhookURL string) *Workflow {
-	return &Workflow{
+	w := &Workflow{
 		pending:  make(map[string]*Handle),
 		resolved: make(map[string]*resolvedHandle),
 		slackURL: slackWebhookURL,
+		log:      zap.NewNop(),
 	}
+	return w
+}
+
+// SetLogger sets the workflow logger for structured governance events.
+func (w *Workflow) SetLogger(log *zap.Logger) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if log == nil {
+		w.log = zap.NewNop()
+		return
+	}
+	w.log = log
+}
+
+// SetPagerDutyRoutingKey enables PagerDuty Events v2 escalation for triage events.
+func (w *Workflow) SetPagerDutyRoutingKey(routingKey string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.pagerDutyRoutingKey = routingKey
+}
+
+// SetTriage wires the triage manager and starts escalation polling.
+func (w *Workflow) SetTriage(t *Triage) {
+	w.mu.Lock()
+	w.triage = t
+	w.mu.Unlock()
+	go w.runEscalationLoop()
 }
 
 // DeferWithToken creates a new deferred handle with a specific token.
@@ -93,21 +154,18 @@ func (w *Workflow) DeferWithToken(token, agentID, toolID, reason string) (*Handl
 	w.pending[token] = h
 	w.mu.Unlock()
 
+	if w.triage != nil {
+		w.triage.Classify(token, agentID, toolID, reason)
+	}
+
 	// Start expiry goroutine.
 	go func() {
-		select {
-		case <-time.After(time.Until(h.Deadline)):
-			res := Resolution{Approved: false, Reason: "expired", Status: StatusExpired}
-			w.mu.Lock()
-			delete(w.pending, token)
-			w.resolved[token] = &resolvedHandle{resolution: res}
-			w.mu.Unlock()
-			select {
-			case h.ch <- res:
-			default:
-			}
-		case <-h.ch:
-		}
+		<-time.After(time.Until(h.Deadline))
+		_, _ = w.resolveInternal(token, Resolution{
+			Approved: false,
+			Reason:   "expired",
+			Status:   StatusExpired,
+		})
 	}()
 
 	if w.slackURL != "" {
@@ -128,65 +186,70 @@ func (w *Workflow) Defer(agentID, toolID, reason string) (*Handle, error) {
 // Resolve approves or denies a pending DEFER by its token.
 // Returns an error if the token is unknown or already resolved.
 func (w *Workflow) Resolve(token string, approved bool, reason string) error {
-	w.mu.Lock()
-	h, ok := w.pending[token]
-	if ok {
-		delete(w.pending, token)
-	}
-	w.mu.Unlock()
-
-	if !ok {
-		return fmt.Errorf("unknown or already-resolved defer token %q", token)
-	}
-
 	status := StatusDenied
 	if approved {
 		status = StatusApproved
 	}
 	res := Resolution{Approved: approved, Reason: reason, Status: status}
-
-	w.mu.Lock()
-	w.resolved[token] = &resolvedHandle{resolution: res}
-	w.mu.Unlock()
-
-	select {
-	case h.ch <- res:
-		return nil
-	default:
-		return fmt.Errorf("defer token %q already resolved", token)
-	}
+	_, err := w.resolveInternal(token, res)
+	return err
 }
 
 // ResolveWithModifiedArgs approves a DEFER with modified arguments.
 // The modified args should be re-validated against the policy before execution.
 func (w *Workflow) ResolveWithModifiedArgs(token string, reason string, modifiedArgs map[string]any) error {
-	w.mu.Lock()
-	h, ok := w.pending[token]
-	if ok {
-		delete(w.pending, token)
-	}
-	w.mu.Unlock()
-
-	if !ok {
-		return fmt.Errorf("unknown or already-resolved defer token %q", token)
-	}
-
 	res := Resolution{
 		Approved:     true,
 		Reason:       reason,
 		Status:       StatusApproved,
 		ModifiedArgs: modifiedArgs,
 	}
+	_, err := w.resolveInternal(token, res)
+	return err
+}
 
+func (w *Workflow) resolveInternal(token string, res Resolution) (bool, error) {
 	w.mu.Lock()
+	h, pending := w.pending[token]
+	if !pending {
+		if finalized, resolved := w.resolved[token]; resolved {
+			observe.EmitGovernanceLog(w.log, zapcore.WarnLevel, "defer resolution conflict", observe.EventDeferResolveConflict,
+				zap.String("defer_token", token),
+				zap.String("conflict_code", ResolveConflictCode),
+				zap.String("final_status", string(finalized.resolution.Status)),
+			)
+			w.mu.Unlock()
+			return false, &ResolveConflictError{
+				Token:  token,
+				Code:   ResolveConflictCode,
+				Status: finalized.resolution.Status,
+			}
+		}
+		w.mu.Unlock()
+		return false, fmt.Errorf("%w %q", errUnknownDeferToken, token)
+	}
+	delete(w.pending, token)
 	w.resolved[token] = &resolvedHandle{resolution: res}
 	w.mu.Unlock()
 
+	if w.triage != nil {
+		w.triage.Remove(token)
+	}
+
 	select {
 	case h.ch <- res:
-		return nil
+		return true, nil
 	default:
-		return fmt.Errorf("defer token %q already resolved", token)
+		observe.EmitGovernanceLog(w.log, zapcore.WarnLevel, "defer resolution conflict", observe.EventDeferResolveConflict,
+			zap.String("defer_token", token),
+			zap.String("conflict_code", ResolveConflictCode),
+			zap.String("final_status", string(res.Status)),
+		)
+		return false, &ResolveConflictError{
+			Token:  token,
+			Code:   ResolveConflictCode,
+			Status: res.Status,
+		}
 	}
 }
 
@@ -247,4 +310,78 @@ func (w *Workflow) notifySlack(h *Handle) {
 		return
 	}
 	resp.Body.Close()
+}
+
+func (w *Workflow) runEscalationLoop() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		w.mu.Lock()
+		t := w.triage
+		w.mu.Unlock()
+		if t == nil {
+			return
+		}
+		events := t.CheckEscalations()
+		for _, ev := range events {
+			if ev.Channel == "pagerduty" && w.pagerDutyRoutingKey != "" {
+				go w.notifyPagerDuty(ev)
+				continue
+			}
+			if w.slackURL != "" {
+				// Reuse Slack path for non-PD or fallback.
+				go w.notifySlack(ev.Item.asHandle())
+			}
+		}
+	}
+}
+
+func (ti *TriagedItem) asHandle() *Handle {
+	return &Handle{
+		Token:     ti.Token,
+		AgentID:   ti.AgentID,
+		ToolID:    ti.ToolID,
+		Reason:    ti.Reason,
+		CreatedAt: ti.CreatedAt,
+		Deadline:  ti.Deadline,
+		ch:        make(chan Resolution, 1),
+	}
+}
+
+func (w *Workflow) notifyPagerDuty(ev EscalationEvent) {
+	body := map[string]any{
+		"routing_key":  w.pagerDutyRoutingKey,
+		"event_action": "trigger",
+		"payload": map[string]any{
+			"summary":   fmt.Sprintf("Faramesh DEFER SLA breach: %s (%s)", ev.Item.ToolID, ev.Item.Priority),
+			"source":    "faramesh-core",
+			"severity":  mapPriorityToPDSeverity(ev.Item.Priority),
+			"component": "defer-workflow",
+			"custom_details": map[string]any{
+				"token":      ev.Item.Token,
+				"agent_id":   ev.Item.AgentID,
+				"tool_id":    ev.Item.ToolID,
+				"priority":   ev.Item.Priority,
+				"created_at": ev.Item.CreatedAt.Format(time.RFC3339),
+				"deadline":   ev.Item.Deadline.Format(time.RFC3339),
+			},
+		},
+	}
+	b, _ := json.Marshal(body)
+	resp, err := http.Post("https://events.pagerduty.com/v2/enqueue", "application/json", bytes.NewReader(b))
+	if err != nil {
+		return
+	}
+	_ = resp.Body.Close()
+}
+
+func mapPriorityToPDSeverity(p string) string {
+	switch p {
+	case PriorityCritical:
+		return "critical"
+	case PriorityHigh:
+		return "error"
+	default:
+		return "warning"
+	}
 }
