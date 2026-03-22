@@ -85,7 +85,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		fmt.Println("  6. faramesh audit tail")
 	case "docker":
 		fmt.Println("  1. Edit faramesh/policy.yaml")
-		bold.Println("  2. faramesh run --policy faramesh/policy.yaml -- python agent.py")
+		bold.Println("  2. faramesh run --policy faramesh/policy.yaml python agent.py")
 	case "lambda":
 		fmt.Println("  1. Edit faramesh/policy.yaml")
 		fmt.Println("  2. Store policy in AWS SSM: aws ssm put-parameter ...")

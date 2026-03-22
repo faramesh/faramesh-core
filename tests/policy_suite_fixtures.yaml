@@ -1,0 +1,14 @@
+suite_version: "1"
+cases:
+  - id: permit-http
+    tool: http/get
+    args: {}
+    expect:
+      effect: PERMIT
+      reason_code: RULE_PERMIT
+  - id: deny-rm
+    tool: shell/rm
+    args: {}
+    expect:
+      effect: DENY
+      reason_code: RULE_DENY

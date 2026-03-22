@@ -1,0 +1,4 @@
+# Golden vector — regression suite for ParseAndCompileRules (ONE_PLAN §7 FPL gate)
+permit safe/read when true
+deny! shell/exec reason: "never shell"
+defer payment/charge when amount > 1000 notify: "finance" reason: "large payment"

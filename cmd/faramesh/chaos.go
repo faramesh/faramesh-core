@@ -2,92 +2,123 @@ package main
 
 import (
 	"fmt"
-	"time"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
+)
+
+var (
+	chaosDataDir string
+	chaosPID     int
+)
+
+var (
+	chaosFindDaemonPID = findDaemonPID
+	chaosSendSignal    = func(pid int, sig syscall.Signal) error { return syscall.Kill(pid, sig) }
 )
 
 var chaosCmd = &cobra.Command{
 	Use:   "chaos-test",
-	Short: "Run chaos tests on governance infrastructure",
-	Long: `Inject faults into governance infrastructure to verify degraded mode behavior.
-
-Tests:
-  latency    - Add latency to DPR writes
-  kill-redis - Simulate Redis connection loss
-  kill-pg    - Simulate PostgreSQL connection loss
-  kill-all   - Simulate all backends down
-
-Example:
-  faramesh chaos-test latency --duration 10s --latency 500ms
-  faramesh chaos-test kill-redis --duration 30s`,
+	Short: "Trigger daemon fault/degraded chaos toggles",
 }
 
-var chaosLatencyCmd = &cobra.Command{
-	Use:   "latency",
-	Short: "Inject latency into governance pipeline",
-	RunE: func(_ *cobra.Command, _ []string) error {
-		bold := color.New(color.Bold)
-		bold.Println("Chaos Test: Latency Injection")
-		fmt.Println()
-		fmt.Printf("Duration:  %v\n", chaosDuration)
-		fmt.Printf("Latency:   %v\n", chaosLatency)
-		fmt.Println()
-		fmt.Println("Injecting latency...")
-		// In production, modifies DPR backend to add artificial delay.
-		time.Sleep(1 * time.Second)
-		color.Green("✓ Latency injection active for %v", chaosDuration)
-		fmt.Println("  Monitor with: faramesh audit tail")
-		return nil
-	},
+var chaosDegradedCmd = &cobra.Command{
+	Use:   "degraded [toggle|on|off]",
+	Short: "Toggle forced degraded mode on the running daemon",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runChaosDegraded,
 }
 
-var chaosKillRedisCmd = &cobra.Command{
-	Use:   "kill-redis",
-	Short: "Simulate Redis connection loss",
-	RunE: func(_ *cobra.Command, _ []string) error {
-		bold := color.New(color.Bold)
-		bold.Println("Chaos Test: Redis Connection Loss")
-		fmt.Println()
-		fmt.Println("Simulating Redis connection failure...")
-		fmt.Println("Expected behavior: ")
-		fmt.Println("  → Session backend degrades to in-memory")
-		fmt.Println("  → DEFER workflow falls back to polling")
-		fmt.Println("  → Governance continues in STATELESS mode")
-		color.Yellow("⚠ Requires active faramesh serve instance")
-		return nil
-	},
+var chaosFaultCmd = &cobra.Command{
+	Use:   "fault [toggle|on|off]",
+	Short: "Toggle fault-injection mode on the running daemon",
+	Args:  cobra.MaximumNArgs(1),
+	RunE:  runChaosFault,
 }
-
-var chaosKillPGCmd = &cobra.Command{
-	Use:   "kill-pg",
-	Short: "Simulate PostgreSQL connection loss",
-	RunE: func(_ *cobra.Command, _ []string) error {
-		bold := color.New(color.Bold)
-		bold.Println("Chaos Test: PostgreSQL Connection Loss")
-		fmt.Println()
-		fmt.Println("Simulating PostgreSQL connection failure...")
-		fmt.Println("Expected behavior: ")
-		fmt.Println("  → DPR falls back to SQLite WAL")
-		fmt.Println("  → Records queued for replay on reconnection")
-		fmt.Println("  → Governance continues in STATELESS mode")
-		color.Yellow("⚠ Requires active faramesh serve instance")
-		return nil
-	},
-}
-
-var (
-	chaosDuration time.Duration
-	chaosLatency  time.Duration
-)
 
 func init() {
-	chaosLatencyCmd.Flags().DurationVar(&chaosDuration, "duration", 30*time.Second, "Duration of chaos injection")
-	chaosLatencyCmd.Flags().DurationVar(&chaosLatency, "latency", 100*time.Millisecond, "Latency to inject")
+	chaosCmd.PersistentFlags().StringVar(&chaosDataDir, "data-dir", "", "daemon data directory for PID lookup (default: $TMPDIR/faramesh)")
+	chaosCmd.PersistentFlags().IntVar(&chaosPID, "pid", 0, "override daemon PID (skips PID file lookup)")
+	chaosCmd.AddCommand(chaosDegradedCmd)
+	chaosCmd.AddCommand(chaosFaultCmd)
+}
 
-	chaosCmd.AddCommand(chaosLatencyCmd)
-	chaosCmd.AddCommand(chaosKillRedisCmd)
-	chaosCmd.AddCommand(chaosKillPGCmd)
-	rootCmd.AddCommand(chaosCmd)
+func runChaosDegraded(_ *cobra.Command, args []string) error {
+	action := parseChaosAction(args)
+	pid, err := resolveChaosPID()
+	if err != nil {
+		return err
+	}
+	return dispatchChaosAction(pid, action, syscall.SIGUSR1)
+}
+
+func runChaosFault(_ *cobra.Command, args []string) error {
+	action := parseChaosAction(args)
+	pid, err := resolveChaosPID()
+	if err != nil {
+		return err
+	}
+	return dispatchChaosAction(pid, action, syscall.SIGUSR2)
+}
+
+func parseChaosAction(args []string) string {
+	if len(args) == 0 {
+		return "toggle"
+	}
+	return strings.ToLower(strings.TrimSpace(args[0]))
+}
+
+func resolveChaosPID() (int, error) {
+	if chaosPID > 0 {
+		return chaosPID, nil
+	}
+	dataDir := strings.TrimSpace(chaosDataDir)
+	if dataDir == "" {
+		dataDir = filepath.Join(os.TempDir(), "faramesh")
+	}
+	pid, err := chaosFindDaemonPID(dataDir)
+	if err != nil {
+		return 0, err
+	}
+	return pid, nil
+}
+
+func dispatchChaosAction(pid int, action string, sig syscall.Signal) error {
+	switch action {
+	case "toggle":
+		return chaosSendSignal(pid, sig)
+	case "on":
+		if err := chaosSendSignal(pid, sig); err != nil {
+			return err
+		}
+		if err := chaosSendSignal(pid, sig); err != nil {
+			return err
+		}
+		return nil
+	case "off":
+		if err := chaosSendSignal(pid, sig); err != nil {
+			return err
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported action %q (use toggle|on|off)", action)
+	}
+}
+
+func findDaemonPID(dataDir string) (int, error) {
+	pidPath := filepath.Join(dataDir, "faramesh.pid")
+	raw, err := os.ReadFile(pidPath)
+	if err != nil {
+		return 0, fmt.Errorf("read daemon pid file %q: %w", pidPath, err)
+	}
+	pidStr := strings.TrimSpace(string(raw))
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil || pid <= 0 {
+		return 0, fmt.Errorf("invalid daemon pid %q in %q", pidStr, pidPath)
+	}
+	return pid, nil
 }

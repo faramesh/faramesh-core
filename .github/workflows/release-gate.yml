@@ -1,0 +1,186 @@
+# Use this file when `faramesh-core` is the Git repository root.
+# For the Faramesh-Nexus monorepo, GitHub runs `.github/workflows/faramesh-core-release-gate.yml` at repo root instead.
+# Monorepo layout: module at `faramesh-core/`, `defaults.run.working-directory: faramesh-core`.
+name: release-gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "**"
+
+concurrency:
+  group: release-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GOFLAGS: -mod=readonly
+
+defaults:
+  run:
+    working-directory: faramesh-core
+
+jobs:
+  policy-replay:
+    name: Policy Replay (P8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: faramesh-core/go.mod
+          cache: true
+
+      - name: Run deterministic policy replay fixtures
+        run: go run ./cmd/faramesh policy backtest --policy tests/policy_replay_policy.yaml --fixtures tests/policy_replay_fixtures.json
+
+  policy-suite:
+    name: Policy Suite (P8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: faramesh-core/go.mod
+          cache: true
+
+      - name: Run policy fixture suite
+        run: go run ./cmd/faramesh policy suite tests/policy_suite_policy.yaml --fixtures tests/policy_suite_fixtures.yaml
+
+  policy-fpl:
+    name: FPL Golden (P4/P8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: faramesh-core/go.mod
+          cache: true
+
+      - name: Compile FPL golden file
+        run: |
+          go run ./cmd/faramesh policy fpl --json internal/core/fpl/testdata/golden.fpl | jq -e '.rules | type == "array" and length >= 1'
+
+  verify-buildinfo:
+    name: Buildinfo fingerprint (P8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: faramesh-core/go.mod
+          cache: true
+
+      - name: Emit and validate buildinfo JSON
+        run: |
+          go run ./cmd/faramesh verify buildinfo --emit | jq -e '(.go_version | length) > 0 and (.main_path | length) > 0'
+
+  docker-image:
+    name: Docker image build (release binary)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        run: docker build -t faramesh:ci -f Dockerfile .
+
+  policy-backtest:
+    name: Policy Backtest (P8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: faramesh-core/go.mod
+          cache: true
+
+      - name: Run deterministic policy backtest
+        run: go run ./cmd/faramesh policy backtest
+
+  full-test-suite:
+    name: Full Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: faramesh-core/go.mod
+          cache: true
+
+      - name: Run full go test
+        run: go test ./... -count=1
+
+  adversarial-tests:
+    name: Adversarial Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: faramesh-core/go.mod
+          cache: true
+
+      - name: Run adversarial profile
+        run: go test ./... -tags=adversarial -count=1
+
+  integration-matrix:
+    name: Integration (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [default, race]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: faramesh-core/go.mod
+          cache: true
+
+      - name: Run integration default profile
+        if: matrix.profile == 'default'
+        run: go test ./... -count=1
+
+      - name: Run integration race profile
+        if: matrix.profile == 'race'
+        run: go test ./... -race -count=1

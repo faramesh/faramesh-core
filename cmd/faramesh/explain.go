@@ -1,200 +1,134 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
+	"time"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
 	"github.com/faramesh/faramesh-core/internal/core/dpr"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 )
 
-var explainCmd = &cobra.Command{
-	Use:   "explain [dpr-record-id]",
-	Short: "Explain why a tool call was denied or deferred",
-	Long: `Provide a human-readable explanation of why a specific governance decision
-was made. Shows the matching rule, evaluated conditions, and contextual
-factors that led to the decision.
-
-Example:
-  faramesh explain dpr-abc123
-  faramesh explain --last       # Explain the most recent decision
-  faramesh explain --last-deny  # Explain the most recent denial`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: runExplain,
-}
-
 var (
-	explainLast     bool
-	explainLastDeny bool
-	explainToken    string
-	explainJSON     bool
-	explainDB       string
-	explainDataDir  string
-	explainPolicy   string
+	explainWALPath    string
+	explainPolicyPath string
 )
 
-func init() {
-	explainCmd.Flags().BoolVar(&explainLast, "last", false, "Explain the most recent decision")
-	explainCmd.Flags().BoolVar(&explainLastDeny, "last-deny", false, "Explain the most recent denial")
-	explainCmd.Flags().StringVar(&explainToken, "token", "", "Explain by denial token (dnl_...) instead of record ID")
-	explainCmd.Flags().BoolVar(&explainJSON, "json", false, "emit explain result as machine-readable JSON")
-	explainCmd.Flags().StringVar(&explainDB, "db", "", "path to DPR SQLite database (default: <data-dir>/faramesh.db)")
-	explainCmd.Flags().StringVar(&explainDataDir, "data-dir", "", "directory containing faramesh.db (default: $TMPDIR/faramesh)")
-	explainCmd.Flags().StringVar(&explainPolicy, "policy", "policy.yaml", "path to policy YAML for rule context")
-	rootCmd.AddCommand(explainCmd)
+type explainResult struct {
+	RecordID   string
+	Effect     string
+	ReasonCode string
+	RuleID     string
+	RuleMatch  string
+	RuleWhen   string
+	RuleEffect string
+	AgentID    string
+	SessionID  string
+	ToolID     string
+	PolicyVer  string
+	CreatedAt  time.Time
 }
 
-func runExplain(_ *cobra.Command, args []string) error {
-	if len(args) == 0 && !explainLast && !explainLastDeny && explainToken == "" {
-		return fmt.Errorf("specify a DPR record ID, --last, or --last-deny")
-	}
-	if explainLast && explainLastDeny {
-		return fmt.Errorf("--last and --last-deny cannot be used together")
-	}
+var explainCmd = &cobra.Command{
+	Use:   "explain <record-id>",
+	Short: "Explain a DPR decision by record ID",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runExplainCommand,
+}
 
-	dbPath := explainDB
-	if dbPath == "" {
-		dataDir := explainDataDir
-		if dataDir == "" {
-			dataDir = filepath.Join(os.TempDir(), "faramesh")
-		}
-		dbPath = filepath.Join(dataDir, "faramesh.db")
-	}
+func init() {
+	explainCmd.Flags().StringVar(&explainWALPath, "wal", "", "path to DPR WAL file")
+	explainCmd.Flags().StringVar(&explainPolicyPath, "policy", "", "path to policy YAML file")
+	_ = explainCmd.MarkFlagRequired("wal")
+	_ = explainCmd.MarkFlagRequired("policy")
+}
 
-	store, err := dpr.OpenStore(dbPath)
+func runExplainCommand(cmd *cobra.Command, args []string) error {
+	result, err := runExplain(args[0], explainWALPath, explainPolicyPath)
 	if err != nil {
-		return fmt.Errorf("open DPR store: %w", err)
-	}
-	defer store.Close()
-
-	var rec *dpr.Record
-	if explainLast {
-		recs, err := store.Recent(1)
-		if err != nil {
-			return fmt.Errorf("query latest decision: %w", err)
-		}
-		if len(recs) == 0 {
-			return fmt.Errorf("no DPR records found in %s", dbPath)
-		}
-		rec = recs[0]
-	} else if explainLastDeny {
-		recs, err := store.Recent(500)
-		if err != nil {
-			return fmt.Errorf("query recent decisions: %w", err)
-		}
-		for _, r := range recs {
-			if strings.EqualFold(r.Effect, "DENY") {
-				rec = r
-				break
-			}
-		}
-		if rec == nil {
-			return fmt.Errorf("no DENY records found in %s", dbPath)
-		}
-	} else if explainToken != "" {
-		recs, err := store.Recent(10000)
-		if err != nil {
-			return fmt.Errorf("query recent decisions: %w", err)
-		}
-		for _, r := range recs {
-			if r.DenialToken == explainToken {
-				rec = r
-				break
-			}
-		}
-		if rec == nil {
-			return fmt.Errorf("no DPR record found for denial token %s", explainToken)
-		}
-	} else {
-		rec, err = store.ByID(args[0])
-		if err != nil {
-			return fmt.Errorf("lookup DPR record %s: %w", args[0], err)
-		}
+		return err
 	}
 
-	var matchedRule *policy.Rule
-	if doc, _, err := policy.LoadFile(explainPolicy); err == nil {
-		for i := range doc.Rules {
-			r := doc.Rules[i]
-			if r.ID == rec.MatchedRuleID {
-				matchedRule = &r
-				break
-			}
+	fmt.Printf("record_id: %s\n", result.RecordID)
+	fmt.Printf("effect: %s\n", result.Effect)
+	fmt.Printf("reason_code: %s\n", result.ReasonCode)
+	fmt.Printf("rule_id: %s\n", result.RuleID)
+	fmt.Printf("audit: agent_id=%s session_id=%s tool_id=%s policy_version=%s created_at=%s\n",
+		result.AgentID,
+		result.SessionID,
+		result.ToolID,
+		result.PolicyVer,
+		result.CreatedAt.UTC().Format(time.RFC3339),
+	)
+	if result.RuleID != "" {
+		fmt.Printf("rule.match.tool: %s\n", result.RuleMatch)
+		if strings.TrimSpace(result.RuleWhen) != "" {
+			fmt.Printf("rule.match.when: %s\n", result.RuleWhen)
+		}
+		if strings.TrimSpace(result.RuleEffect) != "" {
+			fmt.Printf("rule.effect: %s\n", strings.ToUpper(strings.TrimSpace(result.RuleEffect)))
 		}
 	}
-
-	if explainJSON {
-		matched := map[string]any{}
-		if matchedRule != nil {
-			matched = map[string]any{
-				"id":   matchedRule.ID,
-				"tool": matchedRule.Match.Tool,
-				"when": matchedRule.Match.When,
-			}
-		}
-		out := map[string]any{
-			"record_id":           rec.RecordID,
-			"effect":              rec.Effect,
-			"rule_id":             rec.MatchedRuleID,
-			"reason":              rec.Reason,
-			"reason_code":         rec.ReasonCode,
-			"denial_token":        rec.DenialToken,
-			"agent_id":            rec.AgentID,
-			"tool_id":             rec.ToolID,
-			"session_id":          rec.SessionID,
-			"policy_version":      rec.PolicyVersion,
-			"intercept_adapter":   rec.InterceptAdapter,
-			"args_structural_sig": rec.ArgsStructuralSig,
-			"created_at":          rec.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-			"matched_rule":        matched,
-		}
-		b, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(b))
-		return nil
-	}
-
-	bold := color.New(color.Bold)
-	bold.Printf("Explaining decision: %s\n", rec.RecordID)
-	fmt.Println()
-	fmt.Println("┌─────────────────────────────────────────────────────┐")
-	fmt.Printf("│  Record:    %s\n", rec.RecordID)
-	fmt.Printf("│  Effect:    %s\n", rec.Effect)
-	fmt.Printf("│  Rule:      %s\n", or(rec.MatchedRuleID, "(none)"))
-	fmt.Printf("│  Reason:    %s\n", or(rec.Reason, "(none)"))
-	fmt.Printf("│  Code:      %s\n", or(rec.ReasonCode, "(none)"))
-	fmt.Printf("│  Token:     %s\n", or(rec.DenialToken, "(none)"))
-	fmt.Printf("│  Agent:     %s\n", rec.AgentID)
-	fmt.Printf("│  Tool:      %s\n", rec.ToolID)
-	fmt.Printf("│  Session:   %s\n", or(rec.SessionID, "(none)"))
-	fmt.Printf("│  Time:      %s\n", rec.CreatedAt.UTC().Format("2006-01-02 15:04:05Z"))
-	fmt.Println("│")
-	fmt.Println("│  Conditions evaluated:")
-	if matchedRule != nil {
-		if matchedRule.Match.Tool != "" {
-			fmt.Printf("│    tool == %s\n", matchedRule.Match.Tool)
-		}
-		if matchedRule.Match.When != "" {
-			fmt.Printf("│    when: %s\n", matchedRule.Match.When)
-		}
-		if matchedRule.Match.Tool == "" && matchedRule.Match.When == "" {
-			fmt.Println("│    (no explicit conditions)")
-		}
-	} else {
-		fmt.Println("│    (rule not found in current policy file)")
-	}
-	fmt.Println("│")
-	fmt.Println("│  Context factors:")
-	fmt.Printf("│    policy_version=%s\n", or(rec.PolicyVersion, "(none)"))
-	fmt.Printf("│    intercept_adapter=%s\n", or(rec.InterceptAdapter, "(none)"))
-	fmt.Printf("│    args_structural_sig=%s\n", or(rec.ArgsStructuralSig, "(none)"))
-	fmt.Println("└─────────────────────────────────────────────────────┘")
-	fmt.Println()
-
 	return nil
+}
+
+func runExplain(recordID, walPath, policyPath string) (explainResult, error) {
+	recordID = strings.TrimSpace(recordID)
+	if recordID == "" {
+		return explainResult{}, fmt.Errorf("record id is required")
+	}
+	if strings.TrimSpace(walPath) == "" {
+		return explainResult{}, fmt.Errorf("--wal is required")
+	}
+	if strings.TrimSpace(policyPath) == "" {
+		return explainResult{}, fmt.Errorf("--policy is required")
+	}
+
+	records, err := readRecordsFromWAL(walPath)
+	if err != nil {
+		return explainResult{}, fmt.Errorf("read --wal records: %w", err)
+	}
+	var rec *dpr.Record
+	for _, r := range records {
+		if r.RecordID == recordID {
+			rec = r
+			break
+		}
+	}
+	if rec == nil {
+		return explainResult{}, fmt.Errorf("dpr record not found: %s", recordID)
+	}
+
+	doc, _, err := policy.LoadFile(policyPath)
+	if err != nil {
+		return explainResult{}, fmt.Errorf("load policy: %w", err)
+	}
+	// Compile to ensure current policy is valid before reconstructing rule details.
+	if _, err := policy.NewEngine(doc, rec.PolicyVersion); err != nil {
+		return explainResult{}, fmt.Errorf("compile policy: %w", err)
+	}
+
+	result := explainResult{
+		RecordID:   rec.RecordID,
+		Effect:     strings.ToUpper(strings.TrimSpace(rec.Effect)),
+		ReasonCode: strings.TrimSpace(rec.ReasonCode),
+		RuleID:     strings.TrimSpace(rec.MatchedRuleID),
+		AgentID:    rec.AgentID,
+		SessionID:  rec.SessionID,
+		ToolID:     rec.ToolID,
+		PolicyVer:  rec.PolicyVersion,
+		CreatedAt:  rec.CreatedAt,
+	}
+	for _, rule := range doc.Rules {
+		if strings.TrimSpace(rule.ID) != result.RuleID {
+			continue
+		}
+		result.RuleMatch = strings.TrimSpace(rule.Match.Tool)
+		result.RuleWhen = strings.TrimSpace(rule.Match.When)
+		result.RuleEffect = strings.TrimSpace(rule.Effect)
+		break
+	}
+	return result, nil
 }

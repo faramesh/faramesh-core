@@ -1,0 +1,14 @@
+faramesh-version: "1.0"
+agent-id: "policy-suite-ci"
+default_effect: deny
+rules:
+  - id: allow-http
+    match:
+      tool: "http/get"
+    effect: permit
+    reason_code: RULE_PERMIT
+  - id: deny-rm
+    match:
+      tool: "shell/rm"
+    effect: deny
+    reason_code: RULE_DENY

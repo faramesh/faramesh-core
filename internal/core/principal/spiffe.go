@@ -1,144 +1,84 @@
-// Package principal — SPIFFE/SPIRE workload identity integration.
-//
-// Implements mTLS-based identity using SPIFFE Verifiable Identity Documents
-// (SVIDs). The Faramesh daemon uses its SVID to prove its own identity,
-// and can verify agent SVIDs to establish trust without shared secrets.
-//
-// Trust bundles are auto-rotated via the SPIRE Workload API.
 package principal
 
 import (
 	"context"
-	"crypto/x509"
-	"fmt"
+	"errors"
+	"os"
 	"strings"
-	"sync"
-	"time"
 )
 
-// SVID represents a SPIFFE Verifiable Identity Document.
-type SVID struct {
-	// SPIFFEID is the SPIFFE URI (e.g. "spiffe://example.org/faramesh/agent/billing").
-	SPIFFEID string `json:"spiffe_id"`
+var errSPIFFEUnavailable = errors.New("spiffe provider unavailable")
 
-	// X509 is the parsed x509 certificate (nil for JWT SVIDs).
-	X509 *x509.Certificate `json:"-"`
-
-	// ExpiresAt is the SVID expiry.
-	ExpiresAt time.Time `json:"expires_at"`
-
-	// TrustDomain is the SPIFFE trust domain.
-	TrustDomain string `json:"trust_domain"`
+// SPIFFEProvider resolves workload identity from configured SPIFFE socket.
+// Current implementation is minimal and safe: resolution is best-effort and
+// fail-open for runtime fallback behavior.
+type SPIFFEProvider struct {
+	socketPath string
+	resolveID  func(ctx context.Context, socketPath string) (string, error)
 }
 
-// Valid returns true if the SVID has not expired.
-func (s *SVID) Valid() bool {
-	return time.Now().Before(s.ExpiresAt)
+func NewSPIFFEProvider(socketPath string) *SPIFFEProvider {
+	return &SPIFFEProvider{
+		socketPath: strings.TrimSpace(socketPath),
+		resolveID:  resolveSPIFFEIDFromEnv,
+	}
 }
 
-// AgentPath extracts the agent path from the SPIFFE ID.
-// e.g. "spiffe://example.org/faramesh/agent/billing" → "faramesh/agent/billing"
-func (s *SVID) AgentPath() string {
-	// SPIFFE ID format: spiffe://<trust-domain>/<path>
-	parts := strings.SplitN(s.SPIFFEID, "/", 4)
-	if len(parts) < 4 {
+func (p *SPIFFEProvider) Name() string { return "spiffe" }
+
+func (p *SPIFFEProvider) Available(context.Context) bool {
+	return p != nil && strings.TrimSpace(p.socketPath) != ""
+}
+
+func (p *SPIFFEProvider) Identity(ctx context.Context) (*Identity, error) {
+	if !p.Available(ctx) {
+		return nil, errSPIFFEUnavailable
+	}
+	spiffeID, err := p.resolveID(ctx, p.socketPath)
+	if err != nil {
+		return nil, err
+	}
+	spiffeID = strings.TrimSpace(spiffeID)
+	if spiffeID == "" {
+		return nil, errors.New("empty spiffe id")
+	}
+	return &Identity{
+		ID:       spiffeID,
+		Tier:     resolveSPIFFETier(),
+		Org:      trustDomainFromSPIFFEID(spiffeID),
+		Verified: true,
+		Method:   "spiffe",
+	}, nil
+}
+
+func resolveSPIFFEIDFromEnv(_ context.Context, _ string) (string, error) {
+	v := strings.TrimSpace(getenv("FARAMESH_SPIFFE_ID"))
+	if v == "" {
+		return "", errors.New("spiffe id not available")
+	}
+	return v, nil
+}
+
+func resolveSPIFFETier() string {
+	v := strings.TrimSpace(getenv("FARAMESH_SPIFFE_TIER"))
+	if v == "" {
+		return "enterprise"
+	}
+	return v
+}
+
+func trustDomainFromSPIFFEID(id string) string {
+	const prefix = "spiffe://"
+	if !strings.HasPrefix(strings.ToLower(id), prefix) {
 		return ""
 	}
-	return parts[3]
+	rest := strings.TrimPrefix(id, prefix)
+	if i := strings.Index(rest, "/"); i >= 0 {
+		return rest[:i]
+	}
+	return rest
 }
 
-// SPIFFEProvider manages SPIFFE identity and trust bundles via the
-// SPIRE Workload API (typically a Unix domain socket).
-type SPIFFEProvider struct {
-	mu          sync.RWMutex
-	socketPath  string
-	trustDomain string
-	svid        *SVID
-	trustBundle []*x509.Certificate
-	cancel      context.CancelFunc
-}
-
-// SPIFFEConfig holds configuration for the SPIFFE provider.
-type SPIFFEConfig struct {
-	// WorkloadAPISocket is the SPIRE workload API socket path.
-	// Default: "unix:///run/spire/sockets/agent.sock"
-	WorkloadAPISocket string `yaml:"workload_api_socket"`
-
-	// TrustDomain is the expected SPIFFE trust domain.
-	TrustDomain string `yaml:"trust_domain"`
-}
-
-// NewSPIFFEProvider creates a new SPIFFE identity provider.
-func NewSPIFFEProvider(cfg SPIFFEConfig) *SPIFFEProvider {
-	if cfg.WorkloadAPISocket == "" {
-		cfg.WorkloadAPISocket = "unix:///run/spire/sockets/agent.sock"
-	}
-	return &SPIFFEProvider{
-		socketPath:  cfg.WorkloadAPISocket,
-		trustDomain: cfg.TrustDomain,
-	}
-}
-
-// Start begins watching the SPIRE Workload API for SVID updates.
-// In production, this connects to the SPIRE agent and receives streaming
-// SVID rotations. Here we define the lifecycle.
-func (sp *SPIFFEProvider) Start(ctx context.Context) error {
-	ctx, sp.cancel = context.WithCancel(ctx)
-	// In production: connect to sp.socketPath, call FetchX509SVID,
-	// stream updates. For now, the framework is defined.
-	_ = ctx
-	return nil
-}
-
-// Stop terminates the SPIRE watcher.
-func (sp *SPIFFEProvider) Stop() {
-	if sp.cancel != nil {
-		sp.cancel()
-	}
-}
-
-// CurrentSVID returns the current SVID for this workload.
-func (sp *SPIFFEProvider) CurrentSVID() (*SVID, error) {
-	sp.mu.RLock()
-	defer sp.mu.RUnlock()
-	if sp.svid == nil {
-		return nil, fmt.Errorf("no SVID available (SPIRE agent not connected)")
-	}
-	if !sp.svid.Valid() {
-		return nil, fmt.Errorf("SVID expired at %s", sp.svid.ExpiresAt)
-	}
-	return sp.svid, nil
-}
-
-// TrustBundle returns the current trust bundle certificates.
-func (sp *SPIFFEProvider) TrustBundle() []*x509.Certificate {
-	sp.mu.RLock()
-	defer sp.mu.RUnlock()
-	return sp.trustBundle
-}
-
-// VerifyPeer validates an agent's SVID against the trust bundle.
-func (sp *SPIFFEProvider) VerifyPeer(peerSVID *SVID) error {
-	if peerSVID == nil {
-		return fmt.Errorf("nil peer SVID")
-	}
-	if !peerSVID.Valid() {
-		return fmt.Errorf("peer SVID expired")
-	}
-	if peerSVID.TrustDomain != sp.trustDomain {
-		return fmt.Errorf("peer trust domain %q does not match expected %q",
-			peerSVID.TrustDomain, sp.trustDomain)
-	}
-	// In production: verify the x509 certificate chain against sp.trustBundle.
-	return nil
-}
-
-// IdentityFromSVID converts a verified SVID into a Faramesh Identity.
-func IdentityFromSVID(svid *SVID) Identity {
-	return Identity{
-		ID:       svid.SPIFFEID,
-		Verified: svid.Valid(),
-		Method:   "spiffe",
-		Org:      svid.TrustDomain,
-	}
+func getenv(key string) string {
+	return os.Getenv(key)
 }

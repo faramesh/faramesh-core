@@ -1,0 +1,458 @@
+package daemon
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
+
+	adapterebpf "github.com/faramesh/faramesh-core/internal/adapter/ebpf"
+	"github.com/faramesh/faramesh-core/internal/core/degraded"
+	"github.com/faramesh/faramesh-core/internal/core/observe"
+)
+
+func TestFleetPolicyReloadPublishConsumeApplyFlow(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer mr.Close()
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	applied := make(chan fleetPolicyReloadEvent, 1)
+	d := &Daemon{
+		log:             zap.NewNop(),
+		fleetRedis:      client,
+		fleetInstanceID: "local-instance",
+		fleetPolicyApply: func(_ context.Context, event fleetPolicyReloadEvent) (bool, error) {
+			applied <- event
+			return true, nil
+		},
+	}
+	d.startFleetPolicyReloadSubscriber()
+	defer d.stopFleetPolicyReloadSubscriber()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	event := fleetPolicyReloadEvent{
+		Action:        fleetPolicyReloadActionName,
+		InstanceID:    "peer-instance",
+		SourceType:    "file",
+		SourceID:      "/tmp/policy.yaml",
+		PolicyVersion: "v1",
+		PolicyHash:    "hash-v1",
+		PolicyYAML:    "faramesh-version: \"1.0\"\nagent-id: \"a\"\nrules: []\ndefault_effect: deny\n",
+		Timestamp:     time.Now().UTC().Format(time.RFC3339),
+	}
+	d.publishFleetPolicyReloadEvent(ctx, event)
+
+	select {
+	case got := <-applied:
+		if got.PolicyHash != "hash-v1" {
+			t.Fatalf("expected hash-v1, got %+v", got)
+		}
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for applied event")
+	}
+}
+
+func TestFleetPolicyReloadSubscriberIgnoresMalformedEvents(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer mr.Close()
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	calls := 0
+	d := &Daemon{
+		log:             zap.NewNop(),
+		fleetRedis:      client,
+		fleetInstanceID: "local-instance",
+		fleetPolicyApply: func(_ context.Context, event fleetPolicyReloadEvent) (bool, error) {
+			calls++
+			return true, nil
+		},
+	}
+	d.startFleetPolicyReloadSubscriber()
+	defer d.stopFleetPolicyReloadSubscriber()
+
+	ctx := context.Background()
+	if err := client.Publish(ctx, fleetPolicyReloadChannel, "{not-json").Err(); err != nil {
+		t.Fatalf("publish malformed json: %v", err)
+	}
+	badEvent := fleetPolicyReloadEvent{Action: "other", InstanceID: "peer-instance"}
+	raw, _ := json.Marshal(badEvent)
+	if err := client.Publish(ctx, fleetPolicyReloadChannel, raw).Err(); err != nil {
+		t.Fatalf("publish invalid event: %v", err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if calls != 0 {
+		t.Fatalf("expected no apply calls for malformed events, got %d", calls)
+	}
+}
+
+func TestLoadInitialPolicyFromURL(t *testing.T) {
+	var mu sync.RWMutex
+	body := `
+faramesh-version: "1.0"
+agent-id: "agent-url"
+rules:
+  - id: allow-all
+    match:
+      tool: "*"
+    effect: permit
+default_effect: deny
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.RLock()
+		defer mu.RUnlock()
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	d, err := New(Config{
+		PolicyURL: srv.URL,
+		Log:       zap.NewNop(),
+	})
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+
+	doc, version, err := d.loadInitialPolicy()
+	if err != nil {
+		t.Fatalf("load initial policy: %v", err)
+	}
+
+	if doc.AgentID != "agent-url" {
+		t.Fatalf("expected agent-id agent-url, got %q", doc.AgentID)
+	}
+	if version == "" {
+		t.Fatalf("expected non-empty version")
+	}
+	if d.policySourceType != "url" {
+		t.Fatalf("expected policy source type url, got %q", d.policySourceType)
+	}
+	if d.policySourceID != srv.URL {
+		t.Fatalf("expected policy source id %q, got %q", srv.URL, d.policySourceID)
+	}
+	if d.lastPolicyHash == "" {
+		t.Fatalf("expected initial policy hash to be set")
+	}
+	if d.engine == nil {
+		t.Fatalf("expected atomic engine to be initialized")
+	}
+}
+
+func TestReloadPolicyIfChangedURL(t *testing.T) {
+	var mu sync.RWMutex
+	body := `
+faramesh-version: "1.0"
+agent-id: "agent-url"
+rules:
+  - id: allow-all
+    match:
+      tool: "*"
+    effect: permit
+default_effect: deny
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.RLock()
+		defer mu.RUnlock()
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	d, err := New(Config{
+		PolicyURL: srv.URL,
+		Log:       zap.NewNop(),
+	})
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	if _, _, err := d.loadInitialPolicy(); err != nil {
+		t.Fatalf("load initial policy: %v", err)
+	}
+	initialHash := d.lastPolicyHash
+
+	changed, err := d.reloadPolicyIfChanged()
+	if err != nil {
+		t.Fatalf("reload unchanged policy: %v", err)
+	}
+	if changed {
+		t.Fatalf("expected no reload when URL content is unchanged")
+	}
+
+	mu.Lock()
+	body = `
+faramesh-version: "1.0"
+agent-id: "agent-url-v2"
+rules:
+  - id: deny-all
+    match:
+      tool: "*"
+    effect: deny
+default_effect: permit
+`
+	mu.Unlock()
+
+	changed, err = d.reloadPolicyIfChanged()
+	if err != nil {
+		t.Fatalf("reload changed policy: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected reload when URL content changes")
+	}
+	if d.lastPolicyHash == initialHash {
+		t.Fatalf("expected policy hash to change after reload")
+	}
+}
+
+func TestPolicyReloadLogIncludesStructuredSchemaFields(t *testing.T) {
+	var mu sync.RWMutex
+	body := `
+faramesh-version: "1.0"
+agent-id: "agent-url"
+rules:
+  - id: allow-all
+    match:
+      tool: "*"
+    effect: permit
+default_effect: deny
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.RLock()
+		defer mu.RUnlock()
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	coreObs, logs := observer.New(zapcore.InfoLevel)
+	logger := zap.New(coreObs)
+	d, err := New(Config{
+		PolicyURL: srv.URL,
+		Log:       logger,
+	})
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	if _, _, err := d.loadInitialPolicy(); err != nil {
+		t.Fatalf("load initial policy: %v", err)
+	}
+
+	mu.Lock()
+	body = `
+faramesh-version: "1.0"
+agent-id: "agent-url-v2"
+rules:
+  - id: deny-all
+    match:
+      tool: "*"
+    effect: deny
+default_effect: permit
+`
+	mu.Unlock()
+
+	changed, err := d.reloadPolicyIfChanged()
+	if err != nil {
+		t.Fatalf("reload changed policy: %v", err)
+	}
+	if !changed {
+		t.Fatalf("expected policy reload to occur")
+	}
+
+	entries := logs.FilterMessage("policy reloaded").All()
+	if len(entries) == 0 {
+		t.Fatalf("expected policy reloaded log entry")
+	}
+	fields := entries[len(entries)-1].ContextMap()
+	if fields["log_schema"] != observe.GovernanceLogSchema {
+		t.Fatalf("log_schema=%v", fields["log_schema"])
+	}
+	if fields["log_schema_version"] != observe.GovernanceLogSchemaVersion {
+		t.Fatalf("log_schema_version=%v", fields["log_schema_version"])
+	}
+	if fields["event"] != observe.EventPolicyReload {
+		t.Fatalf("event=%v", fields["event"])
+	}
+	for _, k := range []string{"version", "policy_hash", "source_type", "source_id"} {
+		if _, ok := fields[k]; !ok {
+			t.Fatalf("missing required field %q in policy reload structured log", k)
+		}
+	}
+}
+
+type fakeEBPFLifecycle struct {
+	attachErr  error
+	closeErr   error
+	attachCall int
+	closeCall  int
+	loaded     bool
+	programs   int
+}
+
+func (f *fakeEBPFLifecycle) Attach() error {
+	f.attachCall++
+	if f.attachErr == nil {
+		f.loaded = true
+	}
+	return f.attachErr
+}
+
+func (f *fakeEBPFLifecycle) Close() error {
+	f.closeCall++
+	f.loaded = false
+	return f.closeErr
+}
+
+func (f *fakeEBPFLifecycle) Loaded() bool      { return f.loaded }
+func (f *fakeEBPFLifecycle) ProgramCount() int { return f.programs }
+
+func TestBootstrapEBPFDisabled(t *testing.T) {
+	orig := ebpfNew
+	t.Cleanup(func() { ebpfNew = orig })
+	called := false
+	ebpfNew = func(_ *zap.Logger, _ adapterebpf.Config) (adapterebpf.Lifecycle, error) {
+		called = true
+		return &fakeEBPFLifecycle{}, nil
+	}
+
+	d := &Daemon{cfg: Config{EnableEBPF: false}, log: zap.NewNop()}
+	d.bootstrapEBPF()
+	if called {
+		t.Fatalf("expected ebpf constructor to not be called when disabled")
+	}
+}
+
+func TestBootstrapEBPFUnsupportedContinues(t *testing.T) {
+	orig := ebpfNew
+	t.Cleanup(func() { ebpfNew = orig })
+	ebpfNew = func(_ *zap.Logger, _ adapterebpf.Config) (adapterebpf.Lifecycle, error) {
+		return nil, adapterebpf.ErrUnsupported
+	}
+
+	d := &Daemon{cfg: Config{EnableEBPF: true}, log: zap.NewNop()}
+	d.bootstrapEBPF()
+	if d.ebpfAdapter != nil {
+		t.Fatalf("expected no ebpf adapter when unsupported")
+	}
+}
+
+func TestBootstrapEBPFAttachFailureCloses(t *testing.T) {
+	orig := ebpfNew
+	t.Cleanup(func() { ebpfNew = orig })
+	fake := &fakeEBPFLifecycle{attachErr: errors.New("attach boom")}
+	ebpfNew = func(_ *zap.Logger, _ adapterebpf.Config) (adapterebpf.Lifecycle, error) {
+		return fake, nil
+	}
+
+	d := &Daemon{cfg: Config{EnableEBPF: true}, log: zap.NewNop()}
+	d.bootstrapEBPF()
+	if fake.attachCall != 1 {
+		t.Fatalf("expected attach to be called once, got %d", fake.attachCall)
+	}
+	if fake.closeCall != 1 {
+		t.Fatalf("expected close to be called once on attach failure, got %d", fake.closeCall)
+	}
+	if d.ebpfAdapter != nil {
+		t.Fatalf("expected no stored ebpf adapter on attach failure")
+	}
+}
+
+func TestBootstrapEBPFAndStopClosesAdapter(t *testing.T) {
+	orig := ebpfNew
+	t.Cleanup(func() { ebpfNew = orig })
+	fake := &fakeEBPFLifecycle{programs: 2}
+	ebpfNew = func(_ *zap.Logger, _ adapterebpf.Config) (adapterebpf.Lifecycle, error) {
+		return fake, nil
+	}
+
+	d := &Daemon{cfg: Config{EnableEBPF: true}, log: zap.NewNop()}
+	d.bootstrapEBPF()
+	if d.ebpfAdapter == nil {
+		t.Fatalf("expected ebpf adapter to be retained after successful attach")
+	}
+	if fake.attachCall != 1 {
+		t.Fatalf("expected attach to be called once, got %d", fake.attachCall)
+	}
+	if err := d.stop(); err != nil {
+		t.Fatalf("stop daemon: %v", err)
+	}
+	if fake.closeCall != 1 {
+		t.Fatalf("expected close to be called once during stop, got %d", fake.closeCall)
+	}
+}
+
+func TestBootstrapEBPFPassesAdapterConfig(t *testing.T) {
+	orig := ebpfNew
+	t.Cleanup(func() { ebpfNew = orig })
+	var got adapterebpf.Config
+	ebpfNew = func(_ *zap.Logger, cfg adapterebpf.Config) (adapterebpf.Lifecycle, error) {
+		got = cfg
+		return &fakeEBPFLifecycle{}, nil
+	}
+
+	d := &Daemon{
+		cfg: Config{
+			EnableEBPF:            true,
+			EBPFObjectPath:        "/tmp/probe.o",
+			EBPFAttachTracepoints: true,
+		},
+		log: zap.NewNop(),
+	}
+	d.bootstrapEBPF()
+	if got.ObjectPath != "/tmp/probe.o" {
+		t.Fatalf("expected object path to be forwarded, got %q", got.ObjectPath)
+	}
+	if !got.AttachTracepoints {
+		t.Fatalf("expected attach tracepoints to be forwarded")
+	}
+}
+
+func TestHandleSignalSIGUSR1TogglesDegradedMode(t *testing.T) {
+	d := &Daemon{
+		log:      zap.NewNop(),
+		degraded: degraded.NewManager(),
+	}
+	if got := d.degraded.Current().String(); got != "FULL" {
+		t.Fatalf("expected FULL mode initially, got %s", got)
+	}
+	if stop := d.handleSignal(syscall.SIGUSR1); stop {
+		t.Fatalf("expected daemon to continue on SIGUSR1")
+	}
+	if got := d.degraded.Current().String(); got != "STATELESS" {
+		t.Fatalf("expected STATELESS after SIGUSR1, got %s", got)
+	}
+}
+
+func TestHandleSignalSIGUSR2TogglesFaultMode(t *testing.T) {
+	d := &Daemon{
+		log:      zap.NewNop(),
+		degraded: degraded.NewManager(),
+	}
+	if stop := d.handleSignal(syscall.SIGUSR2); stop {
+		t.Fatalf("expected daemon to continue on SIGUSR2")
+	}
+	if got := d.degraded.Current().String(); got != "EMERGENCY" {
+		t.Fatalf("expected EMERGENCY after SIGUSR2, got %s", got)
+	}
+	if stop := d.handleSignal(syscall.SIGUSR2); stop {
+		t.Fatalf("expected daemon to continue on SIGUSR2")
+	}
+	if got := d.degraded.Current().String(); got != "FULL" {
+		t.Fatalf("expected FULL after second SIGUSR2, got %s", got)
+	}
+}

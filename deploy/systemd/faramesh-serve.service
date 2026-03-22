@@ -1,0 +1,21 @@
+[Unit]
+Description=Faramesh governance daemon (SDK socket + policy)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=faramesh
+Group=faramesh
+# Adjust paths to your install (e.g. /usr/local/bin/faramesh from package).
+ExecStart=/usr/local/bin/faramesh serve --policy /etc/faramesh/policy.yaml --socket /run/faramesh/faramesh.sock
+Restart=on-failure
+RestartSec=2
+RuntimeDirectory=faramesh
+RuntimeDirectoryMode=0755
+# Hardening (tune for your site)
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
