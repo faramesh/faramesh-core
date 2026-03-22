@@ -9,30 +9,9 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/faramesh/faramesh-core/internal/core"
-	"github.com/faramesh/faramesh-core/internal/core/dpr"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
-	"github.com/faramesh/faramesh-core/internal/core/session"
-	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 )
-
-// policy replay — replay DPR records against a new policy to predict drift.
-var policyReplayCmd = &cobra.Command{
-	Use:   "replay <policy.yaml> <dpr.db>",
-	Short: "Replay historical decisions against a policy to predict drift",
-	Long: `Replay DPR records from the audit database against a policy file.
-Shows which decisions would change, enabling safe policy updates.
-
-  faramesh policy replay policies/v2.yaml data/dpr.db
-  faramesh policy replay policies/v2.yaml data/dpr.db --limit 1000
-  faramesh policy replay policies/v2.yaml data/dpr.db --json
-
-This is the governance equivalent of "terraform plan" — see the impact
-of a policy change before deploying it.`,
-	Args: cobra.ExactArgs(2),
-	RunE: runPolicyReplay,
-}
 
 // policy debug — step-through rule evaluation trace.
 var policyDebugCmd = &cobra.Command{
@@ -69,8 +48,6 @@ Use this in CI to detect coverage gaps:
 }
 
 var (
-	replayLimit int
-	replayJSON  bool
 	debugTool   string
 	debugArgs   string
 	debugUnsafeRawArgs bool
@@ -78,9 +55,6 @@ var (
 )
 
 func init() {
-	policyReplayCmd.Flags().IntVar(&replayLimit, "limit", 500, "max DPR records to replay")
-	policyReplayCmd.Flags().BoolVar(&replayJSON, "json", false, "output drift report as JSON")
-
 	policyDebugCmd.Flags().StringVar(&debugTool, "tool", "", "tool ID to debug (required)")
 	policyDebugCmd.Flags().StringVar(&debugArgs, "args", "{}", "tool arguments as JSON")
 	policyDebugCmd.Flags().BoolVar(&debugUnsafeRawArgs, "unsafe-raw-args", false, "print raw argument JSON without redaction")
@@ -88,132 +62,8 @@ func init() {
 
 	policyCoverCmd.Flags().StringVar(&coverTools, "tools", "", "comma-separated tool IDs to check (in addition to declared tools)")
 
-	policyCmd.AddCommand(policyReplayCmd)
 	policyCmd.AddCommand(policyDebugCmd)
 	policyCmd.AddCommand(policyCoverCmd)
-}
-
-func runPolicyReplay(cmd *cobra.Command, args []string) error {
-	policyPath := args[0]
-	dbPath := args[1]
-
-	doc, version, err := policy.LoadFile(policyPath)
-	if err != nil {
-		return fmt.Errorf("load policy: %w", err)
-	}
-	engine, err := policy.NewEngine(doc, version)
-	if err != nil {
-		return fmt.Errorf("compile policy: %w", err)
-	}
-
-	store, err := dpr.OpenStore(dbPath)
-	if err != nil {
-		return fmt.Errorf("open DPR store: %w", err)
-	}
-	defer store.Close()
-
-	records, err := store.Recent(replayLimit)
-	if err != nil {
-		return fmt.Errorf("read DPR records: %w", err)
-	}
-
-	bold := color.New(color.Bold)
-	green := color.New(color.FgGreen)
-	red := color.New(color.FgRed)
-	yellow := color.New(color.FgYellow)
-	dim := color.New(color.FgHiBlack)
-
-	pip := core.NewPipeline(core.Config{
-		Engine:   policy.NewAtomicEngine(engine),
-		Sessions: session.NewManager(),
-		Defers:   deferwork.NewWorkflow(""),
-	})
-
-	type driftEntry struct {
-		RecordID   string `json:"record_id"`
-		ToolID     string `json:"tool_id"`
-		AgentID    string `json:"agent_id"`
-		OldEffect  string `json:"old_effect"`
-		NewEffect  string `json:"new_effect"`
-		OldRule    string `json:"old_rule"`
-		NewRule    string `json:"new_rule"`
-		OldReason  string `json:"old_reason"`
-		NewReason  string `json:"new_reason"`
-	}
-
-	var drifts []driftEntry
-	total := len(records)
-	same := 0
-
-	for _, rec := range records {
-		req := core.CanonicalActionRequest{
-			CallID:    rec.RecordID,
-			AgentID:   rec.AgentID,
-			SessionID: rec.SessionID,
-			ToolID:    rec.ToolID,
-			Args:      map[string]any{}, // original args not stored in DPR (privacy)
-		}
-		newDecision := pip.Evaluate(req)
-
-		if strings.EqualFold(string(newDecision.Effect), rec.Effect) {
-			same++
-			continue
-		}
-
-		drifts = append(drifts, driftEntry{
-			RecordID:  rec.RecordID,
-			ToolID:    rec.ToolID,
-			AgentID:   rec.AgentID,
-			OldEffect: rec.Effect,
-			NewEffect: string(newDecision.Effect),
-			OldRule:   rec.MatchedRuleID,
-			NewRule:   newDecision.RuleID,
-			OldReason: rec.ReasonCode,
-			NewReason: newDecision.ReasonCode,
-		})
-	}
-
-	if replayJSON {
-		out, _ := json.MarshalIndent(map[string]any{
-			"total":      total,
-			"same":       same,
-			"drifted":    len(drifts),
-			"drift_pct":  fmt.Sprintf("%.1f%%", float64(len(drifts))/float64(total)*100),
-			"drifts":     drifts,
-		}, "", "  ")
-		fmt.Println(string(out))
-		return nil
-	}
-
-	fmt.Println()
-	bold.Printf("Policy Replay — drift prediction\n")
-	fmt.Printf("  policy : %s [%s]\n", policyPath, version)
-	fmt.Printf("  source : %s  (%d records)\n", dbPath, total)
-	fmt.Println()
-
-	if len(drifts) == 0 {
-		green.Printf("  ✓ No drift detected. All %d decisions would be identical.\n\n", total)
-		return nil
-	}
-
-	yellow.Printf("  ⚠ %d of %d decisions (%.1f%%) would change:\n\n",
-		len(drifts), total, float64(len(drifts))/float64(total)*100)
-
-	for _, d := range drifts {
-		fmt.Printf("    %-22s  ", d.ToolID)
-		red.Printf("%-8s", d.OldEffect)
-		fmt.Printf(" → ")
-		effectColor := green
-		if strings.EqualFold(d.NewEffect, "DENY") {
-			effectColor = red
-		} else if strings.EqualFold(d.NewEffect, "DEFER") {
-			effectColor = yellow
-		}
-		effectColor.Printf("%-8s", d.NewEffect)
-		dim.Printf("  agent=%s\n", d.AgentID)
-	}
-	fmt.Println()
-	return nil
 }
 
 func runPolicyDebug(cmd *cobra.Command, args []string) error {

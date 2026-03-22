@@ -12,7 +12,9 @@ package credential
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 )
 
@@ -118,52 +120,162 @@ func (b *EnvBroker) Fetch(_ context.Context, req FetchRequest) (*Credential, err
 func (b *EnvBroker) Revoke(_ context.Context, _ *Credential) error { return nil }
 
 // VaultBroker is a credential broker backed by HashiCorp Vault.
-// Supports dynamic secrets, PKI, and cloud dynamic credentials.
+// Supports KV v1/v2 static secrets and dynamic secrets (AWS STS, database, PKI).
+// Real implementation in vault.go; use NewVaultBroker(VaultConfig{...}) to construct.
 type VaultBroker struct {
-	Addr  string
-	Token string
+	Addr   string
+	Token  string
+	cfg    VaultConfig
+	client *http.Client
 }
 
 func (b *VaultBroker) Name() string { return "vault" }
 
-func (b *VaultBroker) Fetch(ctx context.Context, req FetchRequest) (*Credential, error) {
-	// TODO: Implement Vault API call for dynamic secret generation.
-	// This is the integration point for:
-	//   - AWS STS token generation (vault read aws/creds/my-role)
-	//   - Database dynamic credentials (vault read database/creds/my-role)
-	//   - PKI certificate generation (vault write pki/issue/my-role)
-	return nil, fmt.Errorf("vault broker: not yet implemented (addr=%s)", b.Addr)
-}
-
-func (b *VaultBroker) Revoke(ctx context.Context, cred *Credential) error {
-	// TODO: Implement Vault lease revocation.
-	return nil
-}
-
 // AWSSecretsBroker fetches credentials from AWS Secrets Manager.
+// Real implementation in aws.go; use NewAWSSecretsBroker(AWSSecretsConfig{...}) to construct.
 type AWSSecretsBroker struct {
 	Region string
+	cfg    AWSSecretsConfig
+	client *http.Client
 }
 
 func (b *AWSSecretsBroker) Name() string { return "aws_secrets_manager" }
 
-func (b *AWSSecretsBroker) Fetch(ctx context.Context, req FetchRequest) (*Credential, error) {
-	// TODO: Implement AWS Secrets Manager API call.
-	return nil, fmt.Errorf("aws secrets broker: not yet implemented (region=%s)", b.Region)
-}
-
 func (b *AWSSecretsBroker) Revoke(_ context.Context, _ *Credential) error { return nil }
 
 // GCPSecretsBroker fetches credentials from GCP Secret Manager.
+// Real implementation in gcp.go; use NewGCPSecretsBroker(GCPSecretsConfig{...}) to construct.
 type GCPSecretsBroker struct {
 	Project string
+	cfg     GCPSecretsConfig
+	client  *http.Client
 }
 
 func (b *GCPSecretsBroker) Name() string { return "gcp_secret_manager" }
 
-func (b *GCPSecretsBroker) Fetch(ctx context.Context, req FetchRequest) (*Credential, error) {
-	// TODO: Implement GCP Secret Manager API call.
-	return nil, fmt.Errorf("gcp secrets broker: not yet implemented (project=%s)", b.Project)
+func (b *GCPSecretsBroker) Revoke(_ context.Context, _ *Credential) error { return nil }
+
+// 1PasswordBroker fetches credentials from 1Password via Connect API.
+type OnePasswordBroker struct {
+	ConnectHost  string
+	ConnectToken string
+	VaultID      string
+	client       *http.Client
 }
 
-func (b *GCPSecretsBroker) Revoke(_ context.Context, _ *Credential) error { return nil }
+func (b *OnePasswordBroker) Name() string { return "1password" }
+
+func (b *OnePasswordBroker) Fetch(ctx context.Context, req FetchRequest) (*Credential, error) {
+	if b.client == nil {
+		b.client = &http.Client{Timeout: 10 * time.Second}
+	}
+	itemTitle := req.Scope
+	if itemTitle == "" {
+		itemTitle = "faramesh-" + req.ToolID
+	}
+	url := b.ConnectHost + "/v1/vaults/" + b.VaultID + "/items?filter=title eq \"" + itemTitle + "\""
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+b.ConnectToken)
+
+	resp, err := b.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("1password: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("1password: status %d", resp.StatusCode)
+	}
+	var items []struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil || len(items) == 0 {
+		return nil, fmt.Errorf("1password: item not found: %s", itemTitle)
+	}
+
+	detailURL := b.ConnectHost + "/v1/vaults/" + b.VaultID + "/items/" + items[0].ID
+	detailReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, detailURL, nil)
+	detailReq.Header.Set("Authorization", "Bearer "+b.ConnectToken)
+	detailResp, err := b.client.Do(detailReq)
+	if err != nil {
+		return nil, err
+	}
+	defer detailResp.Body.Close()
+	var detail struct {
+		Fields []struct {
+			Label string `json:"label"`
+			Value string `json:"value"`
+		} `json:"fields"`
+	}
+	if err := json.NewDecoder(detailResp.Body).Decode(&detail); err != nil {
+		return nil, err
+	}
+	for _, f := range detail.Fields {
+		if f.Label == "credential" || f.Label == "password" || f.Label == "api_key" {
+			return &Credential{Value: f.Value, Source: "1password", Scope: req.Scope}, nil
+		}
+	}
+	if len(detail.Fields) > 0 {
+		return &Credential{Value: detail.Fields[0].Value, Source: "1password", Scope: req.Scope}, nil
+	}
+	return nil, fmt.Errorf("1password: no credential field found in %s", itemTitle)
+}
+
+func (b *OnePasswordBroker) Revoke(_ context.Context, _ *Credential) error { return nil }
+
+// InfisicalBroker fetches credentials from Infisical.
+type InfisicalBroker struct {
+	Host        string
+	Token       string
+	Environment string
+	ProjectID   string
+	client      *http.Client
+}
+
+func (b *InfisicalBroker) Name() string { return "infisical" }
+
+func (b *InfisicalBroker) Fetch(ctx context.Context, req FetchRequest) (*Credential, error) {
+	if b.client == nil {
+		b.client = &http.Client{Timeout: 10 * time.Second}
+	}
+	secretKey := req.Scope
+	if secretKey == "" {
+		secretKey = "FARAMESH_" + req.ToolID
+	}
+	env := b.Environment
+	if env == "" {
+		env = "prod"
+	}
+	url := fmt.Sprintf("%s/api/v3/secrets/raw/%s?workspaceId=%s&environment=%s",
+		b.Host, secretKey, b.ProjectID, env)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+b.Token)
+
+	resp, err := b.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("infisical: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("infisical: status %d", resp.StatusCode)
+	}
+	var result struct {
+		Secret struct {
+			SecretValue string `json:"secretValue"`
+		} `json:"secret"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	if result.Secret.SecretValue == "" {
+		return nil, fmt.Errorf("infisical: empty secret %s", secretKey)
+	}
+	return &Credential{Value: result.Secret.SecretValue, Source: "infisical", Scope: req.Scope}, nil
+}
+
+func (b *InfisicalBroker) Revoke(_ context.Context, _ *Credential) error { return nil }

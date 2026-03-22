@@ -186,6 +186,12 @@ func (pm *PhaseManager) IsToolAllowed(agentID, toolID string) (bool, string) {
 	return false, fmt.Sprintf("tool %s not in allowed list for phase %s", toolID, phase.ID)
 }
 
+// IsToolAllowedInPhase is a compatibility alias used by pipeline integration.
+// It delegates to IsToolAllowed and preserves identical semantics.
+func (pm *PhaseManager) IsToolAllowedInPhase(agentID, toolID string) (bool, string) {
+	return pm.IsToolAllowed(agentID, toolID)
+}
+
 // CheckMaxDuration checks if the agent has exceeded the phase's max duration.
 func (pm *PhaseManager) CheckMaxDuration(agentID string) (bool, time.Duration) {
 	pm.mu.RLock()

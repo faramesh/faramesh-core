@@ -1,0 +1,19 @@
+# Seed pack: healthcare-oriented defaults (illustrative).
+faramesh-version: "1.0"
+agent-id: "healthcare"
+
+tools:
+  patient/lookup:
+    reversibility: irreversible
+    blast_radius: external
+    tags: ["phi"]
+
+rules:
+  - id: patient-read-defer
+    match:
+      tool: "patient/*"
+    effect: defer
+    reason: "patient tools require approval"
+    reason_code: RULE_DEFER
+
+default_effect: deny

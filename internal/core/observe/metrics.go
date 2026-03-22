@@ -19,10 +19,10 @@ import (
 // hot path. Counters use atomic int64; histograms use fixed-bucket arrays.
 type Metrics struct {
 	// Decision counters by effect.
-	permits  atomic.Int64
-	denies   atomic.Int64
-	defers   atomic.Int64
-	shadows  atomic.Int64
+	permits atomic.Int64
+	denies  atomic.Int64
+	defers  atomic.Int64
+	shadows atomic.Int64
 
 	// Deny reason counters.
 	denyReasons sync.Map // string -> *atomic.Int64
@@ -37,8 +37,8 @@ type Metrics struct {
 	activeSessions atomic.Int64
 
 	// WAL write counters.
-	walWrites  atomic.Int64
-	walErrors  atomic.Int64
+	walWrites atomic.Int64
+	walErrors atomic.Int64
 
 	// Context guard counters.
 	contextChecks atomic.Int64
@@ -55,10 +55,71 @@ type Metrics struct {
 
 	// Shadow mode incident exposure counter.
 	shadowExposure atomic.Int64
+
+	// Async DPR queue (River or in-process worker): enqueue + background persist.
+	dprEnqueueOK  atomic.Int64
+	dprEnqueueErr atomic.Int64
+	dprPersistOK  atomic.Int64
+	dprPersistErr atomic.Int64
+
+	hooksMu             sync.RWMutex
+	crossSessionTracker CrossSessionTracker
+	pieAnalyzer         RuleObserver
+	pieAnalyzerConcrete *PIEAnalyzer
 }
 
 // Global default metrics instance.
-var Default = &Metrics{}
+var Default = NewMetrics()
+
+// NewMetrics creates a metrics collector with safe default telemetry hooks.
+func NewMetrics() *Metrics {
+	m := &Metrics{}
+	m.crossSessionTracker = noOpCrossSessionTracker{}
+	m.pieAnalyzer = noOpRuleObserver{}
+	m.pieAnalyzerConcrete = nil
+	return m
+}
+
+// SetCrossSessionTracker sets the cross-session telemetry tracker.
+func (m *Metrics) SetCrossSessionTracker(t CrossSessionTracker) {
+	if t == nil {
+		t = noOpCrossSessionTracker{}
+	}
+	m.hooksMu.Lock()
+	m.crossSessionTracker = t
+	m.hooksMu.Unlock()
+}
+
+// SetPIEAnalyzer sets the PIE rule observer hook.
+func (m *Metrics) SetPIEAnalyzer(p RuleObserver) {
+	if p == nil {
+		p = noOpRuleObserver{}
+	}
+	m.hooksMu.Lock()
+	m.pieAnalyzer = p
+	if concrete, ok := p.(*PIEAnalyzer); ok {
+		m.pieAnalyzerConcrete = concrete
+	} else {
+		m.pieAnalyzerConcrete = nil
+	}
+	m.hooksMu.Unlock()
+}
+
+// GetPIEAnalyzer returns the currently configured in-process PIE analyzer, if any.
+func GetPIEAnalyzer() *PIEAnalyzer {
+	Default.hooksMu.RLock()
+	defer Default.hooksMu.RUnlock()
+	return Default.pieAnalyzerConcrete
+}
+
+// GetCrossSessionFlowTracker returns the concrete FlowTracker when the default metrics
+// hook is wired to NewCrossSessionFlowTracker; otherwise nil.
+func GetCrossSessionFlowTracker() *FlowTracker {
+	Default.hooksMu.RLock()
+	t := Default.crossSessionTracker
+	Default.hooksMu.RUnlock()
+	return FlowTrackerFrom(t)
+}
 
 // RecordDecision records a governance decision.
 func (m *Metrics) RecordDecision(effect string, reasonCode string, latency time.Duration) {
@@ -128,6 +189,36 @@ func (m *Metrics) RecordPostScan(outcome string) {
 	}
 }
 
+// RecordPermitAccess emits cross-session access telemetry asynchronously.
+// Fail-open semantics: tracker errors and panics are intentionally ignored.
+func (m *Metrics) RecordPermitAccess(evt AccessEvent) {
+	m.hooksMu.RLock()
+	t := m.crossSessionTracker
+	m.hooksMu.RUnlock()
+	if t == nil {
+		return
+	}
+	go func() {
+		defer func() { _ = recover() }()
+		_ = t.RecordAccess(evt)
+	}()
+}
+
+// ObserveRule emits per-rule observations asynchronously.
+// Fail-open semantics: observer errors and panics are intentionally ignored.
+func (m *Metrics) ObserveRule(obs RuleObservation) {
+	m.hooksMu.RLock()
+	p := m.pieAnalyzer
+	m.hooksMu.RUnlock()
+	if p == nil {
+		return
+	}
+	go func() {
+		defer func() { _ = recover() }()
+		_ = p.ObserveRule(obs)
+	}()
+}
+
 // SetActiveSessions sets the active sessions gauge.
 func (m *Metrics) SetActiveSessions(n int64) {
 	m.activeSessions.Store(n)
@@ -141,9 +232,33 @@ func (m *Metrics) RecordIncidentPrevented(category, severity string) {
 	m.incidentsTotal.Add(1)
 }
 
+// TotalIncidentsPrevented returns the aggregate count (all category:severity keys).
+func (m *Metrics) TotalIncidentsPrevented() int64 {
+	return m.incidentsTotal.Load()
+}
+
 // RecordShadowExposure records an incident that would have occurred in shadow mode.
 func (m *Metrics) RecordShadowExposure() {
 	m.shadowExposure.Add(1)
+}
+
+// RecordDPREnqueue records whether an async DPR record was accepted by the queue
+// (River insert or in-process channel send). Failure usually triggers synchronous fallback save.
+func (m *Metrics) RecordDPREnqueue(success bool) {
+	if success {
+		m.dprEnqueueOK.Add(1)
+	} else {
+		m.dprEnqueueErr.Add(1)
+	}
+}
+
+// RecordDPRAsyncPersist records background persist outcome from the async queue worker.
+func (m *Metrics) RecordDPRAsyncPersist(success bool) {
+	if success {
+		m.dprPersistOK.Add(1)
+	} else {
+		m.dprPersistErr.Add(1)
+	}
 }
 
 // IncidentsPreventedPer1K returns incidents prevented per 1000 governance calls.
@@ -201,6 +316,12 @@ func (m *Metrics) Handler() http.Handler {
 		})
 		writeGauge(&b, "faramesh_incidents_prevented_per_1k_calls", int64(m.IncidentsPreventedPer1K()))
 		writeGauge(&b, "faramesh_shadow_mode_incident_exposure", m.shadowExposure.Load())
+
+		// Async DPR queue (enqueue + worker persist).
+		writeCounter(&b, "faramesh_dpr_async_enqueue_total", "status", "success", m.dprEnqueueOK.Load())
+		writeCounter(&b, "faramesh_dpr_async_enqueue_total", "status", "error", m.dprEnqueueErr.Load())
+		writeCounter(&b, "faramesh_dpr_async_persist_total", "status", "success", m.dprPersistOK.Load())
+		writeCounter(&b, "faramesh_dpr_async_persist_total", "status", "error", m.dprPersistErr.Load())
 
 		fmt.Fprint(w, b.String())
 	})
