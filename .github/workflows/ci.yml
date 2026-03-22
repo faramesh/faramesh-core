@@ -55,7 +55,7 @@ jobs:
             -ldflags="-X main.version=ci-${GITHUB_SHA::8} -s -w" \
             -o faramesh ./cmd/faramesh
       - name: Verify version
-        run: ./faramesh version
+        run: ./faramesh --version
       - name: Validate FPL examples
         run: |
           for f in examples/*.fpl; do
