@@ -1,0 +1,11 @@
+faramesh-version: "1.0"
+agent-id: "fpl-merge-test"
+default_effect: deny
+rules:
+  - id: yaml-first
+    match:
+      tool: "yaml-only"
+    effect: permit
+    reason_code: Y1
+fpl_files:
+  - fpl_overlay.fpl

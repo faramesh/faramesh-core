@@ -63,6 +63,13 @@ type Doc struct {
 
 	// ExecutionIsolation configures sandbox/microVM requirements per tool.
 	ExecutionIsolation *ExecutionIsolation `yaml:"execution_isolation"`
+
+	// FPLInline is raw FPL source merged into rules after YAML rules (see internal/core/fpl).
+	// Cleared after successful load.
+	FPLInline string `yaml:"fpl_inline,omitempty"`
+	// FPLFiles lists paths to .fpl files relative to the policy YAML file, merged after YAML rules.
+	// Requires LoadFile (not LoadBytes alone). Cleared after successful load.
+	FPLFiles []string `yaml:"fpl_files,omitempty"`
 }
 
 // Tool declares metadata about a governed tool.

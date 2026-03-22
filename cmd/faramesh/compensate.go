@@ -3,10 +3,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
 	"github.com/faramesh/faramesh-core/internal/core/compensation"
@@ -14,158 +16,157 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 )
 
-var compensateCmd = &cobra.Command{
-	Use:   "compensate [dpr-record-id]",
-	Short: "Trigger compensation for a reversible tool call",
-	Long: `Trigger the compensation/rollback action for a tool call that was marked
-as reversible or compensatable in the DPR. Uses the saga engine to
-execute the reverse action.
+var (
+	compensateDB       string
+	compensateDataDir  string
+	compensatePolicy   string
+	compensateArgsJSON string
+	compensateFormat   string
+)
 
-Example:
-  faramesh compensate dpr-abc123    # Compensate a specific tool call
-  faramesh compensate --session s1  # Compensate all reversible calls in session`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: runCompensate,
+type compensateOperation struct {
+	ToolID string         `json:"tool_id"`
+	Args   map[string]any `json:"args,omitempty"`
 }
 
-var compensateSessionID string
-var compensateDB string
-var compensateDataDir string
-var compensatePolicy string
-var compensateArgsJSON string
-var compensateJSON bool
+type compensateOutput struct {
+	RecordID  string               `json:"record_id"`
+	Status    string               `json:"status"`
+	Reason    string               `json:"reason"`
+	Operation *compensateOperation `json:"operation,omitempty"`
+}
+
+var compensateCmd = &cobra.Command{
+	Use:   "compensate <record-id>",
+	Short: "Build compensation operation for a DPR record",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runCompensateCommand,
+}
 
 func init() {
-	compensateCmd.Flags().StringVar(&compensateSessionID, "session", "", "Compensate all reversible calls in a session")
 	compensateCmd.Flags().StringVar(&compensateDB, "db", "", "path to DPR SQLite database (default: <data-dir>/faramesh.db)")
 	compensateCmd.Flags().StringVar(&compensateDataDir, "data-dir", "", "directory containing faramesh.db (default: $TMPDIR/faramesh)")
 	compensateCmd.Flags().StringVar(&compensatePolicy, "policy", "policy.yaml", "path to policy YAML containing compensation mappings")
-	compensateCmd.Flags().StringVar(&compensateArgsJSON, "args", "", "JSON object for original args override (required for mapped compensation args)")
-	compensateCmd.Flags().BoolVar(&compensateJSON, "json", false, "output compensation result as JSON")
-	rootCmd.AddCommand(compensateCmd)
+	compensateCmd.Flags().StringVar(&compensateArgsJSON, "args", "", "JSON object with original tool args for compensation arg mapping")
+	compensateCmd.Flags().StringVar(&compensateFormat, "format", "json", "output format: json|text")
 }
 
-func runCompensate(_ *cobra.Command, args []string) error {
-	if len(args) == 0 && compensateSessionID == "" {
-		return fmt.Errorf("specify a DPR record ID or --session")
+func runCompensateCommand(_ *cobra.Command, args []string) error {
+	recordID := strings.TrimSpace(args[0])
+	if recordID == "" {
+		return fmt.Errorf("record id is required")
 	}
-	if len(args) > 0 && compensateSessionID != "" {
-		return fmt.Errorf("use either a DPR record ID or --session, not both")
-	}
+	return runCompensate(recordID, compensatePolicy, resolveCompensateDBPath(), compensateArgsJSON, strings.ToLower(strings.TrimSpace(compensateFormat)), os.Stdout)
+}
 
-	doc, _, err := policy.LoadFile(compensatePolicy)
+func runCompensate(recordID, policyPath, dbPath, argsJSON, format string, out io.Writer) error {
+	doc, _, err := policy.LoadFile(policyPath)
 	if err != nil {
 		return fmt.Errorf("load policy: %w", err)
 	}
 	engine := compensation.NewEngine(doc)
 
-	dbPath := compensateDB
-	if dbPath == "" {
-		dataDir := compensateDataDir
-		if dataDir == "" {
-			dataDir = filepath.Join(os.TempDir(), "faramesh")
-		}
-		dbPath = filepath.Join(dataDir, "faramesh.db")
-	}
 	store, err := dpr.OpenStore(dbPath)
 	if err != nil {
 		return fmt.Errorf("open DPR store: %w", err)
 	}
 	defer store.Close()
 
-	var overrideArgs map[string]any
-	if compensateArgsJSON != "" {
-		if err := json.Unmarshal([]byte(compensateArgsJSON), &overrideArgs); err != nil {
+	rec, err := store.ByID(recordID)
+	if err != nil {
+		return fmt.Errorf("lookup DPR record %s: %w", recordID, err)
+	}
+
+	originalArgs := map[string]any{}
+	if strings.TrimSpace(argsJSON) != "" {
+		if err := json.Unmarshal([]byte(argsJSON), &originalArgs); err != nil {
 			return fmt.Errorf("parse --args JSON: %w", err)
 		}
 	}
 
-	if compensateSessionID != "" {
-		recs, err := store.Recent(5000)
-		if err != nil {
-			return fmt.Errorf("query DPR records: %w", err)
-		}
-		results := make([]*compensation.CompensationResult, 0)
-		for _, rec := range recs {
-			if rec.SessionID != compensateSessionID {
-				continue
-			}
-			if rec.Effect != "PERMIT" && rec.Effect != "SHADOW" {
-				continue
-			}
-			if !engine.CanCompensate(rec.ToolID) {
-				continue
-			}
-			res, err := buildCompensationForRecord(engine, rec, overrideArgs)
-			if err != nil {
-				return err
-			}
-			results = append(results, res)
-		}
-		if len(results) == 0 {
-			fmt.Printf("No compensatable DPR records found for session %s\n", compensateSessionID)
-			return nil
-		}
+	result := buildCompensateOutput(engine, rec, originalArgs)
 
-		if compensateJSON {
-			out, _ := json.MarshalIndent(results, "", "  ")
-			fmt.Println(string(out))
-			return nil
-		}
-		fmt.Printf("Compensation plan for session %s:\n", compensateSessionID)
-		for _, res := range results {
-			fmt.Printf("- tool=%s args=%v status=%s\n", res.CompensationToolID, res.CompensationArgs, res.Status)
-		}
-		color.Yellow("Note: this command builds compensation actions; it does not execute tool calls yet.")
-		return nil
+	if format == "" || format == "json" {
+		enc := json.NewEncoder(out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result)
 	}
-
-	dprID := args[0]
-	rec, err := store.ByID(dprID)
-	if err != nil {
-		return fmt.Errorf("lookup DPR record %s: %w", dprID, err)
+	if format != "text" {
+		return fmt.Errorf("unsupported format %q (use json|text)", format)
 	}
-
-	res, err := buildCompensationForRecord(engine, rec, overrideArgs)
-	if err != nil {
-		return err
-	}
-
-	if compensateJSON {
-		out, _ := json.MarshalIndent(res, "", "  ")
-		fmt.Println(string(out))
-		return nil
-	}
-
-	fmt.Printf("Compensation plan for %s\n", dprID)
-	fmt.Printf("  original_tool:      %s\n", rec.ToolID)
-	fmt.Printf("  compensation_tool:  %s\n", res.CompensationToolID)
-	fmt.Printf("  compensation_args:  %v\n", res.CompensationArgs)
-	fmt.Printf("  status:             %s\n", res.Status)
-	color.Yellow("Note: this command builds compensation actions; it does not execute tool calls yet.")
+	writeCompensateText(out, result)
 	return nil
 }
 
-func buildCompensationForRecord(engine *compensation.Engine, rec *dpr.Record, overrideArgs map[string]any) (*compensation.CompensationResult, error) {
-	if rec.Effect != "PERMIT" && rec.Effect != "SHADOW" {
-		return nil, fmt.Errorf("record %s is %s; only PERMIT/SHADOW actions can be compensated", rec.RecordID, rec.Effect)
+func buildCompensateOutput(engine *compensation.Engine, rec *dpr.Record, originalArgs map[string]any) compensateOutput {
+	result := compensateOutput{
+		RecordID: rec.RecordID,
 	}
+	classification := engine.Classify(rec.ToolID)
+	switch classification {
+	case compensation.Compensatable:
+		compRes, err := engine.BuildCompensation(compensation.CompensationRequest{
+			OriginalRecordID: rec.RecordID,
+			OriginalToolID:   rec.ToolID,
+			OriginalArgs:     originalArgs,
+			Reason:           "manual compensation request",
+			RequestedBy:      "faramesh compensate",
+		})
+		if err != nil {
+			result.Status = "unsupported"
+			result.Reason = err.Error()
+			return result
+		}
+		switch compRes.Status {
+		case compensation.StatusExecuted:
+			result.Status = "proposed"
+			result.Reason = "compensation operation generated"
+			result.Operation = &compensateOperation{
+				ToolID: compRes.CompensationToolID,
+				Args:   compRes.CompensationArgs,
+			}
+		case compensation.StatusNotSupported:
+			result.Status = "unsupported"
+			result.Reason = compRes.Error
+		default:
+			result.Status = "no_compensation"
+			result.Reason = compRes.Error
+		}
+	case compensation.Reversible:
+		result.Status = "no_compensation"
+		result.Reason = "tool is reversible; no compensating tool call required"
+	default:
+		result.Status = "unsupported"
+		result.Reason = "tool is not compensatable"
+	}
+	return result
+}
 
-	originalArgs := overrideArgs
-	if len(originalArgs) == 0 {
-		// DPR currently stores structural signatures, not full original args.
-		return nil, fmt.Errorf("record %s has no persisted original args; pass --args with JSON object to build mapped compensation args", rec.RecordID)
+func resolveCompensateDBPath() string {
+	if strings.TrimSpace(compensateDB) != "" {
+		return strings.TrimSpace(compensateDB)
 	}
+	dataDir := strings.TrimSpace(compensateDataDir)
+	if dataDir == "" {
+		dataDir = filepath.Join(os.TempDir(), "faramesh")
+	}
+	return filepath.Join(dataDir, "faramesh.db")
+}
 
-	res, err := engine.BuildCompensation(compensation.CompensationRequest{
-		OriginalRecordID: rec.RecordID,
-		OriginalToolID:   rec.ToolID,
-		OriginalArgs:     originalArgs,
-		Reason:           "manual compensation request",
-		RequestedBy:      "faramesh compensate",
-	})
-	if err != nil {
-		return nil, fmt.Errorf("build compensation: %w", err)
+func writeCompensateText(out io.Writer, result compensateOutput) {
+	fmt.Fprintf(out, "record_id: %s\n", result.RecordID)
+	fmt.Fprintf(out, "status: %s\n", result.Status)
+	fmt.Fprintf(out, "reason: %s\n", result.Reason)
+	if result.Operation == nil {
+		return
 	}
-	return res, nil
+	fmt.Fprintf(out, "tool_id: %s\n", result.Operation.ToolID)
+	keys := make([]string, 0, len(result.Operation.Args))
+	for k := range result.Operation.Args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(out, "arg.%s: %v\n", k, result.Operation.Args[k])
+	}
 }

@@ -1,141 +1,136 @@
-// Package observe — argument provenance tracking.
-//
-// Wraps tool arguments with provenance metadata: where each argument
-// originated (user input, prior tool output, session state, etc.).
-// Enables provenance-based policy conditions in FPL.
 package observe
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
 	"sync"
 )
 
-// ProvenanceSource identifies where an argument value originated.
-type ProvenanceSource string
-
-const (
-	ProvenanceUserInput    ProvenanceSource = "user_input"
-	ProvenanceToolOutput   ProvenanceSource = "tool_output"
-	ProvenanceSessionState ProvenanceSource = "session_state"
-	ProvenanceHardcoded    ProvenanceSource = "hardcoded"
-	ProvenanceDerived      ProvenanceSource = "derived"
-	ProvenanceUnknown      ProvenanceSource = "unknown"
-)
-
-// ProvenanceEntry tracks one argument's origin.
-type ProvenanceEntry struct {
-	ArgPath     string           `json:"arg_path"`     // e.g. "recipient" or "body.text"
-	Source      ProvenanceSource `json:"source"`
-	SourceDPRID string           `json:"source_dpr_id,omitempty"` // DPR record that produced this value
-	SourceTool  string           `json:"source_tool,omitempty"`   // tool that produced this value
-	Hash        string           `json:"hash"`                    // SHA-256 of the value
+// ArgProvenanceTracker infers argument origins from observed tool outputs.
+type ArgProvenanceTracker interface {
+	InferArgProvenance(agentID, sessionID string, args map[string]any) (map[string]string, error)
+	RecordToolOutput(agentID, sessionID, toolID, recordID string, output any) error
 }
 
-// ProvenanceEnvelope wraps tool arguments with provenance metadata.
-type ProvenanceEnvelope struct {
-	ToolID   string            `json:"tool_id"`
-	Entries  []ProvenanceEntry `json:"entries"`
-	Complete bool              `json:"complete"` // true if all args have provenance
+type provenanceTracker struct {
+	mu      sync.RWMutex
+	byScope map[string][]outputSample
+	global  []outputSample
 }
 
-// ProvenanceTracker infers and records argument provenance.
-type ProvenanceTracker struct {
-	mu          sync.Mutex
-	toolOutputs map[string]map[string]string // dprID → argPath → valueHash
+type outputSample struct {
+	recordID string
+	text     string
 }
 
-// NewProvenanceTracker creates a provenance tracker.
-func NewProvenanceTracker() *ProvenanceTracker {
-	return &ProvenanceTracker{
-		toolOutputs: make(map[string]map[string]string),
+// NewArgProvenanceTracker creates an in-memory provenance tracker.
+func NewArgProvenanceTracker() ArgProvenanceTracker {
+	return &provenanceTracker{
+		byScope: make(map[string][]outputSample),
 	}
 }
 
-// RecordToolOutput records the output of a tool for later provenance matching.
-func (pt *ProvenanceTracker) RecordToolOutput(dprID, toolID string, outputs map[string]any) {
-	pt.mu.Lock()
-	defer pt.mu.Unlock()
-
-	hashes := make(map[string]string)
-	for k, v := range outputs {
-		hashes[k] = hashValue(v)
+func (p *provenanceTracker) InferArgProvenance(agentID, sessionID string, args map[string]any) (map[string]string, error) {
+	flat := make(map[string]string)
+	flattenArgs("", args, flat)
+	if len(flat) == 0 {
+		return nil, nil
 	}
-	pt.toolOutputs[dprID] = hashes
-}
-
-// InferProvenance analyzes tool arguments and attempts to match them
-// to known sources (prior tool outputs, session state).
-func (pt *ProvenanceTracker) InferProvenance(toolID string, args map[string]any, sessionState map[string]any) ProvenanceEnvelope {
-	pt.mu.Lock()
-	defer pt.mu.Unlock()
-
-	env := ProvenanceEnvelope{
-		ToolID:   toolID,
-		Complete: true,
-	}
-
-	for argPath, argValue := range args {
-		argHash := hashValue(argValue)
-		entry := ProvenanceEntry{
-			ArgPath: argPath,
-			Hash:    argHash,
+	p.mu.RLock()
+	candidates := append([]outputSample{}, p.global...)
+	candidates = append(candidates, p.byScope[scopeKey(agentID, sessionID)]...)
+	p.mu.RUnlock()
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return len(candidates[i].text) > len(candidates[j].text)
+	})
+	out := make(map[string]string, len(flat))
+	for path, value := range flat {
+		out[path] = "unknown"
+		if value == "" {
+			continue
 		}
-
-		// Try to match against prior tool outputs.
-		matched := false
-		for dprID, outputs := range pt.toolOutputs {
-			for _, outputHash := range outputs {
-				if outputHash == argHash {
-					entry.Source = ProvenanceToolOutput
-					entry.SourceDPRID = dprID
-					matched = true
-					break
-				}
+		for _, c := range candidates {
+			if c.recordID == "" || len(c.text) < 8 {
+				continue
 			}
-			if matched {
+			if strings.Contains(value, c.text) {
+				out[path] = c.recordID
 				break
 			}
 		}
+	}
+	return out, nil
+}
 
-		// Try session state.
-		if !matched {
-			for _, sv := range sessionState {
-				if hashValue(sv) == argHash {
-					entry.Source = ProvenanceSessionState
-					matched = true
-					break
-				}
+func (p *provenanceTracker) RecordToolOutput(agentID, sessionID, _ string, recordID string, output any) error {
+	text := normalizeOutput(output)
+	if text == "" {
+		return nil
+	}
+	s := outputSample{recordID: strings.TrimSpace(recordID), text: text}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.global = appendBounded(p.global, s, 128)
+	if agentID != "" || sessionID != "" {
+		key := scopeKey(agentID, sessionID)
+		p.byScope[key] = appendBounded(p.byScope[key], s, 64)
+	}
+	return nil
+}
+
+func appendBounded(in []outputSample, s outputSample, max int) []outputSample {
+	in = append(in, s)
+	if len(in) <= max {
+		return in
+	}
+	return in[len(in)-max:]
+}
+
+func scopeKey(agentID, sessionID string) string {
+	return agentID + "::" + sessionID
+}
+
+func normalizeOutput(v any) string {
+	switch t := v.(type) {
+	case string:
+		return normalizeText(t)
+	case []byte:
+		return normalizeText(string(t))
+	default:
+		return normalizeText(fmt.Sprintf("%v", v))
+	}
+}
+
+func normalizeText(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if len(s) > 512 {
+		s = s[:512]
+	}
+	return s
+}
+
+func flattenArgs(prefix string, v any, out map[string]string) {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, child := range t {
+			next := k
+			if prefix != "" {
+				next = prefix + "." + k
 			}
+			flattenArgs(next, child, out)
 		}
-
-		// Default to unknown.
-		if !matched {
-			entry.Source = ProvenanceUnknown
-			env.Complete = false
+	case []any:
+		for i, child := range t {
+			next := fmt.Sprintf("%s[%d]", prefix, i)
+			flattenArgs(next, child, out)
 		}
-
-		env.Entries = append(env.Entries, entry)
+	case string:
+		out[prefix] = normalizeText(t)
+	default:
+		out[prefix] = ""
 	}
-
-	return env
-}
-
-// ToMap converts a ProvenanceEnvelope to a map for DPR storage.
-func (env *ProvenanceEnvelope) ToMap() map[string]string {
-	m := make(map[string]string, len(env.Entries))
-	for _, e := range env.Entries {
-		m[e.ArgPath] = string(e.Source)
-		if e.SourceDPRID != "" {
-			m[e.ArgPath+"_source_dpr"] = e.SourceDPRID
-		}
-	}
-	return m
-}
-
-func hashValue(v any) string {
-	data, _ := json.Marshal(v)
-	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:])
 }

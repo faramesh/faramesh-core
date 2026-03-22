@@ -1,0 +1,20 @@
+[
+  {
+    "name": "permit-safe-http",
+    "tool_id": "http/get",
+    "args": {
+      "endpoint": "https://safe.example"
+    },
+    "expected_effect": "PERMIT",
+    "expected_reason_code": "RULE_PERMIT"
+  },
+  {
+    "name": "deny-shell-exec",
+    "tool_id": "shell/exec",
+    "args": {
+      "cmd": "echo hello"
+    },
+    "expected_effect": "DENY",
+    "expected_reason_code": "RULE_DENY"
+  }
+]

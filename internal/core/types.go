@@ -49,6 +49,21 @@ type CanonicalActionRequest struct {
 	// "sdk" for A1, "proxy" for A3, "mcp" for A5, "ebpf" for A6.
 	InterceptAdapter string `json:"intercept_adapter"`
 
+	// WorkflowStep is optional workflow-step context used for step-scoped
+	// tool visibility enforcement within the active phase.
+	WorkflowStep string `json:"workflow_step,omitempty"`
+
+	// ExecutionEnvironment is the runtime isolation environment in which the
+	// tool will execute (e.g. "none", "docker", "gvisor", "firecracker").
+	// When policy execution_isolation marks a tool as required, this field is
+	// enforced pre-execution.
+	ExecutionEnvironment string `json:"execution_environment,omitempty"`
+
+	// ExecutionTimeoutMS is the requested tool execution timeout in milliseconds.
+	// Adapters should map runtime-specific timeout contracts to this canonical
+	// field. The pipeline enforces sane bounds and optional policy requirements.
+	ExecutionTimeoutMS int `json:"execution_timeout_ms,omitempty"`
+
 	// Principal is the invoking human/system identity (optional).
 	// Policy rules can reference principal.tier, principal.role, etc.
 	Principal *principal.Identity `json:"principal,omitempty"`
@@ -56,6 +71,16 @@ type CanonicalActionRequest struct {
 	// Delegation is the delegation chain if this is a delegated call (optional).
 	// Policy rules can reference delegation.depth, delegation.origin_org, etc.
 	Delegation *principal.DelegationChain `json:"delegation,omitempty"`
+
+	// Invocation carries invocation-scoped context for delegated sub-agent calls.
+	// When present, runtime can intersect base policy with invocation sub-policy.
+	Invocation *InvocationContext `json:"invocation,omitempty"`
+}
+
+// InvocationContext identifies an invocation-scoped execution context.
+type InvocationContext struct {
+	// ID is the stable invocation identifier used to look up sub-policies.
+	ID string `json:"id"`
 }
 
 // Decision is the output of the evaluation pipeline.

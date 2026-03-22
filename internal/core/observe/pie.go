@@ -44,6 +44,15 @@ type PIEAnalyzer struct {
 	rules map[string]*RuleStats
 }
 
+// ObserveRule implements RuleObserver for pipeline decision hooks.
+func (p *PIEAnalyzer) ObserveRule(obs RuleObservation) error {
+	if obs.RuleID == "" {
+		return nil
+	}
+	p.RecordRuleDecision(obs.RuleID, obs.Effect)
+	return nil
+}
+
 // NewPIEAnalyzer creates a PIE analyzer.
 func NewPIEAnalyzer() *PIEAnalyzer {
 	return &PIEAnalyzer{
