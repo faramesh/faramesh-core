@@ -1,0 +1,4 @@
+# Faramesh Policy Language
+# .fpl files are FPL — a standalone DSL. Not HCL, not Rego, not YAML.
+# GitHub will display FPL once a Linguist PR is merged.
+*.fpl linguist-detectable=true

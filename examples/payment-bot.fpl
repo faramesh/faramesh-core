@@ -1,0 +1,71 @@
+# Faramesh Policy Language — payment agent governance
+# This policy governs a payment-processing AI agent.
+
+agent payment-bot {
+  default deny
+  model "gpt-4o"
+  framework "langgraph"
+
+  budget session {
+    max $500
+    daily $2000
+    max_calls 100
+    on_exceed deny
+  }
+
+  phase intake {
+    permit read_customer
+    permit get_order
+  }
+
+  phase execution {
+    permit stripe/refund
+    permit send_notification
+  }
+
+  rules {
+    deny! shell/* reason: "never shell"
+
+    defer stripe/refund when amount > 500
+      notify: "finance"
+      reason: "high value refund"
+
+    permit stripe/* when amount <= 500
+
+    deny read_customer
+      when not purpose("refund_processing")
+      reason: "purpose required"
+
+    deny stripe/refund
+      when session.sum(stripe/refund.amount, window=1h) > 2000
+      reason: "aggregate refund limit exceeded"
+  }
+
+  delegate fraud-check-bot {
+    scope "stripe/refund:amount<=500"
+    ttl 24h
+    ceiling inherited
+  }
+
+  ambient {
+    max_customers_per_day 1000
+    max_data_volume 10mb
+    on_exceed deny
+  }
+
+  selector account {
+    source "https://api.internal/account"
+    cache 30s
+    on_unavailable deny
+  }
+
+  credential stripe {
+    scope refund read_charge
+    max_scope "refund:amount<=1000"
+  }
+}
+
+system global {
+  version "1.0"
+  on_policy_load_failure deny_all
+}
