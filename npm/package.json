@@ -1,6 +1,6 @@
 {
-  "name": "faramesh",
-  "version": "0.1.0",
+  "name": "@faramesh/cli",
+  "version": "1.2.3",
   "description": "AI agent execution control. Policy-driven governance for every tool call.",
   "license": "MIT",
   "homepage": "https://faramesh.dev",
