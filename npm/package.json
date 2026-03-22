@@ -18,9 +18,7 @@
     "tool-calling",
     "faramesh"
   ],
-  "bin": {
-    "faramesh": "./bin/faramesh-wrapper.js"
-  },
+  "bin": "bin/faramesh-wrapper.js",
   "scripts": {
     "postinstall": "node ./scripts/install.js"
   },
