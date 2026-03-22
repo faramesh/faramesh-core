@@ -91,6 +91,9 @@ type CredentialBlock struct {
 	ID       string
 	Scope    []string
 	MaxScope string
+	Backend  string
+	Path     string
+	TTL      string
 }
 
 // ── Recursive Descent Parser ───────────────────────────────────────────────
@@ -439,7 +442,7 @@ func isTopLevelKeyword(s string) bool {
 
 func isCredentialKeyword(s string) bool {
 	switch s {
-	case "scope", "max_scope":
+	case "scope", "max_scope", "backend", "path", "ttl":
 		return true
 	}
 	return false
@@ -742,7 +745,7 @@ func (p *parser) parsePhaseBlock() (*PhaseBlock, error) {
 	for p.peek().kind != tkRBrace && p.peek().kind != tkEOF {
 		kw := p.peekIdent()
 		switch kw {
-		case "permit", "allow", "approve", "deny", "block", "reject", "defer":
+		case "permit", "allow", "approve", "deny", "deny!", "block", "reject", "defer":
 			rule, err := p.parseFlatRule()
 			if err != nil {
 				return nil, err
@@ -983,6 +986,30 @@ func (p *parser) parseCredentialBlock() (*CredentialBlock, error) {
 				return nil, err
 			}
 			cb.MaxScope = v
+
+		case "backend":
+			p.next()
+			v, err := p.stringOrIdent()
+			if err != nil {
+				return nil, err
+			}
+			cb.Backend = v
+
+		case "path":
+			p.next()
+			v, err := p.stringOrIdent()
+			if err != nil {
+				return nil, err
+			}
+			cb.Path = v
+
+		case "ttl":
+			p.next()
+			v, err := p.stringOrIdent()
+			if err != nil {
+				return nil, err
+			}
+			cb.TTL = v
 
 		default:
 			return nil, fmt.Errorf("line %d: unexpected keyword %q in credential block", p.peek().line, kw)

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/faramesh/faramesh-core/internal/core/fpl"
 	"gopkg.in/yaml.v3"
 )
 
@@ -48,15 +49,131 @@ func loadPolicyDocument(data []byte, policyDir string) (*Doc, string, string, er
 	return doc, full[:16], full, nil
 }
 
-// LoadFile reads and parses a policy YAML file.
+// LoadFile reads and parses a policy file (YAML or FPL).
 // Returns the parsed Doc and its SHA256 version hash.
 func LoadFile(path string) (*Doc, string, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, "", fmt.Errorf("read policy file %q: %w", path, err)
 	}
+	if strings.HasSuffix(path, ".fpl") {
+		return loadFPLDocument(data)
+	}
 	doc, ver, _, err := loadPolicyDocument(data, filepath.Dir(path))
 	return doc, ver, err
+}
+
+// loadFPLDocument parses a standalone .fpl file into a Doc.
+func loadFPLDocument(data []byte) (*Doc, string, error) {
+	fplDoc, err := fpl.ParseDocument(string(data))
+	if err != nil {
+		return nil, "", fmt.Errorf("parse FPL: %w", err)
+	}
+	doc := fplDocToPolicy(fplDoc)
+
+	h := sha256.Sum256(data)
+	full := fmt.Sprintf("%x", h)
+	return doc, full[:16], nil
+}
+
+// fplDocToPolicy converts a parsed fpl.Document into a policy.Doc.
+func fplDocToPolicy(fplDoc *fpl.Document) *Doc {
+	doc := &Doc{
+		FarameshVersion: "1.0",
+		DefaultEffect:   "deny",
+	}
+
+	if len(fplDoc.Agents) > 0 {
+		ag := fplDoc.Agents[0]
+		doc.AgentID = ag.ID
+		if ag.Default != "" {
+			doc.DefaultEffect = ag.Default
+		}
+
+		if len(ag.Vars) > 0 {
+			doc.Vars = make(map[string]any, len(ag.Vars))
+			for k, v := range ag.Vars {
+				doc.Vars[k] = v
+			}
+		}
+
+		if len(ag.Budgets) > 0 {
+			b := ag.Budgets[0]
+			doc.Budget = &Budget{
+				DailyUSD:   b.Daily,
+				SessionUSD: b.Max,
+				MaxCalls:   b.MaxCalls,
+				OnExceed:   b.OnExceed,
+			}
+		}
+
+		if len(ag.Phases) > 0 {
+			doc.Phases = make(map[string]Phase, len(ag.Phases))
+			for _, ph := range ag.Phases {
+				doc.Phases[ph.ID] = Phase{
+					Tools:    ph.Tools,
+					Duration: ph.Duration,
+					Next:     ph.Next,
+				}
+			}
+		}
+
+		for i, r := range ag.Rules {
+			doc.Rules = append(doc.Rules, fplRuleToRule(r, i))
+		}
+		for _, ph := range ag.Phases {
+			for i, r := range ph.Rules {
+				doc.Rules = append(doc.Rules, fplRuleToRule(r, len(doc.Rules)+i))
+			}
+		}
+	}
+
+	for i, r := range fplDoc.FlatRules {
+		doc.Rules = append(doc.Rules, fplRuleToRule(r, len(doc.Rules)+i))
+	}
+
+	if len(fplDoc.Topo) > 0 {
+		_ = mergeOrchestratorManifestFromFPL(doc, fplDoc.Topo)
+	}
+
+	return doc
+}
+
+func fplRuleToRule(r *fpl.Rule, seq int) Rule {
+	effect := r.Effect
+	strict := false
+	if effect == "deny!" {
+		effect = "deny"
+		strict = true
+	}
+	switch effect {
+	case "allow", "approve":
+		effect = "permit"
+	case "block", "reject":
+		effect = "deny"
+	}
+
+	when := strings.TrimSpace(r.Condition)
+	if when == "" {
+		when = "true"
+	}
+
+	reason := strings.TrimSpace(r.Reason)
+	reasonCode := ""
+	if strict {
+		reasonCode = "FPL_STRICT_DENY"
+		if reason == "" {
+			reason = "strict deny"
+		}
+	}
+
+	return Rule{
+		ID:         fmt.Sprintf("fpl-%d", seq),
+		Match:      Match{Tool: r.Tool, When: when},
+		Effect:     effect,
+		Reason:     reason,
+		ReasonCode: reasonCode,
+	}
 }
 
 // LoadBytes parses policy YAML from raw bytes.
