@@ -1,0 +1,35 @@
+{
+  "name": "faramesh",
+  "version": "0.1.0",
+  "description": "AI agent execution control. Policy-driven governance for every tool call.",
+  "license": "MIT",
+  "homepage": "https://faramesh.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/faramesh/faramesh-core.git"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "governance",
+    "policy",
+    "security",
+    "llm",
+    "tool-calling",
+    "faramesh"
+  ],
+  "bin": {
+    "faramesh": "./bin/faramesh-wrapper.js"
+  },
+  "scripts": {
+    "postinstall": "node ./scripts/install.js"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  }
+}
