@@ -44,6 +44,16 @@ faramesh audit tail --agent my-agent
 faramesh audit verify /var/lib/faramesh/faramesh.db
 ```
 
+## Export metrics to Datadog, Grafana, and New Relic
+
+Faramesh exposes Prometheus-compatible metrics at `/metrics` when `--metrics-port` is enabled.
+
+- Grafana: scrape `http://<host>:<metrics-port>/metrics` with Prometheus or Grafana Alloy.
+- Datadog: configure OpenMetrics scraping for `http://<host>:<metrics-port>/metrics`.
+- New Relic: use Prometheus/OpenMetrics integration to scrape `http://<host>:<metrics-port>/metrics`.
+
+This keeps one telemetry endpoint while supporting multiple backends.
+
 ## Reload policy without restart
 
 ```bash

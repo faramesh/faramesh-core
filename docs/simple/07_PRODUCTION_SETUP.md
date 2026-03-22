@@ -37,6 +37,34 @@ curl -sS http://127.0.0.1:9108/metrics | head
 faramesh audit verify /var/lib/faramesh/faramesh.db
 ```
 
+## Identity hardening (SPIFFE/SPIRE)
+
+If you run SPIRE, configure Faramesh to consume workload identity from the SPIFFE Workload API socket:
+
+```bash
+faramesh serve \
+  --policy /etc/faramesh/policy.yaml \
+  --data-dir /var/lib/faramesh \
+  --spiffe-socket unix:///run/spire/sockets/agent.sock
+```
+
+Then validate identity and trust material:
+
+```bash
+faramesh identity verify --spiffe spiffe://example.org/agent/faramesh
+faramesh identity trust --domain example.org --bundle /etc/spiffe/bundle.pem
+```
+
+SPIRE/SPIFFE components handle CA issuance and SVID lifecycle. Faramesh consumes that identity to enforce policy and broker credentials.
+
+## Observability backends
+
+Use the same `/metrics` endpoint for multiple systems:
+
+- Grafana: scrape with Prometheus/Alloy.
+- Datadog: OpenMetrics scrape from `http://127.0.0.1:9108/metrics`.
+- New Relic: Prometheus/OpenMetrics ingestion from `http://127.0.0.1:9108/metrics`.
+
 ## Horizon auth (optional)
 
 ```bash
