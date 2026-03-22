@@ -37,18 +37,115 @@ type compensateOutput struct {
 }
 
 var compensateCmd = &cobra.Command{
-	Use:   "compensate <record-id>",
+	Use:   "compensate",
+	Short: "Compensation operations: build, list, inspect, apply, status, retry",
+}
+
+var compensateBuildCmd = &cobra.Command{
+	Use:   "build <record-id>",
 	Short: "Build compensation operation for a DPR record",
 	Args:  cobra.ExactArgs(1),
 	RunE:  runCompensateCommand,
 }
 
+var compensateListAgent string
+
+var compensateListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List compensation records (optionally filtered by agent)",
+	Args:  cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		q := map[string]string{}
+		if compensateListAgent != "" {
+			q["agent"] = compensateListAgent
+		}
+		raw, err := daemonGetWithQuery("/api/v1/compensate/list", q)
+		if err != nil {
+			return err
+		}
+		printResponse("Compensations", raw)
+		return nil
+	},
+}
+
+var compensateInspectCmd = &cobra.Command{
+	Use:   "inspect <compensation-id>",
+	Short: "Show details for a compensation record",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		raw, err := daemonGetWithQuery("/api/v1/compensate/inspect", map[string]string{"id": args[0]})
+		if err != nil {
+			return err
+		}
+		printResponse("Compensation Detail", raw)
+		return nil
+	},
+}
+
+var compensateApplyCmd = &cobra.Command{
+	Use:   "apply <compensation-id>",
+	Short: "Execute a previously-built compensation",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		raw, err := daemonPost("/api/v1/compensate/apply", map[string]string{"id": args[0]})
+		if err != nil {
+			return err
+		}
+		printResponse("Compensation Apply", raw)
+		return nil
+	},
+}
+
+var compensateStatusCmd = &cobra.Command{
+	Use:   "status <compensation-id>",
+	Short: "Check execution status of a compensation",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		raw, err := daemonGetWithQuery("/api/v1/compensate/status", map[string]string{"id": args[0]})
+		if err != nil {
+			return err
+		}
+		printResponse("Compensation Status", raw)
+		return nil
+	},
+}
+
+var compensateRetryFromStep string
+
+var compensateRetryCmd = &cobra.Command{
+	Use:   "retry <compensation-id>",
+	Short: "Retry a failed compensation (optionally from a specific step)",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		body := map[string]string{"id": args[0]}
+		if compensateRetryFromStep != "" {
+			body["from_step"] = compensateRetryFromStep
+		}
+		raw, err := daemonPost("/api/v1/compensate/retry", body)
+		if err != nil {
+			return err
+		}
+		printResponse("Compensation Retry", raw)
+		return nil
+	},
+}
+
 func init() {
-	compensateCmd.Flags().StringVar(&compensateDB, "db", "", "path to DPR SQLite database (default: <data-dir>/faramesh.db)")
-	compensateCmd.Flags().StringVar(&compensateDataDir, "data-dir", "", "directory containing faramesh.db (default: $TMPDIR/faramesh)")
-	compensateCmd.Flags().StringVar(&compensatePolicy, "policy", "policy.yaml", "path to policy YAML containing compensation mappings")
-	compensateCmd.Flags().StringVar(&compensateArgsJSON, "args", "", "JSON object with original tool args for compensation arg mapping")
-	compensateCmd.Flags().StringVar(&compensateFormat, "format", "json", "output format: json|text")
+	compensateBuildCmd.Flags().StringVar(&compensateDB, "db", "", "path to DPR SQLite database (default: <data-dir>/faramesh.db)")
+	compensateBuildCmd.Flags().StringVar(&compensateDataDir, "data-dir", "", "directory containing faramesh.db (default: $TMPDIR/faramesh)")
+	compensateBuildCmd.Flags().StringVar(&compensatePolicy, "policy", "policy.yaml", "path to policy YAML containing compensation mappings")
+	compensateBuildCmd.Flags().StringVar(&compensateArgsJSON, "args", "", "JSON object with original tool args for compensation arg mapping")
+	compensateBuildCmd.Flags().StringVar(&compensateFormat, "format", "json", "output format: json|text")
+
+	compensateListCmd.Flags().StringVar(&compensateListAgent, "agent", "", "filter by agent ID")
+	compensateRetryCmd.Flags().StringVar(&compensateRetryFromStep, "from-step", "", "resume from a specific step")
+
+	compensateCmd.AddCommand(compensateBuildCmd)
+	compensateCmd.AddCommand(compensateListCmd)
+	compensateCmd.AddCommand(compensateInspectCmd)
+	compensateCmd.AddCommand(compensateApplyCmd)
+	compensateCmd.AddCommand(compensateStatusCmd)
+	compensateCmd.AddCommand(compensateRetryCmd)
 }
 
 func runCompensateCommand(_ *cobra.Command, args []string) error {
