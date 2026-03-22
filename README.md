@@ -42,7 +42,7 @@ go install github.com/faramesh/faramesh-core/cmd/faramesh@latest
 
 ```bash
 # Govern your agent — one command
-faramesh run python agent.py
+faramesh run -- python agent.py
 ```
 
 ```
@@ -226,7 +226,7 @@ See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for all 13
 
 | Command | What it does |
 |---------|-------------|
-| `faramesh run <cmd>` | Govern an agent with the full enforcement stack |
+| `faramesh run -- <cmd>` | Govern an agent with the full enforcement stack |
 | `faramesh policy validate <path>` | Validate an FPL or YAML policy |
 | `faramesh policy compile <text>` | Compile natural language to FPL |
 | `faramesh audit tail` | Stream live decisions |
