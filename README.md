@@ -32,7 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install
 brew install faramesh/tap/faramesh
 
 # npm package
-# coming soon: npx faramesh@latest init
+npx @faramesh/cli@latest init
 
 # Go toolchain
 go install github.com/faramesh/faramesh-core/cmd/faramesh@latest

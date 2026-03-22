@@ -5,13 +5,13 @@ AI agent execution control. Policy-driven governance for every tool call.
 ## Install
 
 ```bash
-npx faramesh@latest init
+npx @faramesh/cli@latest init
 ```
 
 Or install globally:
 
 ```bash
-npm install -g faramesh
+npm install -g @faramesh/cli
 ```
 
 ## What it does

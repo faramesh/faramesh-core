@@ -369,7 +369,21 @@ jobs:
           cd npm
           npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
 
+      - name: Check if npm version already exists
+        id: npm_exists
+        run: |
+          PKG=$(node -p "require('./npm/package.json').name")
+          VER="${{ steps.version.outputs.version }}"
+          if npm view "${PKG}@${VER}" version >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "${PKG}@${VER} already published; skipping npm publish"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "${PKG}@${VER} not found; publishing"
+          fi
+
       - name: Publish to npm
+        if: steps.npm_exists.outputs.exists == 'false'
         run: |
           cd npm
           npm publish --access public
