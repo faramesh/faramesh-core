@@ -1,10 +1,8 @@
 # Security Policy
 
-We take security seriously and appreciate responsible disclosure of vulnerabilities.
+We take security seriously. Faramesh is a security-critical system — it governs what AI agents can do. Responsible disclosure helps us keep everyone safe.
 
 ## Supported Versions
-
-We provide security updates for the following versions:
 
 | Version | Supported          |
 | ------- | ------------------ |
@@ -16,112 +14,80 @@ We provide security updates for the following versions:
 
 ## Reporting a Vulnerability
 
-**Please do NOT open a public GitHub issue for security vulnerabilities.**
+**Do NOT open a public GitHub issue for security vulnerabilities.**
 
 ### Option 1: GitHub Security Advisory (Preferred)
 
-1. Go to: https://github.com/faramesh/faramesh-core/security/advisories/new
+1. Go to https://github.com/faramesh/faramesh-core/security/advisories/new
 2. Click "Report a vulnerability"
-3. Fill out the security advisory form
+3. Fill out the form
 4. Submit privately
 
 ### Option 2: Email
 
-Email: **security@faramesh.dev** 
-
-**Note:** If the email address is not available, use GitHub Security Advisory.
+Email: **security@faramesh.dev**
 
 ---
 
 ## What to Include
 
-When reporting a vulnerability, please include:
-
-1. **Description**: Clear description of the issue
-2. **Affected Components**: Which parts of Faramesh are affected
-3. **Steps to Reproduce**: Detailed steps or proof-of-concept
-4. **Impact Assessment**: Potential impact and severity
-5. **Suggested Fix**: If you have ideas for a fix (optional)
+1. **Description** — Clear description of the vulnerability.
+2. **Affected components** — Which part of Faramesh is affected (policy engine, sandbox, credential broker, daemon, etc.).
+3. **Steps to reproduce** — Detailed steps or proof-of-concept.
+4. **Impact assessment** — What an attacker could do.
+5. **Suggested fix** — If you have ideas (optional).
 
 ---
 
 ## Response Timeline
 
 - **Acknowledgment**: Within 3 business days
-- **Initial Assessment**: Within 7 business days
-- **Update**: We'll keep you informed of remediation progress
-- **Resolution**: We'll work to resolve critical issues as quickly as possible
+- **Initial assessment**: Within 7 business days
+- **Updates**: We'll keep you informed of remediation progress
+- **Resolution**: Critical issues are prioritized for immediate patching
 
 ---
 
-## Security Best Practices
+## Security Architecture
 
-### For Users
+Faramesh enforces governance through a nine-layer enforcement stack. Security is not optional — it is the product.
 
-1. **Keep Updated**: Always use the latest version
-2. **Use Authentication**: Set `FARAMESH_TOKEN` in production
-3. **Secure Policies**: Protect policy files with proper permissions
-4. **Database Security**: Use strong passwords and secure connections for PostgreSQL
-5. **Network Security**: Use HTTPS in production, restrict network access
-6. **Regular Audits**: Review policies and approval decisions regularly
+### Enforcement layers (Linux)
 
-### For Developers
+1. **Framework auto-patch** — hooks into agent tool dispatch
+2. **seccomp-BPF** — restricts system calls at the kernel level
+3. **eBPF inspection** — inspects syscall arguments before execution
+4. **Landlock LSM** — restricts filesystem access
+5. **Network namespace** — isolates agent network access
+6. **Credential broker** — strips ambient API keys, issues scoped secrets
+7. **eBPF baselining** — detects behavioral anomalies
+8. **MicroVM isolation** — optional Firecracker/Kata hardware boundary
+9. **Policy engine** — deterministic rule evaluation, no AI in the loop
 
-1. **Input Validation**: Always validate and sanitize inputs
-2. **No Hardcoded Secrets**: Never commit tokens or passwords
-3. **Dependency Updates**: Keep dependencies updated
-4. **Security Reviews**: Review code for security issues
-5. **Follow Guidelines**: Follow security guardrails in [SECURITY-GUARDRAILS.md](https://github.com/faramesh/faramesh-docs/blob/main/SECURITY-GUARDRAILS.md)
+### Security properties
 
----
+- **Fail-closed**: If Faramesh itself errors, the action is denied.
+- **No ambient credentials**: API keys are stripped from the agent environment.
+- **Tamper-evident audit**: Every decision is hash-chained (SHA-256). Altering a record breaks the chain.
+- **Mandatory deny (`deny!`)**: FPL's `deny!` is a compile-time constraint. No child policy, no priority rule, nothing can override it.
 
-## Known Security Considerations
+### Best practices for operators
 
-### Current Limitations
-
-1. **No Rate Limiting**: Faramesh doesn't implement rate limiting. Use a reverse proxy (nginx) or API gateway for rate limiting in production.
-
-2. **Policy File Security**: Policy files are not encrypted. Protect with file system permissions.
-
-3. **Input Encryption**: Inputs are not encrypted at rest. Use database encryption for sensitive data.
-
-4. **Shell Command Execution**: If executors use `shell=True`, command sanitization is best-effort. Real security comes from approval workflows.
-
-5. **Single Policy File**: Currently uses a single policy file. Multi-file policies may be added in the future.
-
-### Security Features
-
-1. **Deny-by-Default**: Actions are denied unless explicitly allowed
-2. **Input Validation**: All inputs are validated and sanitized
-3. **Command Sanitization**: Shell commands are sanitized
-4. **No Side Effects Until Approval**: Policy evaluation has no side effects
-5. **Optimistic Locking**: Prevents race conditions
-6. **Authentication**: Bearer token authentication supported
+1. **Keep updated** — always use the latest version.
+2. **Use FPL `deny!`** — for rules that must never be overridden.
+3. **Enable the credential broker** — never let agents hold raw API keys.
+4. **Review audit logs** — run `faramesh audit verify` regularly.
+5. **Use the full sandbox on Linux** — `faramesh run --enforce full`.
 
 ---
 
 ## Security Updates
 
-Security updates will be:
-- Released as patch versions (e.g., 0.2.0 → 0.2.1)
-- Documented in [CHANGELOG.md](CHANGELOG.md)
-- Announced via GitHub Security Advisories
-
----
-
-## Responsible Disclosure
-
-We follow responsible disclosure practices:
-
-1. **Private Reporting**: Report vulnerabilities privately
-2. **No Public Disclosure**: Don't disclose publicly until fixed
-3. **Coordination**: We'll coordinate disclosure timing
-4. **Credit**: We'll credit you in security advisories (if desired)
+Security fixes are released as patch versions and documented in GitHub Security Advisories.
 
 ---
 
 ## See Also
 
-- [Security Guardrails](https://github.com/faramesh/faramesh-docs/blob/main/SECURITY-GUARDRAILS.md) - Security mechanisms
-- [Error Handling](https://github.com/faramesh/faramesh-docs/blob/main/ERROR-HANDLING.md) - Error codes and handling
-- [Policy Configuration](https://github.com/faramesh/faramesh-docs/blob/main/Policies.md) - Policy security
+- [Contributing](CONTRIBUTING.md) — contribution guidelines
+- [Code of Conduct](CODE_OF_CONDUCT.md) — community guidelines
