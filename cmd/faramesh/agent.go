@@ -40,13 +40,119 @@ var agentKillCmd = &cobra.Command{
 
 var agentApproveSocket string
 
+var agentUnkillCmd = &cobra.Command{
+	Use:   "unkill <agent-id>",
+	Short: "Deactivate kill switch for an agent — resume normal evaluation",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		raw, err := daemonPost("/api/v1/agent/unkill", map[string]string{"agent_id": args[0]})
+		if err != nil {
+			return err
+		}
+		printResponse("Agent Unkill", raw)
+		return nil
+	},
+}
+
+var agentKilledCmd = &cobra.Command{
+	Use:   "killed",
+	Short: "List all agents with an active kill switch",
+	Args:  cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		raw, err := daemonGet("/api/v1/agent/killed")
+		if err != nil {
+			return err
+		}
+		printResponse("Killed Agents", raw)
+		return nil
+	},
+}
+
+var agentPendingAgent string
+
+var agentPendingCmd = &cobra.Command{
+	Use:   "pending",
+	Short: "List pending DEFER actions (optionally filtered by agent)",
+	Args:  cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		q := map[string]string{}
+		if agentPendingAgent != "" {
+			q["agent"] = agentPendingAgent
+		}
+		raw, err := daemonGetWithQuery("/api/v1/agent/pending", q)
+		if err != nil {
+			return err
+		}
+		printResponse("Pending Actions", raw)
+		return nil
+	},
+}
+
+var agentListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all known agents",
+	Args:  cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		raw, err := daemonGet("/api/v1/agent/list")
+		if err != nil {
+			return err
+		}
+		printResponse("Agents", raw)
+		return nil
+	},
+}
+
+var agentInspectCmd = &cobra.Command{
+	Use:   "inspect <agent-id>",
+	Short: "Show detailed state for a single agent",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		raw, err := daemonGetWithQuery("/api/v1/agent/inspect", map[string]string{"id": args[0]})
+		if err != nil {
+			return err
+		}
+		printResponse("Agent Detail", raw)
+		return nil
+	},
+}
+
+var agentHistoryWindow string
+
+var agentHistoryCmd = &cobra.Command{
+	Use:   "history <agent-id>",
+	Short: "Show evaluation history for an agent",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		q := map[string]string{"id": args[0]}
+		if agentHistoryWindow != "" {
+			q["window"] = agentHistoryWindow
+		}
+		raw, err := daemonGetWithQuery("/api/v1/agent/history", q)
+		if err != nil {
+			return err
+		}
+		printResponse("Agent History", raw)
+		return nil
+	},
+}
+
 func init() {
 	agentApproveCmd.Flags().StringVar(&agentApproveSocket, "socket", sdk.SocketPath, "daemon Unix socket path")
 	agentDenyCmd.Flags().StringVar(&agentApproveSocket, "socket", sdk.SocketPath, "daemon Unix socket path")
 	agentKillCmd.Flags().StringVar(&agentApproveSocket, "socket", sdk.SocketPath, "daemon Unix socket path")
+
+	agentPendingCmd.Flags().StringVar(&agentPendingAgent, "agent", "", "filter by agent ID")
+	agentHistoryCmd.Flags().StringVar(&agentHistoryWindow, "window", "", "time window (e.g. 1h, 24h)")
+
 	agentCmd.AddCommand(agentApproveCmd)
 	agentCmd.AddCommand(agentDenyCmd)
 	agentCmd.AddCommand(agentKillCmd)
+	agentCmd.AddCommand(agentUnkillCmd)
+	agentCmd.AddCommand(agentKilledCmd)
+	agentCmd.AddCommand(agentPendingCmd)
+	agentCmd.AddCommand(agentListCmd)
+	agentCmd.AddCommand(agentInspectCmd)
+	agentCmd.AddCommand(agentHistoryCmd)
 }
 
 func runAgentApprove(cmd *cobra.Command, args []string) error {
