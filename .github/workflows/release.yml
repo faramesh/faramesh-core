@@ -249,22 +249,22 @@ jobs:
 
             on_macos do
               on_arm do
-                url "https://github.com/faramesh/faramesh-core/releases/download/v\#{version}/faramesh-darwin-arm64"
+                url "https://github.com/faramesh/faramesh-core/releases/download/v#{version}/faramesh-darwin-arm64"
                 sha256 "${SHA_DARWIN_ARM64}"
               end
               on_intel do
-                url "https://github.com/faramesh/faramesh-core/releases/download/v\#{version}/faramesh-darwin-amd64"
+                url "https://github.com/faramesh/faramesh-core/releases/download/v#{version}/faramesh-darwin-amd64"
                 sha256 "${SHA_DARWIN_AMD64}"
               end
             end
 
             on_linux do
               on_arm do
-                url "https://github.com/faramesh/faramesh-core/releases/download/v\#{version}/faramesh-linux-arm64"
+                url "https://github.com/faramesh/faramesh-core/releases/download/v#{version}/faramesh-linux-arm64"
                 sha256 "${SHA_LINUX_ARM64}"
               end
               on_intel do
-                url "https://github.com/faramesh/faramesh-core/releases/download/v\#{version}/faramesh-linux-amd64"
+                url "https://github.com/faramesh/faramesh-core/releases/download/v#{version}/faramesh-linux-amd64"
                 sha256 "${SHA_LINUX_AMD64}"
               end
             end
@@ -289,7 +289,7 @@ jobs:
             end
 
             test do
-              assert_match version.to_s, shell_output("\#{bin}/faramesh --version")
+              assert_match version.to_s, shell_output("#{bin}/faramesh --version")
               system bin/"faramesh", "demo"
             end
           end
