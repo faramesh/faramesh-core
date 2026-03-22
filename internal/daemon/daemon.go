@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -94,16 +93,16 @@ type Config struct {
 	SPIFFESocketPath      string
 
 	// Credential broker backends.
-	VaultAddr           string
-	VaultToken          string
-	VaultMount          string
-	VaultNamespace      string
-	AWSSecretsRegion    string
-	GCPSecretsProject   string
-	AzureKeyVaultURL    string
-	AzureTenantID       string
-	AzureClientID       string
-	AzureClientSecret   string
+	VaultAddr         string
+	VaultToken        string
+	VaultMount        string
+	VaultNamespace    string
+	AWSSecretsRegion  string
+	GCPSecretsProject string
+	AzureKeyVaultURL  string
+	AzureTenantID     string
+	AzureClientID     string
+	AzureClientSecret string
 }
 
 // Daemon is the governance daemon.
@@ -187,7 +186,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	}
 
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2)
+	signal.Notify(sigCh, daemonNotifySignals()...)
 	for {
 		select {
 		case sig := <-sigCh:
@@ -201,14 +200,14 @@ func (d *Daemon) Run(ctx context.Context) error {
 }
 
 func (d *Daemon) handleSignal(sig os.Signal) bool {
-	switch sig {
-	case syscall.SIGHUP:
+	switch {
+	case isReloadSignal(sig):
 		d.log.Info("SIGHUP received — reloading policy", zap.String("path", d.cfg.PolicyPath))
 		if err := d.reloadPolicy(); err != nil {
 			d.log.Error("policy reload failed — continuing with current policy", zap.Error(err))
 		}
 		return false
-	case syscall.SIGUSR1:
+	case isChaosDegradedSignal(sig):
 		if d.degraded == nil {
 			d.log.Warn("SIGUSR1 received but degraded manager is not initialized")
 			return false
@@ -219,7 +218,7 @@ func (d *Daemon) handleSignal(sig os.Signal) bool {
 			zap.String("degraded_mode", d.degraded.Current().String()),
 		)
 		return false
-	case syscall.SIGUSR2:
+	case isChaosFaultSignal(sig):
 		if d.degraded == nil {
 			d.log.Warn("SIGUSR2 received but degraded manager is not initialized")
 			return false
