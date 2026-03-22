@@ -24,10 +24,10 @@ faramesh --help
 ## Check install
 
 ```bash
-faramesh version
+faramesh --version
 ```
 
-If `version` is not available in your shell, run:
+If `--version` is not available in your shell, run:
 
 ```bash
 faramesh --help
