@@ -5,6 +5,7 @@ set -euo pipefail
 
 REPO="faramesh/faramesh-core"
 BINARY_NAME="faramesh"
+INSTALL_BINARY_NAME="faramesh"
 DEFAULT_INSTALL_DIR="/usr/local/bin"
 FALLBACK_INSTALL_DIR="${HOME}/.local/bin"
 
@@ -108,8 +109,8 @@ detect_os() {
     case "${uname_s}" in
         Linux*)
             if grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null; then
-                OS="windows"
-                info "Detected Windows (WSL)"
+                OS="linux"
+                info "Detected Linux (WSL)"
             else
                 OS="linux"
                 info "Detected Linux"
@@ -118,6 +119,10 @@ detect_os() {
         Darwin*)
             OS="darwin"
             info "Detected macOS"
+            ;;
+        MINGW*|MSYS*|CYGWIN*)
+            OS="windows"
+            info "Detected Windows (Bash)"
             ;;
         *)
             die "Unsupported operating system: ${uname_s}"
@@ -172,16 +177,21 @@ success "Version: ${VERSION}"
 
 step "Downloading faramesh v${VERSION}"
 
-TARBALL="faramesh_${VERSION}_${OS}_${ARCH}.tar.gz"
-CHECKSUM_FILE="faramesh_${VERSION}_checksums.txt"
-DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${TARBALL}"
+ASSET_FILE="faramesh-${OS}-${ARCH}"
+if [ "${OS}" = "windows" ]; then
+    ASSET_FILE="${ASSET_FILE}.exe"
+    INSTALL_BINARY_NAME="${BINARY_NAME}.exe"
+fi
+
+CHECKSUM_FILE="${ASSET_FILE}.sha256"
+DOWNLOAD_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${ASSET_FILE}"
 CHECKSUM_URL="https://github.com/${REPO}/releases/download/v${VERSION}/${CHECKSUM_FILE}"
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
 
 info "Downloading ${DOWNLOAD_URL}"
-curl -fSL --progress-bar -o "${TMPDIR}/${TARBALL}" "${DOWNLOAD_URL}" \
+curl -fSL --progress-bar -o "${TMPDIR}/${ASSET_FILE}" "${DOWNLOAD_URL}" \
     || die "Download failed. Is v${VERSION} a valid release?"
 
 info "Downloading checksum manifest"
@@ -193,16 +203,16 @@ curl -fsSL -o "${TMPDIR}/${CHECKSUM_FILE}" "${CHECKSUM_URL}" \
 step "Verifying SHA-256 checksum"
 
 EXPECTED_SHA=""
-EXPECTED_SHA="$(grep "${TARBALL}" "${TMPDIR}/${CHECKSUM_FILE}" | awk '{print $1}')"
+EXPECTED_SHA="$(awk 'NR==1 {print $1}' "${TMPDIR}/${CHECKSUM_FILE}")"
 
 if [ -z "${EXPECTED_SHA}" ]; then
-    die "Could not find checksum for ${TARBALL} in manifest."
+    die "Could not parse checksum from ${CHECKSUM_FILE}."
 fi
 
 if command -v sha256sum &>/dev/null; then
-    ACTUAL_SHA="$(sha256sum "${TMPDIR}/${TARBALL}" | awk '{print $1}')"
+    ACTUAL_SHA="$(sha256sum "${TMPDIR}/${ASSET_FILE}" | awk '{print $1}')"
 elif command -v shasum &>/dev/null; then
-    ACTUAL_SHA="$(shasum -a 256 "${TMPDIR}/${TARBALL}" | awk '{print $1}')"
+    ACTUAL_SHA="$(shasum -a 256 "${TMPDIR}/${ASSET_FILE}" | awk '{print $1}')"
 else
     die "Neither sha256sum nor shasum found. Cannot verify checksum."
 fi
@@ -216,16 +226,11 @@ fi
 
 success "Checksum verified: ${ACTUAL_SHA:0:16}…"
 
-# ─── Extract ────────────────────────────────────────────────────────────────────
-
-info "Extracting archive"
-tar -xzf "${TMPDIR}/${TARBALL}" -C "${TMPDIR}"
-
-if [ ! -f "${TMPDIR}/${BINARY_NAME}" ]; then
-    die "Expected binary '${BINARY_NAME}' not found in archive."
+if [ ! -f "${TMPDIR}/${ASSET_FILE}" ]; then
+    die "Expected binary '${ASSET_FILE}' was not downloaded."
 fi
 
-chmod +x "${TMPDIR}/${BINARY_NAME}"
+chmod +x "${TMPDIR}/${ASSET_FILE}"
 
 # ─── Install ────────────────────────────────────────────────────────────────────
 
@@ -248,13 +253,13 @@ resolve_install_dir() {
 
 resolve_install_dir
 
-info "Installing to ${INSTALL_DIR}/${BINARY_NAME}"
+info "Installing to ${INSTALL_DIR}/${INSTALL_BINARY_NAME}"
 
 if [ -w "${INSTALL_DIR}" ]; then
-    mv "${TMPDIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
+    mv "${TMPDIR}/${ASSET_FILE}" "${INSTALL_DIR}/${INSTALL_BINARY_NAME}"
 else
     warn "Elevated permissions required for ${INSTALL_DIR}"
-    sudo mv "${TMPDIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
+    sudo mv "${TMPDIR}/${ASSET_FILE}" "${INSTALL_DIR}/${INSTALL_BINARY_NAME}"
 fi
 
 # Ensure install dir is on PATH
@@ -271,7 +276,7 @@ esac
 
 step "Verifying installation"
 
-INSTALLED_VERSION="$("${INSTALL_DIR}/${BINARY_NAME}" --version 2>&1)" \
+INSTALLED_VERSION="$("${INSTALL_DIR}/${INSTALL_BINARY_NAME}" --version 2>&1)" \
     || die "Installed binary failed to execute."
 
 success "faramesh ${INSTALLED_VERSION} installed successfully"
@@ -286,7 +291,7 @@ if [ "${INTERACTIVE}" = true ] && [ -t 0 ]; then
     DEMO_ANSWER="${DEMO_ANSWER:-Y}"
     if [[ "${DEMO_ANSWER}" =~ ^[Yy]$ ]]; then
         printf "\n"
-        "${INSTALL_DIR}/${BINARY_NAME}" demo || warn "Demo exited with non-zero status."
+        "${INSTALL_DIR}/${INSTALL_BINARY_NAME}" demo || warn "Demo exited with non-zero status."
         printf "\n"
     fi
 
@@ -295,7 +300,7 @@ if [ "${INTERACTIVE}" = true ] && [ -t 0 ]; then
     DETECT_ANSWER="${DETECT_ANSWER:-Y}"
     if [[ "${DETECT_ANSWER}" =~ ^[Yy]$ ]]; then
         printf "\n"
-        "${INSTALL_DIR}/${BINARY_NAME}" init --auto-detect || warn "Auto-detect exited with non-zero status."
+        "${INSTALL_DIR}/${INSTALL_BINARY_NAME}" init --auto-detect || warn "Auto-detect exited with non-zero status."
         printf "\n"
     fi
 fi
