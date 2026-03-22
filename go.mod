@@ -3,7 +3,6 @@ module github.com/faramesh/faramesh-core
 go 1.25.0
 
 require (
-	github.com/alecthomas/participle/v2 v2.1.4
 	github.com/alicebob/miniredis/v2 v2.37.0
 	github.com/cilium/ebpf v0.21.0
 	github.com/expr-lang/expr v1.17.8
