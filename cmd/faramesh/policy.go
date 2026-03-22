@@ -15,6 +15,7 @@ import (
 	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 	"github.com/faramesh/faramesh-core/internal/core"
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
+	"github.com/faramesh/faramesh-core/internal/core/fpl"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/session"
 )
@@ -25,13 +26,17 @@ var policyCmd = &cobra.Command{
 }
 
 var policyValidateCmd = &cobra.Command{
-	Use:   "validate <policy.yaml>",
-	Short: "Validate a policy file",
-	Long: `faramesh policy validate parses the policy YAML, validates rule structure,
-and compiles all when-conditions with expr-lang. Exits 0 on success, 1 on error.
+	Use:   "validate <policy.fpl|policy.yaml>",
+	Short: "Validate a policy file (FPL or YAML)",
+	Long: `faramesh policy validate parses and validates a policy file.
+
+Supports both FPL (.fpl) and YAML (.yaml) formats.
+For FPL files, parses the structured syntax and compiles all rules.
+For YAML files, validates rule structure and compiles when-conditions.
+Exits 0 on success, 1 on error.
 
 Use this in CI to catch policy errors before deployment:
-  faramesh policy validate policies/payment.yaml`,
+  faramesh policy validate policies/payment.fpl`,
 	Args: cobra.ExactArgs(1),
 	RunE: runPolicyValidate,
 }
@@ -110,6 +115,11 @@ func init() {
 
 func runPolicyValidate(cmd *cobra.Command, args []string) error {
 	path := args[0]
+
+	if strings.HasSuffix(path, ".fpl") {
+		return runFPLValidate(path)
+	}
+
 	doc, version, err := policy.LoadFile(path)
 	if err != nil {
 		printError("parse error: " + err.Error())
@@ -153,6 +163,40 @@ func runPolicyValidate(cmd *cobra.Command, args []string) error {
 		color.Yellow("  (%d warning(s))", len(warnings))
 	}
 	fmt.Println()
+	return nil
+}
+
+func runFPLValidate(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		printError("read error: " + err.Error())
+		os.Exit(1)
+	}
+	doc, err := fpl.ParseDocument(string(data))
+	if err != nil {
+		printError("parse error: " + err.Error())
+		os.Exit(1)
+	}
+	ir, err := fpl.CompileDocument(doc)
+	if err != nil {
+		printError("compile error: " + err.Error())
+		os.Exit(1)
+	}
+
+	ruleCount := len(ir.FlatRules)
+	agentID := "(none)"
+	for _, ag := range ir.Agents {
+		ruleCount += len(ag.Rules)
+		for _, ph := range ag.Phases {
+			ruleCount += len(ph.Rules)
+		}
+		agentID = ag.ID
+	}
+
+	green := color.New(color.FgGreen, color.Bold)
+	green.Printf("✓ ")
+	fmt.Printf("%s  ", path)
+	fmt.Printf("%d rules  agent=%s\n", ruleCount, agentID)
 	return nil
 }
 
