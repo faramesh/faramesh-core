@@ -1,0 +1,8 @@
+agent require-approval-shell {
+  default deny
+
+  rules {
+    permit http/*
+    defer shell/* reason: "shell requires approval"
+  }
+}

@@ -1,0 +1,7 @@
+agent allow-http {
+  default deny
+
+  rules {
+    permit http/*
+  }
+}
