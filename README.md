@@ -2,8 +2,6 @@
   <img src="logo.png" alt="Faramesh" width="120" />
 </p>
 
-<h1 align="center">Faramesh</h1>
-
 <p align="center">
   <strong>Pre-execution governance engine for AI agents.</strong><br />
   One binary. One command. Every framework.
@@ -287,6 +285,15 @@ flowchart TB
 ```
 
 If the WAL write fails, the decision is DENY. No execution without a durable audit record.
+
+## SDKs
+
+| Language | Path | Package |
+|----------|------|---------|
+| Python | [`sdk/python`](sdk/python) | `pip install faramesh` |
+| TypeScript / Node.js | [`sdk/node`](sdk/node) | `npm install faramesh` |
+
+Both SDKs provide `govern()`, `GovernedTool`, policy helpers, snapshot canonicalization, and `gate()` for wrapping any tool call with pre-execution governance.
 
 ## Documentation
 

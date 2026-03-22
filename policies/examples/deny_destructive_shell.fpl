@@ -1,0 +1,8 @@
+agent deny-destructive-shell {
+  default deny
+
+  rules {
+    deny! shell/* when cmd matches "rm -rf|shutdown|reboot|mkfs|:(){:|:&};:"
+      reason: "destructive shell commands blocked"
+  }
+}

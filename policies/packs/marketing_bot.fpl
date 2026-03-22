@@ -1,0 +1,12 @@
+agent marketing-bot {
+  default deny
+
+  rules {
+    permit http/get
+    defer http/post reason: "content posting requires approval"
+    defer http/put reason: "content updates require approval"
+    defer http/patch reason: "content modifications require approval"
+    deny http/delete reason: "content deletion is blocked"
+    defer email/* reason: "email sending requires approval"
+  }
+}
