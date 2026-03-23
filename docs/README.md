@@ -16,3 +16,7 @@ This index improves navigation across the most important faramesh-core documenta
 3. [FPL Getting Started](https://github.com/faramesh/fpl-lang/blob/main/docs/GETTING_STARTED.md)
 4. [FPL Language Reference](https://github.com/faramesh/fpl-lang/blob/main/docs/LANGUAGE_REFERENCE.md)
 5. [FPL Comparison](https://github.com/faramesh/fpl-lang/blob/main/docs/COMPARISON.md)
+
+## License
+
+Faramesh Core is licensed under the MIT License. See [LICENSE](../LICENSE).
