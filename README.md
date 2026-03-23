@@ -7,12 +7,6 @@
   One binary. One command. Every framework.
 </p>
 
-# Faramesh Core: AI Governance and AI Agent Execution Control
-
-Faramesh Core is a deterministic AI governance engine for AI agents and tool-calling systems.
-It enforces execution control before actions run, adds human approval when needed, and writes
-tamper-evident decision evidence for audit and compliance.
-
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge" alt="MIT License" /></a>
   <a href="https://github.com/faramesh/faramesh-core/releases"><img src="https://img.shields.io/github/v/release/faramesh/faramesh-core?style=for-the-badge&color=2563eb" alt="Latest Release" /></a>
@@ -26,6 +20,12 @@ tamper-evident decision evidence for audit and compliance.
   <a href="https://github.com/faramesh/faramesh-core/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/faramesh/faramesh-core/release.yml?branch=main&label=Release&style=flat-square" alt="Release Workflow Status" /></a>
   <a href="https://github.com/faramesh/faramesh-core/blob/main/cmd/faramesh/main.go"><img src="https://img.shields.io/badge/CLI-Tooling%20Active-a855f7?style=flat-square" alt="CLI Tooling" /></a>
 </p>
+
+# Faramesh: AI Governance and AI Agent Execution Control
+
+Faramesh Core is a deterministic AI governance engine for AI agents and tool-calling systems.
+It enforces execution control before actions run, adds human approval when needed, and writes
+tamper-evident decision evidence for audit and compliance.
 
 <p align="center">
   <img src="demo-repo.png" alt="Faramesh repository demo" width="980" />
@@ -46,8 +46,7 @@ tamper-evident decision evidence for audit and compliance.
 <details>
 <summary><strong>Contents</strong></summary>
 
-- [Faramesh Core: AI Governance and AI Agent Execution Control](#faramesh-core-ai-governance-and-ai-agent-execution-control)
-- [Keyword Coverage](#keyword-coverage)
+- [Faramesh: AI Governance and AI Agent Execution Control](#faramesh-ai-governance-and-ai-agent-execution-control)
 - [What is Faramesh?](#what-is-faramesh)
 - [Install](#install)
 - [Quick Start](#quick-start)
@@ -73,20 +72,6 @@ tamper-evident decision evidence for audit and compliance.
 </details>
 
 ---
-
-## Keyword Coverage
-
-This repository targets high-intent technical topics across agent governance and runtime control:
-
-- AI governance
-- AI agent governance
-- AI agent security
-- AI execution control
-- Agent execution control
-- Policy as code for AI agents
-- Deterministic policy engine
-- MCP governance and Model Context Protocol guardrails
-- AI compliance and agent audit trail
 
 ## What is Faramesh?
 
@@ -420,6 +405,23 @@ Repository docs for crawlers and contributors:
 - [FPL Getting Started](https://github.com/faramesh/fpl-lang/blob/main/docs/GETTING_STARTED.md)
 - [FPL Language Reference](https://github.com/faramesh/fpl-lang/blob/main/docs/LANGUAGE_REFERENCE.md)
 - [FPL Comparison](https://github.com/faramesh/fpl-lang/blob/main/docs/COMPARISON.md)
+
+<details>
+<summary><strong>Search Topics (SEO)</strong></summary>
+
+This repository targets high-intent technical topics across agent governance and runtime control:
+
+- AI governance
+- AI agent governance
+- AI agent security
+- AI execution control
+- Agent execution control
+- Policy as code for AI agents
+- Deterministic policy engine
+- MCP governance and Model Context Protocol guardrails
+- AI compliance and agent audit trail
+
+</details>
 
 ## Community
 
