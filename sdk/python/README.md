@@ -2,6 +2,13 @@
 
 Production-ready Python client for the Faramesh Execution Governor API.
 
+For AI governance and AI execution control architecture details, see:
+
+- [Faramesh Core README](../../README.md)
+- [Core Docs Index](../../docs/README.md)
+- [FPL Language README](https://github.com/faramesh/fpl-lang)
+- [FPL Comparison](https://github.com/faramesh/fpl-lang/blob/main/docs/COMPARISON.md)
+
 ## Installation
 
 ```bash

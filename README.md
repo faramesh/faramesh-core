@@ -7,6 +7,12 @@
   One binary. One command. Every framework.
 </p>
 
+# Faramesh Core: AI Governance and AI Agent Execution Control
+
+Faramesh Core is a deterministic AI governance engine for AI agents and tool-calling systems.
+It enforces execution control before actions run, adds human approval when needed, and writes
+tamper-evident decision evidence for audit and compliance.
+
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-22c55e?style=for-the-badge" alt="MIT License" /></a>
   <a href="https://github.com/faramesh/faramesh-core/releases"><img src="https://img.shields.io/github/v/release/faramesh/faramesh-core?style=for-the-badge&color=2563eb" alt="Latest Release" /></a>
@@ -40,17 +46,22 @@
 <details>
 <summary><strong>Contents</strong></summary>
 
+- [Faramesh Core: AI Governance and AI Agent Execution Control](#faramesh-core-ai-governance-and-ai-agent-execution-control)
+- [Keyword Coverage](#keyword-coverage)
 - [What is Faramesh?](#what-is-faramesh)
 - [Install](#install)
 - [Quick Start](#quick-start)
 - [FPL - Faramesh Policy Language](#fpl--faramesh-policy-language)
 - [Supported Frameworks](#supported-frameworks)
+- [Use Cases](#use-cases)
 - [Governing Real Runtimes](#governing-real-runtimes)
 - [Credential Broker](#credential-broker)
 - [Workload Identity (SPIFFE/SPIRE)](#workload-identity-spiffespire)
 - [Observability Integrations](#observability-integrations)
 - [Cross-Platform Enforcement](#cross-platform-enforcement)
 - [Policy Packs](#policy-packs)
+- [Repository Map](#repository-map)
+- [Documentation Hub](#documentation-hub)
 - [CLI Reference](#cli-reference)
 - [Architecture](#architecture)
 - [SDKs](#sdks)
@@ -62,6 +73,20 @@
 </details>
 
 ---
+
+## Keyword Coverage
+
+This repository targets high-intent technical topics across agent governance and runtime control:
+
+- AI governance
+- AI agent governance
+- AI agent security
+- AI execution control
+- Agent execution control
+- Policy as code for AI agents
+- Deterministic policy engine
+- MCP governance and Model Context Protocol guardrails
+- AI compliance and agent audit trail
 
 ## What is Faramesh?
 
@@ -198,6 +223,13 @@ All 13 frameworks are auto-patched at runtime — zero code changes required.
 | AWS Bedrock AgentCore | App middleware + Strands hook |
 | MCP Servers (Node.js) | `tools/call` handler |
 
+## Use Cases
+
+- AI governance for production agent systems where every tool call must be policy-checked.
+- AI agent guardrails for coding agents, customer support agents, and payment workflows.
+- AI execution control for MCP tools, API actions, shell actions, and delegated sub-agents.
+- Compliance-ready decision evidence with deterministic replay and tamper-evident provenance.
+
 ## Governing Real Runtimes
 
 ### OpenClaw
@@ -285,6 +317,24 @@ Ready-to-use FPL policies in `examples/`:
 | [`customer-support.fpl`](examples/customer-support.fpl) | Support agent with intake/resolve phases, credit limits, and mass-email protection |
 | [`mcp-server.fpl`](examples/mcp-server.fpl) | MCP server wrapper policy for IDE agents (Claude Code, Cursor) |
 
+## Repository Map
+
+```text
+faramesh-core/
+├── cmd/                  # CLI entrypoints
+├── internal/             # Governance engine, adapters, policy runtime
+├── sdk/                  # Official SDKs (Node, Python)
+├── deploy/               # Kubernetes, ECS, Nomad, systemd, Cloud Run examples
+├── examples/             # Ready-to-run FPL policy examples
+├── packs/                # Policy packs
+└── docs/                 # Product and architecture documentation
+```
+
+## Documentation Hub
+
+- [Docs Index](docs/README.md)
+- [FPL Language Repo](https://github.com/faramesh/fpl-lang)
+
 ## CLI Reference
 
 See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for all 130+ commands. Key commands:
@@ -363,6 +413,13 @@ Both SDKs provide `govern()`, `GovernedTool`, policy helpers, snapshot canonical
 ## Documentation
 
 Full documentation at [faramesh.dev/docs](https://faramesh.dev/docs).
+
+Repository docs for crawlers and contributors:
+
+- [Docs Index](docs/README.md)
+- [FPL Getting Started](https://github.com/faramesh/fpl-lang/blob/main/docs/GETTING_STARTED.md)
+- [FPL Language Reference](https://github.com/faramesh/fpl-lang/blob/main/docs/LANGUAGE_REFERENCE.md)
+- [FPL Comparison](https://github.com/faramesh/fpl-lang/blob/main/docs/COMPARISON.md)
 
 ## Community
 

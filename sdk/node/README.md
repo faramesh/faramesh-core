@@ -2,6 +2,13 @@
 
 Production-ready Node.js client for the Faramesh Execution Governor API.
 
+For AI governance and AI agent execution control architecture details, see:
+
+- [Faramesh Core README](../../README.md)
+- [Core Docs Index](../../docs/README.md)
+- [FPL Language README](https://github.com/faramesh/fpl-lang)
+- [FPL Language Reference](https://github.com/faramesh/fpl-lang/blob/main/docs/LANGUAGE_REFERENCE.md)
+
 ## Installation
 
 ```bash
