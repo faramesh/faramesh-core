@@ -23,7 +23,7 @@
 
 # Faramesh: AI Governance and AI Agent Execution Control
 
-Faramesh Core is a deterministic AI governance engine for AI agents and tool-calling systems.
+Faramesh is a deterministic AI governance engine for AI agents and tool-calling systems.
 It enforces execution control before actions run, adds human approval when needed, and writes
 tamper-evident decision evidence for audit and compliance.
 
