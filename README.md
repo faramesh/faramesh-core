@@ -322,7 +322,7 @@ faramesh-core/
 
 ## CLI Reference
 
-See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for all 130+ commands. Key commands:
+See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for all 30+ commands. Key commands:
 
 | Command | What it does |
 |---------|-------------|
