@@ -6,6 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -18,8 +21,14 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	adapterebpf "github.com/faramesh/faramesh-core/internal/adapter/ebpf"
+	"github.com/faramesh/faramesh-core/internal/artifactverify"
 	"github.com/faramesh/faramesh-core/internal/core/degraded"
+	"github.com/faramesh/faramesh-core/internal/core/dpr"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
+	"github.com/faramesh/faramesh-core/internal/core/policy"
+	"github.com/faramesh/faramesh-core/internal/core/principal"
+	principalidp "github.com/faramesh/faramesh-core/internal/core/principal/idp"
+	"github.com/faramesh/faramesh-core/internal/reprobuild"
 )
 
 func TestFleetPolicyReloadPublishConsumeApplyFlow(t *testing.T) {
@@ -454,5 +463,209 @@ func TestHandleSignalSIGUSR2TogglesFaultMode(t *testing.T) {
 	}
 	if got := d.degraded.Current().String(); got != "FULL" {
 		t.Fatalf("expected FULL after second SIGUSR2, got %s", got)
+	}
+}
+
+type preflightTestStore struct{}
+
+func (s *preflightTestStore) Save(*dpr.Record) error           { return nil }
+func (s *preflightTestStore) ByID(string) (*dpr.Record, error) { return nil, nil }
+func (s *preflightTestStore) RecentByAgent(string, int) ([]*dpr.Record, error) {
+	return nil, nil
+}
+func (s *preflightTestStore) Recent(int) ([]*dpr.Record, error)           { return nil, nil }
+func (s *preflightTestStore) LastHash(string) (string, error)             { return "", nil }
+func (s *preflightTestStore) KnownAgents() ([]string, error)              { return nil, nil }
+func (s *preflightTestStore) VerifyChain(string) (*dpr.ChainBreak, error) { return nil, nil }
+func (s *preflightTestStore) Close() error                                { return nil }
+
+type preflightWorkloadProvider struct {
+	identity *principal.Identity
+	err      error
+}
+
+func (p *preflightWorkloadProvider) Name() string                   { return "spiffe" }
+func (p *preflightWorkloadProvider) Available(context.Context) bool { return true }
+func (p *preflightWorkloadProvider) Identity(context.Context) (*principal.Identity, error) {
+	if p.err != nil {
+		return nil, p.err
+	}
+	return p.identity, nil
+}
+
+func strictPreflightIntegrityFixtures(t *testing.T) (manifestPath, baseDir, buildinfoPath string) {
+	t.Helper()
+	baseDir = t.TempDir()
+	artifactPath := filepath.Join(baseDir, "policy.fixture")
+	if err := os.WriteFile(artifactPath, []byte("strict preflight integrity fixture"), 0o644); err != nil {
+		t.Fatalf("write fixture artifact: %v", err)
+	}
+	manifest, err := artifactverify.BuildManifestV1(baseDir, []string{artifactPath})
+	if err != nil {
+		t.Fatalf("build fixture manifest: %v", err)
+	}
+	rawManifest, err := artifactverify.MarshalManifestJSONPretty(manifest)
+	if err != nil {
+		t.Fatalf("marshal fixture manifest: %v", err)
+	}
+	manifestPath = filepath.Join(baseDir, "integrity-manifest.json")
+	if err := os.WriteFile(manifestPath, append(rawManifest, '\n'), 0o644); err != nil {
+		t.Fatalf("write fixture manifest: %v", err)
+	}
+
+	currentBuild, err := reprobuild.Current()
+	if err != nil {
+		t.Fatalf("load runtime buildinfo: %v", err)
+	}
+	rawBuild, err := json.MarshalIndent(currentBuild, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal runtime buildinfo: %v", err)
+	}
+	buildinfoPath = filepath.Join(baseDir, "buildinfo.expected.json")
+	if err := os.WriteFile(buildinfoPath, append(rawBuild, '\n'), 0o644); err != nil {
+		t.Fatalf("write buildinfo expected: %v", err)
+	}
+
+	return manifestPath, baseDir, buildinfoPath
+}
+
+func newStrictPreflightDaemon(t *testing.T) *Daemon {
+	t.Helper()
+	manifestPath, baseDir, buildinfoPath := strictPreflightIntegrityFixtures(t)
+	return &Daemon{
+		cfg: Config{
+			StrictPreflight:       true,
+			IntegrityManifestPath: manifestPath,
+			IntegrityBaseDir:      baseDir,
+			BuildInfoExpectedPath: buildinfoPath,
+		},
+		wal:   &dpr.NullWAL{},
+		store: &preflightTestStore{},
+		log:   zap.NewNop(),
+	}
+}
+
+func TestEnforceStartupPreflightFailsWithoutWorkloadIdentity(t *testing.T) {
+	d := newStrictPreflightDaemon(t)
+	err := d.enforceStartupPreflight(&policy.Doc{}, nil)
+	if err == nil || err.Error() != "startup preflight failed: identity gate (no workload identity provider configured)" {
+		t.Fatalf("expected missing workload identity error, got %v", err)
+	}
+}
+
+func TestEnforceStartupPreflightFailsWithoutProvenanceStore(t *testing.T) {
+	d := newStrictPreflightDaemon(t)
+	d.store = nil
+	err := d.enforceStartupPreflight(&policy.Doc{}, &preflightWorkloadProvider{identity: &principal.Identity{ID: "spiffe://example.org/a", Verified: true, Method: "spiffe"}})
+	if err == nil || err.Error() != "startup preflight failed: provenance gate (wal/store must both be initialized)" {
+		t.Fatalf("expected provenance gate error, got %v", err)
+	}
+}
+
+func TestEnforceStartupPreflightFailsCredentialSequestrationWithoutBackend(t *testing.T) {
+	t.Setenv("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK", "false")
+
+	d := newStrictPreflightDaemon(t)
+	doc := &policy.Doc{
+		Tools: map[string]policy.Tool{
+			"stripe/refund": {Tags: []string{"credential:required"}},
+		},
+	}
+	err := d.enforceStartupPreflight(doc, &preflightWorkloadProvider{identity: &principal.Identity{ID: "spiffe://example.org/a", Verified: true, Method: "spiffe"}})
+	if err == nil || err.Error() != "startup preflight failed: credential sequestration gate (policy requires brokered credentials but no broker backend is configured)" {
+		t.Fatalf("expected credential sequestration error, got %v", err)
+	}
+}
+
+func TestEnforceStartupPreflightFailsIDPRequirementWithoutProvider(t *testing.T) {
+	d := newStrictPreflightDaemon(t)
+	doc := &policy.Doc{
+		Rules: []policy.Rule{{Match: policy.Match{When: "principal.verified == true"}}},
+	}
+	err := d.enforceStartupPreflight(doc, &preflightWorkloadProvider{identity: &principal.Identity{ID: "spiffe://example.org/a", Verified: true, Method: "spiffe"}})
+	if err == nil || err.Error() != "startup preflight failed: idp gate (policy references principal/delegation claims but no idp provider is configured)" {
+		t.Fatalf("expected idp gate error, got %v", err)
+	}
+}
+
+func TestEnforceStartupPreflightFailsDeferBackendRequirement(t *testing.T) {
+	d := newStrictPreflightDaemon(t)
+	doc := &policy.Doc{
+		Rules:         []policy.Rule{{Effect: "defer"}},
+		DeferPriority: &policy.DeferPriorityConfig{Critical: &policy.DeferTier{Channel: "slack"}},
+	}
+	err := d.enforceStartupPreflight(doc, &preflightWorkloadProvider{identity: &principal.Identity{ID: "spiffe://example.org/a", Verified: true, Method: "spiffe"}})
+	if err == nil || err.Error() != "startup preflight failed: defer backend gate (missing --slack-webhook)" {
+		t.Fatalf("expected defer backend error, got %v", err)
+	}
+}
+
+func TestEnforceStartupPreflightPassesWithRequiredInputs(t *testing.T) {
+	d := newStrictPreflightDaemon(t)
+	d.cfg.IDPProvider = "default"
+	d.cfg.VaultAddr = "http://vault.local"
+	d.cfg.SlackWebhook = "https://hooks.slack.test/abc"
+
+	doc := &policy.Doc{
+		Rules: []policy.Rule{{Effect: "defer", Match: policy.Match{When: "principal.verified == true"}}},
+		Tools: map[string]policy.Tool{
+			"stripe/refund": {Tags: []string{"credential:required"}},
+		},
+		DeferPriority: &policy.DeferPriorityConfig{Critical: &policy.DeferTier{Channel: "slack"}},
+	}
+
+	err := d.enforceStartupPreflight(doc, &preflightWorkloadProvider{identity: &principal.Identity{ID: "spiffe://example.org/a", Verified: true, Method: "spiffe"}})
+	if err != nil {
+		t.Fatalf("expected preflight success, got %v", err)
+	}
+}
+
+func TestBuildAdapterTLSConfigAutoGeneratesCertificate(t *testing.T) {
+	d := &Daemon{
+		cfg: Config{TLSAuto: true},
+		log: zap.NewNop(),
+	}
+	cfg, err := d.buildAdapterTLSConfig()
+	if err != nil {
+		t.Fatalf("build adapter tls config: %v", err)
+	}
+	if cfg == nil {
+		t.Fatalf("expected tls config when tls auto is enabled")
+	}
+	if len(cfg.Certificates) != 1 {
+		t.Fatalf("expected one generated certificate, got %d", len(cfg.Certificates))
+	}
+}
+
+func TestPrincipalFromIDPIdentityMethodMapping(t *testing.T) {
+	verified := &principalidp.VerifiedIdentity{Subject: "subject-1"}
+
+	if got := principalFromIDPIdentity(verified, "ldap"); got == nil || got.Method != "ldap_bind" {
+		t.Fatalf("expected ldap_bind method, got %+v", got)
+	}
+	if got := principalFromIDPIdentity(verified, "default"); got == nil || got.Method != "idp_local" {
+		t.Fatalf("expected idp_local method, got %+v", got)
+	}
+}
+
+func TestEnforceStartupPreflightFailsWithoutIntegrityManifest(t *testing.T) {
+	d := newStrictPreflightDaemon(t)
+	d.cfg.IntegrityManifestPath = ""
+	err := d.enforceStartupPreflight(&policy.Doc{}, &preflightWorkloadProvider{identity: &principal.Identity{ID: "spiffe://example.org/a", Verified: true, Method: "spiffe"}})
+	if err == nil || err.Error() != "startup preflight failed: integrity gate (--integrity-manifest is required in strict mode)" {
+		t.Fatalf("expected integrity manifest gate error, got %v", err)
+	}
+}
+
+func TestEnforceStartupPreflightFailsBuildinfoMismatch(t *testing.T) {
+	d := newStrictPreflightDaemon(t)
+	badPath := filepath.Join(t.TempDir(), "buildinfo.bad.json")
+	if err := os.WriteFile(badPath, []byte(`{"go_version":"go0.invalid"}`), 0o644); err != nil {
+		t.Fatalf("write mismatched buildinfo: %v", err)
+	}
+	d.cfg.BuildInfoExpectedPath = badPath
+	err := d.enforceStartupPreflight(&policy.Doc{}, &preflightWorkloadProvider{identity: &principal.Identity{ID: "spiffe://example.org/a", Verified: true, Method: "spiffe"}})
+	if err == nil || !strings.Contains(err.Error(), "startup preflight failed: integrity gate (buildinfo mismatch:") {
+		t.Fatalf("expected buildinfo mismatch error, got %v", err)
 	}
 }
