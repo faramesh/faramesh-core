@@ -20,6 +20,13 @@ var trustedVerificationMethods = map[string]struct{}{
 	"gcp_workload":  {},
 	"azure_managed": {},
 	"github_oidc":   {},
+	"okta_oidc":     {},
+	"azure_ad_oidc": {},
+	"auth0_oidc":    {},
+	"google_oidc":   {},
+	"idp_oidc":      {},
+	"ldap_bind":     {},
+	"idp_local":     {},
 }
 
 // IsTrustedVerificationMethod reports whether method is an authoritative source.
