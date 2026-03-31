@@ -31,43 +31,50 @@ To stream DPR records to Faramesh Horizon, authenticate first:
 }
 
 var (
-	servePolicy              string
-	servePolicyURL           string
-	servePolicyPollInterval  time.Duration
-	serveDataDir             string
-	serveSocket              string
-	serveSlack               string
-	serveLogLevel            string
-	serveSyncHorizon         bool
-	serveProxyPort           int
-	serveProxyConnect        bool
-	serveProxyForward        bool
-	serveGRPCPort            int
-	serveMCPProxyPort        int
-	serveMCPTarget           string
-	serveMetricsPort         int
-	serveDPRDSN              string
-	serveRedisURL            string
-	serveDPRHMACKey          string
-	serveTLSCert             string
-	serveTLSKey              string
-	serveClientCA            string
-	servePagerDutyRoutingKey string
-	servePolicyAdminToken    string
-	serveEnableEBPF          bool
-	serveEBPFObjectPath      string
-	serveEBPFAttachTP        bool
-	serveSPIFFESocketPath    string
-	serveVaultAddr           string
-	serveVaultToken          string
-	serveVaultMount          string
-	serveVaultNamespace      string
-	serveAWSSecretsRegion    string
-	serveGCPSecretsProject   string
-	serveAzureKeyVaultURL    string
-	serveAzureTenantID       string
-	serveAzureClientID       string
-	serveAzureClientSecret   string
+	servePolicy               string
+	servePolicyURL            string
+	servePolicyPollInterval   time.Duration
+	serveDataDir              string
+	serveSocket               string
+	serveSlack                string
+	serveLogLevel             string
+	serveSyncHorizon          bool
+	serveProxyPort            int
+	serveProxyConnect         bool
+	serveProxyForward         bool
+	serveGRPCPort             int
+	serveMCPProxyPort         int
+	serveMCPTarget            string
+	serveMetricsPort          int
+	serveDPRDSN               string
+	serveRedisURL             string
+	serveDPRHMACKey           string
+	serveTLSCert              string
+	serveTLSKey               string
+	serveClientCA             string
+	serveTLSAuto              bool
+	servePagerDutyRoutingKey  string
+	servePolicyAdminToken     string
+	serveEnableEBPF           bool
+	serveEBPFObjectPath       string
+	serveEBPFAttachTP         bool
+	serveSPIFFESocketPath     string
+	serveVaultAddr            string
+	serveVaultToken           string
+	serveVaultMount           string
+	serveVaultNamespace       string
+	serveAWSSecretsRegion     string
+	serveGCPSecretsProject    string
+	serveAzureKeyVaultURL     string
+	serveAzureTenantID        string
+	serveAzureClientID        string
+	serveAzureClientSecret    string
+	serveStrictPreflight      bool
+	serveIDPProvider          string
+	serveIntegrityManifest    string
+	serveIntegrityBaseDir     string
+	serveBuildinfoExpected    string
+	serveSkipOnboardPreflight bool
 )
 
 func init() {
@@ -93,6 +100,7 @@ func init() {
 	serveCmd.Flags().StringVar(&serveTLSCert, "tls-cert", "", "TLS certificate PEM for adapter listeners (proxy/gRPC/MCP)")
 	serveCmd.Flags().StringVar(&serveTLSKey, "tls-key", "", "TLS private key PEM for adapter listeners (proxy/gRPC/MCP)")
 	serveCmd.Flags().StringVar(&serveClientCA, "client-ca", "", "Optional client CA PEM to require and verify mTLS client certificates")
+	serveCmd.Flags().BoolVar(&serveTLSAuto, "tls-auto", false, "auto-generate an ephemeral self-signed TLS certificate when --tls-cert/--tls-key are not provided")
 	serveCmd.Flags().StringVar(&servePagerDutyRoutingKey, "pagerduty-routing-key", "", "PagerDuty Events v2 routing key for DEFER SLA escalations")
 	serveCmd.Flags().StringVar(&servePolicyAdminToken, "policy-admin-token", "", "admin token required for local programmatic policy push over gRPC")
 	serveCmd.Flags().BoolVar(&serveEnableEBPF, "ebpf", false, "enable minimal eBPF adapter bootstrap (also settable via FARAMESH_ENABLE_EBPF=true)")
@@ -109,6 +117,12 @@ func init() {
 	serveCmd.Flags().StringVar(&serveAzureTenantID, "azure-tenant-id", "", "Azure AD tenant ID for Key Vault auth")
 	serveCmd.Flags().StringVar(&serveAzureClientID, "azure-client-id", "", "Azure AD client ID for Key Vault auth")
 	serveCmd.Flags().StringVar(&serveAzureClientSecret, "azure-client-secret", "", "Azure AD client secret for Key Vault auth")
+	serveCmd.Flags().BoolVar(&serveStrictPreflight, "strict-preflight", false, "enforce mandatory startup preflight gates (identity, provenance, credential sequestration, defer/idp requirements, integrity manifest/buildinfo, sbom generation)")
+	serveCmd.Flags().StringVar(&serveIDPProvider, "idp-provider", "", "identity provider used for principal verification preflight (default|local|okta|azure_ad|auth0|google|ldap)")
+	serveCmd.Flags().StringVar(&serveIntegrityManifest, "integrity-manifest", "", "artifact manifest JSON required for strict preflight integrity checks")
+	serveCmd.Flags().StringVar(&serveIntegrityBaseDir, "integrity-base-dir", ".", "base directory used to verify paths in --integrity-manifest")
+	serveCmd.Flags().StringVar(&serveBuildinfoExpected, "buildinfo-expected", "", "expected buildinfo JSON fingerprint required for strict preflight integrity checks")
+	serveCmd.Flags().BoolVar(&serveSkipOnboardPreflight, "skip-onboard-preflight", false, "skip pre-daemon onboarding readiness checks before strict startup")
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
@@ -117,6 +131,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("build logger: %w", err)
 	}
 	defer log.Sync()
+
+	strictPreflight := resolveStrictPreflight()
+	if strictPreflight && !serveSkipOnboardPreflight {
+		if err := runServeOnboardPreflight(); err != nil {
+			return fmt.Errorf("onboard preflight: %w", err)
+		}
+	}
 
 	cfg := daemon.Config{
 		PolicyPath:            servePolicy,
@@ -139,6 +160,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		TLSCertFile:           serveTLSCert,
 		TLSKeyFile:            serveTLSKey,
 		ClientCAFile:          serveClientCA,
+		TLSAuto:               resolveTLSAuto(),
 		PagerDutyRoutingKey:   servePagerDutyRoutingKey,
 		PolicyAdminToken:      resolvePolicyAdminToken(),
 		EnableEBPF:            resolveServeEBPFEnabled(),
@@ -155,6 +177,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 		AzureTenantID:         serveAzureTenantID,
 		AzureClientID:         serveAzureClientID,
 		AzureClientSecret:     serveAzureClientSecret,
+		StrictPreflight:       strictPreflight,
+		IDPProvider:           resolveIDPProvider(),
+		IntegrityManifestPath: resolveIntegrityManifestPath(),
+		IntegrityBaseDir:      resolveIntegrityBaseDir(),
+		BuildInfoExpectedPath: resolveBuildinfoExpectedPath(),
 	}
 
 	if serveSyncHorizon {
@@ -184,6 +211,52 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	return d.Run(context.Background())
+}
+
+func runServeOnboardPreflight() error {
+	if strings.TrimSpace(servePolicyURL) != "" {
+		fmt.Fprintln(os.Stderr, "strict preflight: skipping local onboard policy compile check for --policy-url source")
+		return nil
+	}
+
+	prevPolicyPath := onboardPolicyPath
+	prevStrict := onboardStrict
+	prevJSON := onboardJSON
+	prevSlack := onboardSlackWebhook
+	prevPagerDuty := onboardPagerDutyRoutingKey
+	prevIDP := onboardIDPProvider
+	prevSPIFFE := onboardSPIFFESocket
+	prevVault := onboardVaultAddr
+	prevAWS := onboardAWSRegion
+	prevGCP := onboardGCPProject
+	prevAzure := onboardAzureVaultURL
+	defer func() {
+		onboardPolicyPath = prevPolicyPath
+		onboardStrict = prevStrict
+		onboardJSON = prevJSON
+		onboardSlackWebhook = prevSlack
+		onboardPagerDutyRoutingKey = prevPagerDuty
+		onboardIDPProvider = prevIDP
+		onboardSPIFFESocket = prevSPIFFE
+		onboardVaultAddr = prevVault
+		onboardAWSRegion = prevAWS
+		onboardGCPProject = prevGCP
+		onboardAzureVaultURL = prevAzure
+	}()
+
+	onboardPolicyPath = strings.TrimSpace(servePolicy)
+	onboardStrict = true
+	onboardJSON = false
+	onboardSlackWebhook = strings.TrimSpace(serveSlack)
+	onboardPagerDutyRoutingKey = strings.TrimSpace(servePagerDutyRoutingKey)
+	onboardIDPProvider = resolveIDPProvider()
+	onboardSPIFFESocket = strings.TrimSpace(serveSPIFFESocketPath)
+	onboardVaultAddr = resolveVaultAddr()
+	onboardAWSRegion = strings.TrimSpace(serveAWSSecretsRegion)
+	onboardGCPProject = strings.TrimSpace(serveGCPSecretsProject)
+	onboardAzureVaultURL = strings.TrimSpace(serveAzureKeyVaultURL)
+
+	return runOnboard(nil, nil)
 }
 
 func resolveServeEBPFEnabled() bool {
@@ -226,6 +299,54 @@ func resolveVaultToken() string {
 		return strings.TrimSpace(serveVaultToken)
 	}
 	return strings.TrimSpace(os.Getenv("VAULT_TOKEN"))
+}
+
+func resolveStrictPreflight() bool {
+	if serveStrictPreflight {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("FARAMESH_STRICT_PREFLIGHT")), "true")
+}
+
+func resolveIDPProvider() string {
+	if strings.TrimSpace(serveIDPProvider) != "" {
+		return strings.ToLower(strings.TrimSpace(serveIDPProvider))
+	}
+	if env := strings.ToLower(strings.TrimSpace(os.Getenv("FARAMESH_IDP_PROVIDER"))); env != "" {
+		return env
+	}
+	return "default"
+}
+
+func resolveTLSAuto() bool {
+	if serveTLSAuto {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("FARAMESH_TLS_AUTO")), "true")
+}
+
+func resolveIntegrityManifestPath() string {
+	if strings.TrimSpace(serveIntegrityManifest) != "" {
+		return strings.TrimSpace(serveIntegrityManifest)
+	}
+	return strings.TrimSpace(os.Getenv("FARAMESH_INTEGRITY_MANIFEST"))
+}
+
+func resolveIntegrityBaseDir() string {
+	if strings.TrimSpace(serveIntegrityBaseDir) != "" {
+		return strings.TrimSpace(serveIntegrityBaseDir)
+	}
+	if env := strings.TrimSpace(os.Getenv("FARAMESH_INTEGRITY_BASE_DIR")); env != "" {
+		return env
+	}
+	return "."
+}
+
+func resolveBuildinfoExpectedPath() string {
+	if strings.TrimSpace(serveBuildinfoExpected) != "" {
+		return strings.TrimSpace(serveBuildinfoExpected)
+	}
+	return strings.TrimSpace(os.Getenv("FARAMESH_BUILDINFO_EXPECTED"))
 }
 
 func buildLogger(level string) (*zap.Logger, error) {
