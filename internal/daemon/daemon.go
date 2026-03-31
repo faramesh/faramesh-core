@@ -4,13 +4,18 @@ package daemon
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -31,6 +36,7 @@ import (
 	"github.com/faramesh/faramesh-core/internal/adapter/mcp"
 	"github.com/faramesh/faramesh-core/internal/adapter/proxy"
 	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
+	"github.com/faramesh/faramesh-core/internal/artifactverify"
 	"github.com/faramesh/faramesh-core/internal/cloud"
 	"github.com/faramesh/faramesh-core/internal/core"
 	"github.com/faramesh/faramesh-core/internal/core/callbacks"
@@ -44,8 +50,11 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/phases"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/principal"
+	principalidp "github.com/faramesh/faramesh-core/internal/core/principal/idp"
 	"github.com/faramesh/faramesh-core/internal/core/session"
 	"github.com/faramesh/faramesh-core/internal/core/webhook"
+	"github.com/faramesh/faramesh-core/internal/reprobuild"
+	"github.com/faramesh/faramesh-core/internal/sbom"
 )
 
 var ebpfNew = ebpf.New
@@ -85,12 +94,18 @@ type Config struct {
 	TLSCertFile           string
 	TLSKeyFile            string
 	ClientCAFile          string
+	TLSAuto               bool
 	PagerDutyRoutingKey   string
 	PolicyAdminToken      string
 	EnableEBPF            bool
 	EBPFObjectPath        string
 	EBPFAttachTracepoints bool
 	SPIFFESocketPath      string
+	StrictPreflight       bool
+	IDPProvider           string
+	IntegrityManifestPath string
+	IntegrityBaseDir      string
+	BuildInfoExpectedPath string
 
 	// Credential broker backends.
 	VaultAddr         string
@@ -533,36 +548,43 @@ func (d *Daemon) start() error {
 		cancel()
 	}
 
+	credentialRouter := buildCredentialRouter(d.cfg)
+	if err := d.enforceStartupPreflight(doc, workloadProvider); err != nil {
+		return err
+	}
+
 	pipeline := core.NewPipeline(core.Config{
-		Engine:           d.engine,
-		WAL:              wal,
-		Store:            store,
-		DPRQueue:         dprQueue,
-		Sessions:         sessionManager,
-		SessionGovernor:  sessionGovernor,
-		Defers:           wf,
-		Webhooks:         d.webhooks,
-		Degraded:         d.degraded,
-		SubPolicies:      subPolicies,
-		RoutingGovernor:  routingGovernor,
-		LoopGovernor:     loopGovernor,
-		AggregationGov:   aggGovernor,
-		Callbacks:        callbackManager,
-		Revocations:      revocationMgr,
-		Elevations:       elevationEngine,
-		WorkloadIdentity: workloadProvider,
-		CredentialRouter: buildCredentialRouter(d.cfg),
-		Provenance:       provenanceTracker,
-		PhaseManager:     buildPhaseManagerFromPolicy(doc),
-		PolicySourceType: d.policySourceType,
-		PolicySourceID:   d.policySourceID,
-		HMACKey:          hmacKey,
-		Log:              d.log,
+		Engine:                  d.engine,
+		WAL:                     wal,
+		Store:                   store,
+		DPRQueue:                dprQueue,
+		Sessions:                sessionManager,
+		SessionGovernor:         sessionGovernor,
+		Defers:                  wf,
+		Webhooks:                d.webhooks,
+		Degraded:                d.degraded,
+		SubPolicies:             subPolicies,
+		RoutingGovernor:         routingGovernor,
+		LoopGovernor:            loopGovernor,
+		AggregationGov:          aggGovernor,
+		Callbacks:               callbackManager,
+		Revocations:             revocationMgr,
+		Elevations:              elevationEngine,
+		WorkloadIdentity:        workloadProvider,
+		CredentialRouter:        credentialRouter,
+		Provenance:              provenanceTracker,
+		PhaseManager:            buildPhaseManagerFromPolicy(doc),
+		PolicySourceType:        d.policySourceType,
+		PolicySourceID:          d.policySourceID,
+		StrictModelVerification: d.cfg.StrictPreflight,
+		HMACKey:                 hmacKey,
+		Log:                     d.log,
 	})
 	d.pipeline = pipeline
 	d.elevationEngine = elevationEngine
 	d.revocationMgr = revocationMgr
 	d.workloadProvider = workloadProvider
+	principalResolver := buildPrincipalTokenResolver(d.cfg, d.log)
 
 	// Wire up Horizon sync if configured.
 	if d.cfg.HorizonToken != "" {
@@ -578,6 +600,7 @@ func (d *Daemon) start() error {
 
 	// Start SDK socket server.
 	server := sdk.NewServer(pipeline, d.log)
+	server.SetPrincipalResolver(principalResolver)
 	if err := server.Listen(d.cfg.SocketPath); err != nil {
 		return fmt.Errorf("start SDK server: %w", err)
 	}
@@ -609,9 +632,10 @@ func (d *Daemon) start() error {
 
 	if d.cfg.GRPCPort > 0 {
 		d.grpc = gatewaydaemon.NewServer(gatewaydaemon.Config{
-			Pipeline:         pipeline,
-			TLSConfig:        tlsCfg,
-			PolicyAdminToken: d.cfg.PolicyAdminToken,
+			Pipeline:          pipeline,
+			TLSConfig:         tlsCfg,
+			PolicyAdminToken:  d.cfg.PolicyAdminToken,
+			PrincipalResolver: principalResolver,
 		})
 		lis, err := net.Listen("tcp", fmt.Sprintf(":%d", d.cfg.GRPCPort))
 		if err != nil {
@@ -762,6 +786,279 @@ func buildCredentialRouter(cfg Config) *credential.Router {
 	return router
 }
 
+func (d *Daemon) enforceStartupPreflight(doc *policy.Doc, workloadProvider principal.WorkloadProvider) error {
+	if !d.cfg.StrictPreflight {
+		return nil
+	}
+
+	if doc == nil {
+		return fmt.Errorf("startup preflight failed: policy gate (policy document unavailable)")
+	}
+	if d.wal == nil || d.store == nil {
+		return fmt.Errorf("startup preflight failed: provenance gate (wal/store must both be initialized)")
+	}
+	if workloadProvider == nil {
+		return fmt.Errorf("startup preflight failed: identity gate (no workload identity provider configured)")
+	}
+
+	identityCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	resolvedIdentity, err := workloadProvider.Identity(identityCtx)
+	if err != nil {
+		return fmt.Errorf("startup preflight failed: identity gate (resolve identity: %w)", err)
+	}
+	if resolvedIdentity == nil || strings.TrimSpace(resolvedIdentity.ID) == "" || !resolvedIdentity.Verified {
+		return fmt.Errorf("startup preflight failed: identity gate (workload identity must be verified)")
+	}
+	if !principal.IsTrustedVerificationMethod(resolvedIdentity.Method) {
+		return fmt.Errorf("startup preflight failed: identity gate (untrusted verification method %q)", resolvedIdentity.Method)
+	}
+
+	if policyRequiresCredentialSequestration(doc) && !hasCredentialSequestrationBackend(d.cfg) {
+		return fmt.Errorf("startup preflight failed: credential sequestration gate (policy requires brokered credentials but no broker backend is configured)")
+	}
+
+	if policyRequiresIDPProvider(doc) {
+		provider := strings.ToLower(strings.TrimSpace(d.cfg.IDPProvider))
+		if provider == "" {
+			return fmt.Errorf("startup preflight failed: idp gate (policy references principal/delegation claims but no idp provider is configured)")
+		}
+		if err := principalidp.ValidateProviderConfigFromEnv(provider); err != nil {
+			return fmt.Errorf("startup preflight failed: idp gate (%v)", err)
+		}
+	}
+
+	if missing := missingDeferBackends(doc, d.cfg); len(missing) > 0 {
+		return fmt.Errorf("startup preflight failed: defer backend gate (missing %s)", strings.Join(missing, ", "))
+	}
+
+	if err := d.enforceArtifactIntegrityPreflight(); err != nil {
+		return err
+	}
+
+	d.log.Info("startup preflight passed",
+		zap.String("workload_provider", workloadProvider.Name()),
+		zap.String("identity_method", resolvedIdentity.Method),
+		zap.Bool("credential_sequestration_required", policyRequiresCredentialSequestration(doc)),
+		zap.Bool("idp_required", policyRequiresIDPProvider(doc)),
+		zap.Bool("defer_effects_present", policyHasDeferEffects(doc)),
+		zap.String("integrity_manifest_path", strings.TrimSpace(d.cfg.IntegrityManifestPath)),
+		zap.String("buildinfo_expected_path", strings.TrimSpace(d.cfg.BuildInfoExpectedPath)),
+	)
+	return nil
+}
+
+func (d *Daemon) enforceArtifactIntegrityPreflight() error {
+	manifestPath := strings.TrimSpace(d.cfg.IntegrityManifestPath)
+	if manifestPath == "" {
+		return fmt.Errorf("startup preflight failed: integrity gate (--integrity-manifest is required in strict mode)")
+	}
+	rawManifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("startup preflight failed: integrity gate (read manifest: %w)", err)
+	}
+	manifest, err := artifactverify.LoadManifestJSON(rawManifest)
+	if err != nil {
+		return fmt.Errorf("startup preflight failed: integrity gate (parse manifest: %w)", err)
+	}
+	baseDir := strings.TrimSpace(d.cfg.IntegrityBaseDir)
+	if baseDir == "" {
+		baseDir = "."
+	}
+	if err := artifactverify.VerifyManifest(baseDir, manifest); err != nil {
+		return fmt.Errorf("startup preflight failed: integrity gate (manifest verification: %w)", err)
+	}
+
+	buildinfoPath := strings.TrimSpace(d.cfg.BuildInfoExpectedPath)
+	if buildinfoPath == "" {
+		return fmt.Errorf("startup preflight failed: integrity gate (--buildinfo-expected is required in strict mode)")
+	}
+	rawExpected, err := os.ReadFile(buildinfoPath)
+	if err != nil {
+		return fmt.Errorf("startup preflight failed: integrity gate (read buildinfo expected: %w)", err)
+	}
+	var expected reprobuild.Fingerprint
+	if err := json.Unmarshal(rawExpected, &expected); err != nil {
+		return fmt.Errorf("startup preflight failed: integrity gate (parse buildinfo expected: %w)", err)
+	}
+	actual, err := reprobuild.Current()
+	if err != nil {
+		return fmt.Errorf("startup preflight failed: integrity gate (load runtime buildinfo: %w)", err)
+	}
+	if diff := reprobuild.Compare(&expected, actual); len(diff) > 0 {
+		return fmt.Errorf("startup preflight failed: integrity gate (buildinfo mismatch: %s)", strings.Join(diff, "; "))
+	}
+
+	bomRaw, err := sbom.GenerateJSON("", "")
+	if err != nil {
+		return fmt.Errorf("startup preflight failed: sbom gate (generate cyclonedx: %w)", err)
+	}
+	var bomDoc struct {
+		BOMFormat  string `json:"bomFormat"`
+		Components []any  `json:"components"`
+	}
+	if err := json.Unmarshal(bomRaw, &bomDoc); err != nil {
+		return fmt.Errorf("startup preflight failed: sbom gate (parse cyclonedx: %w)", err)
+	}
+	if !strings.EqualFold(strings.TrimSpace(bomDoc.BOMFormat), "cyclonedx") {
+		return fmt.Errorf("startup preflight failed: sbom gate (unexpected bomFormat %q)", bomDoc.BOMFormat)
+	}
+	if len(bomDoc.Components) == 0 {
+		return fmt.Errorf("startup preflight failed: sbom gate (components empty)")
+	}
+
+	return nil
+}
+
+func policyRequiresCredentialSequestration(doc *policy.Doc) bool {
+	if doc == nil {
+		return false
+	}
+	for _, tool := range doc.Tools {
+		for _, tag := range tool.Tags {
+			normalized := strings.ToLower(strings.TrimSpace(tag))
+			if normalized == "credential:required" || normalized == "credential:broker" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasCredentialSequestrationBackend(cfg Config) bool {
+	if strings.TrimSpace(cfg.VaultAddr) != "" || strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_VAULT_ADDR")) != "" {
+		return true
+	}
+	if strings.TrimSpace(cfg.AWSSecretsRegion) != "" || strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_AWS_REGION")) != "" {
+		return true
+	}
+	if strings.TrimSpace(cfg.GCPSecretsProject) != "" || strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_GCP_PROJECT")) != "" {
+		return true
+	}
+	if strings.TrimSpace(cfg.AzureKeyVaultURL) != "" || strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_AZURE_VAULT_URL")) != "" {
+		return true
+	}
+	if strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_1PASSWORD_HOST")) != "" && strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_1PASSWORD_TOKEN")) != "" {
+		return true
+	}
+	if strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_INFISICAL_HOST")) != "" && strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_INFISICAL_TOKEN")) != "" {
+		return true
+	}
+	if parseBoolEnvDefault("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK", true) {
+		return true
+	}
+	return false
+}
+
+func policyRequiresIDPProvider(doc *policy.Doc) bool {
+	if doc == nil {
+		return false
+	}
+	requiresFromExpr := func(expr string) bool {
+		e := strings.ToLower(strings.TrimSpace(expr))
+		return strings.Contains(e, "principal.") || strings.Contains(e, "delegation.")
+	}
+
+	for _, rule := range doc.Rules {
+		if requiresFromExpr(rule.Match.When) {
+			return true
+		}
+	}
+	for _, tr := range doc.PhaseTransitions {
+		if requiresFromExpr(tr.Conditions) {
+			return true
+		}
+	}
+	for _, guard := range doc.CrossSessionGuards {
+		if strings.EqualFold(strings.TrimSpace(guard.Scope), "principal") {
+			return true
+		}
+	}
+	return false
+}
+
+func policyHasDeferEffects(doc *policy.Doc) bool {
+	if doc == nil {
+		return false
+	}
+	for _, rule := range doc.Rules {
+		if strings.EqualFold(strings.TrimSpace(rule.Effect), "defer") {
+			return true
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(doc.DefaultEffect), "defer") {
+		return true
+	}
+	if doc.Budget != nil && strings.EqualFold(strings.TrimSpace(doc.Budget.OnExceed), "defer") {
+		return true
+	}
+	for _, guard := range doc.ContextGuards {
+		if strings.EqualFold(strings.TrimSpace(guard.OnStale), "defer") ||
+			strings.EqualFold(strings.TrimSpace(guard.OnMissing), "defer") ||
+			strings.EqualFold(strings.TrimSpace(guard.OnInconsistent), "defer") {
+			return true
+		}
+	}
+	for _, tr := range doc.PhaseTransitions {
+		if strings.EqualFold(strings.TrimSpace(tr.Effect), "defer") {
+			return true
+		}
+	}
+	if doc.PhaseEnforcement != nil && strings.EqualFold(strings.TrimSpace(doc.PhaseEnforcement.OnOutOfPhaseCall), "defer") {
+		return true
+	}
+	for _, guard := range doc.CrossSessionGuards {
+		if strings.EqualFold(strings.TrimSpace(guard.OnExceed), "defer") {
+			return true
+		}
+	}
+	if doc.LoopGovernance != nil && strings.EqualFold(strings.TrimSpace(doc.LoopGovernance.OnMaxReached), "defer") {
+		return true
+	}
+	if doc.LoopGovernance != nil && doc.LoopGovernance.ConvergenceTrack != nil {
+		if strings.EqualFold(strings.TrimSpace(doc.LoopGovernance.ConvergenceTrack.OnEvasion), "defer") {
+			return true
+		}
+	}
+	for _, out := range doc.OutputPolicies {
+		for _, rule := range out.Rules {
+			if strings.EqualFold(strings.TrimSpace(rule.OnMatch), "defer") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func missingDeferBackends(doc *policy.Doc, cfg Config) []string {
+	if !policyHasDeferEffects(doc) || doc == nil || doc.DeferPriority == nil {
+		return nil
+	}
+
+	channels := map[string]struct{}{}
+	addChannel := func(tier *policy.DeferTier) {
+		if tier == nil {
+			return
+		}
+		channel := strings.ToLower(strings.TrimSpace(tier.Channel))
+		if channel != "" {
+			channels[channel] = struct{}{}
+		}
+	}
+	addChannel(doc.DeferPriority.Critical)
+	addChannel(doc.DeferPriority.High)
+	addChannel(doc.DeferPriority.Normal)
+
+	missing := []string{}
+	if _, ok := channels["slack"]; ok && strings.TrimSpace(cfg.SlackWebhook) == "" {
+		missing = append(missing, "--slack-webhook")
+	}
+	if _, ok := channels["pagerduty"]; ok && strings.TrimSpace(cfg.PagerDutyRoutingKey) == "" {
+		missing = append(missing, "--pagerduty-routing-key")
+	}
+	return missing
+}
+
 func extractPolicyCallbacks(doc *policy.Doc) any {
 	if doc == nil {
 		return nil
@@ -880,6 +1177,118 @@ func buildPhaseManagerFromPolicy(doc *policy.Doc) *phases.PhaseManager {
 	return phases.NewPhaseManager(ordered)
 }
 
+func buildPrincipalTokenResolver(cfg Config, log *zap.Logger) func(context.Context, string) (*principal.Identity, error) {
+	provider := strings.ToLower(strings.TrimSpace(cfg.IDPProvider))
+	if provider == "" {
+		return nil
+	}
+	if err := principalidp.ValidateProviderConfigFromEnv(provider); err != nil {
+		log.Warn("idp resolver disabled: invalid provider configuration", zap.String("provider", provider), zap.Error(err))
+		return nil
+	}
+
+	verifier, err := principalidp.NewVerifierFromEnv(provider)
+	if err != nil {
+		log.Warn("idp resolver disabled: failed to configure provider", zap.String("provider", provider), zap.Error(err))
+		return nil
+	}
+	chain := principalidp.NewProviderChain(verifier)
+	log.Info("idp principal resolver configured", zap.String("provider", provider))
+
+	return func(ctx context.Context, token string) (*principal.Identity, error) {
+		verified, resolvedProvider, err := chain.VerifyToken(ctx, token)
+		if err != nil {
+			return nil, err
+		}
+		resolved := principalFromIDPIdentity(verified, resolvedProvider)
+		if resolved == nil {
+			return nil, fmt.Errorf("idp verification returned no resolvable principal identity")
+		}
+		return resolved, nil
+	}
+}
+
+func principalFromIDPIdentity(verified *principalidp.VerifiedIdentity, provider string) *principal.Identity {
+	if verified == nil {
+		return nil
+	}
+
+	id := strings.TrimSpace(verified.Subject)
+	if id == "" {
+		id = strings.TrimSpace(verified.Email)
+	}
+	if id == "" {
+		id = strings.TrimSpace(verified.Name)
+	}
+	if id == "" {
+		return nil
+	}
+
+	role := ""
+	if len(verified.Roles) > 0 {
+		role = strings.TrimSpace(verified.Roles[0])
+	}
+	if role == "" && len(verified.Groups) > 0 {
+		role = strings.TrimSpace(verified.Groups[0])
+	}
+
+	tier := ""
+	if verified.RawClaims != nil {
+		tier = strings.TrimSpace(firstStringClaim(verified.RawClaims, "tier", "plan", "subscription_tier"))
+	}
+
+	org := strings.TrimSpace(verified.Org)
+	if org == "" && verified.RawClaims != nil {
+		org = strings.TrimSpace(firstStringClaim(verified.RawClaims, "org", "hd", "tenant", "tenant_id", "tid"))
+	}
+
+	method := "idp_oidc"
+	if normalizedProvider := strings.ToLower(strings.TrimSpace(provider)); normalizedProvider != "" {
+		switch normalizedProvider {
+		case "ldap":
+			method = "ldap_bind"
+		case "local", "default":
+			method = "idp_local"
+		default:
+			method = normalizedProvider + "_oidc"
+		}
+	}
+
+	return &principal.Identity{
+		ID:       id,
+		Tier:     tier,
+		Role:     role,
+		Org:      org,
+		Verified: true,
+		Method:   method,
+	}
+}
+
+func firstStringClaim(claims map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value, ok := claims[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			if v := strings.TrimSpace(typed); v != "" {
+				return v
+			}
+		case []any:
+			for _, item := range typed {
+				if s, ok := item.(string); ok {
+					s = strings.TrimSpace(s)
+					if s != "" {
+						return s
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func parseIntEnv(key string, fallback int) int {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
@@ -902,6 +1311,18 @@ func parseDurationEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+func parseBoolEnvDefault(key string, fallback bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+	return v
 }
 
 func (d *Daemon) stop() error {
@@ -1261,15 +1682,30 @@ func (d *Daemon) startPolicyWatcher() {
 }
 
 func (d *Daemon) buildAdapterTLSConfig() (*tls.Config, error) {
-	if d.cfg.TLSCertFile == "" && d.cfg.TLSKeyFile == "" && d.cfg.ClientCAFile == "" {
+	if d.cfg.TLSCertFile == "" && d.cfg.TLSKeyFile == "" && d.cfg.ClientCAFile == "" && !d.cfg.TLSAuto {
 		return nil, nil
 	}
-	if d.cfg.TLSCertFile == "" || d.cfg.TLSKeyFile == "" {
+	if !d.cfg.TLSAuto && (d.cfg.TLSCertFile == "" || d.cfg.TLSKeyFile == "") {
 		return nil, fmt.Errorf("--tls-cert and --tls-key must be provided together")
 	}
-	cert, err := tls.LoadX509KeyPair(d.cfg.TLSCertFile, d.cfg.TLSKeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("load tls cert/key: %w", err)
+	var (
+		cert tls.Certificate
+		err  error
+	)
+	if d.cfg.TLSCertFile != "" && d.cfg.TLSKeyFile != "" {
+		cert, err = tls.LoadX509KeyPair(d.cfg.TLSCertFile, d.cfg.TLSKeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load tls cert/key: %w", err)
+		}
+	} else {
+		cert, err = generateSelfSignedAdapterCertificate()
+		if err != nil {
+			return nil, fmt.Errorf("generate self-signed tls cert: %w", err)
+		}
+		d.log.Warn("adapter TLS auto-cert enabled with ephemeral self-signed certificate",
+			zap.String("mode", "auto"),
+			zap.Duration("valid_for", 24*time.Hour),
+		)
 	}
 	cfg := &tls.Config{
 		MinVersion:   tls.VersionTLS12,
@@ -1288,6 +1724,58 @@ func (d *Daemon) buildAdapterTLSConfig() (*tls.Config, error) {
 		cfg.ClientAuth = tls.RequireAndVerifyClientCert
 	}
 	return cfg, nil
+}
+
+func generateSelfSignedAdapterCertificate() (tls.Certificate, error) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate private key: %w", err)
+	}
+
+	serialLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serial, err := rand.Int(rand.Reader, serialLimit)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("generate serial: %w", err)
+	}
+
+	now := time.Now().UTC()
+	certTemplate := x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName: "faramesh-local",
+		},
+		NotBefore:             now.Add(-1 * time.Minute),
+		NotAfter:              now.Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{"localhost"},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+	}
+	if hostname, hostErr := os.Hostname(); hostErr == nil {
+		hostname = strings.TrimSpace(hostname)
+		if hostname != "" && !strings.EqualFold(hostname, "localhost") {
+			certTemplate.DNSNames = append(certTemplate.DNSNames, hostname)
+		}
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, &certTemplate, &certTemplate, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("create certificate: %w", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("marshal private key: %w", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: pkcs8})
+
+	generated, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("build key pair: %w", err)
+	}
+	return generated, nil
 }
 
 // horizonSyncAdapter adapts cloud.Syncer to core.DecisionSyncer without
