@@ -1,19 +1,20 @@
 module github.com/faramesh/faramesh-core
 
-go 1.25.0
+go 1.24.2
 
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
-	github.com/cilium/ebpf v0.21.0
+	github.com/cilium/ebpf v0.16.0
 	github.com/expr-lang/expr v1.17.8
-	github.com/fatih/color v1.19.0
+	github.com/fatih/color v1.18.0
+	github.com/coreos/go-oidc/v3 v3.11.0
 	github.com/google/uuid v1.6.0
-	github.com/jackc/pgx/v5 v5.9.0
+	github.com/jackc/pgx/v5 v5.7.4
 	github.com/redis/go-redis/v9 v9.18.0
-	github.com/riverqueue/river v0.31.0
-	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.31.0
-	github.com/riverqueue/river/rivertype v0.31.0
-	github.com/spf13/cobra v1.10.2
+	github.com/riverqueue/river v0.14.2
+	github.com/riverqueue/river/riverdriver/riverpgxv5 v0.14.2
+	github.com/riverqueue/river/rivertype v0.14.2
+	github.com/spf13/cobra v1.8.1
 	go.uber.org/zap v1.27.1
 	golang.org/x/text v0.35.0
 	golang.org/x/time v0.15.0
