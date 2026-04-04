@@ -80,7 +80,13 @@ func GenerateJSON(mainModulePath, mainModuleVersion string) ([]byte, error) {
 		})
 	}
 
-	add(bi.Main.Path, mainModuleVersion)
+	// In test binaries debug.ReadBuildInfo returns an empty Main.Path and no
+	// Deps. Fall back to the explicitly supplied mainModulePath so the BOM is
+	// never empty (the test / CI caller can always pass the real module path).
+	if bi.Main.Path == "" && mainModulePath == "" {
+		mainModulePath = "github.com/faramesh/faramesh-core"
+	}
+	add(mainModulePath, mainModuleVersion)
 	for _, m := range bi.Deps {
 		if m.Path == "" {
 			continue
