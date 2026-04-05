@@ -2,7 +2,7 @@ agent restrict-http-external {
   default deny
 
   rules {
-    permit http/* when host matches "localhost|127.0.0.1|internal"
+    permit http/* when args.host != nil && args.host matches "localhost|127.0.0.1|internal"
     defer http/* reason: "external HTTP requests require approval"
   }
 }

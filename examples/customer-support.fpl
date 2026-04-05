@@ -15,15 +15,15 @@ agent support-bot {
   }
 
   phase resolve {
-    permit issue_credit when amount <= 25
-    defer issue_credit when amount > 25
+    permit issue_credit when args.amount <= 25
+    defer issue_credit when args.amount > 25
       notify: "support-lead"
       reason: "credit above $25 requires approval"
 
     permit send_email
-      when recipients <= 1
+      when args_array_len("recipients") <= 1
     deny! send_email
-      when recipients > 10
+      when args_array_len("recipients") > 10
       reason: "mass email blocked"
   }
 

@@ -12,14 +12,14 @@ agent infra-bot {
   }
 
   rules {
-    deny! shell/run when cmd matches "rm -rf|DROP TABLE|terraform destroy"
+    deny! shell/run when args.cmd != nil && args.cmd matches "rm -rf|DROP TABLE|terraform destroy"
       reason: "destructive command blocked"
 
-    defer shell/run when cmd matches "terraform|kubectl|docker"
+    defer shell/run when args.cmd != nil && args.cmd matches "terraform|kubectl|docker"
       notify: "platform-team"
       reason: "infrastructure change requires approval"
 
-    permit shell/run when cmd matches "ls|cat|grep|find|echo"
+    permit shell/run when args.cmd != nil && args.cmd matches "ls|cat|grep|find|echo"
 
     deny * reason: "unlisted tools denied by default"
   }

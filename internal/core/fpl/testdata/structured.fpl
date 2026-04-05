@@ -24,8 +24,8 @@ agent payment-bot {
 
   rules {
     deny! shell/* reason: "never shell"
-    defer stripe/refund when amount > 500 notify: "finance" reason: "high value refund"
-    permit stripe/* when amount <= 500
+    defer stripe/refund when args.amount > 500 notify: "finance" reason: "high value refund"
+    permit stripe/* when args.amount <= 500
     deny read_customer when not purpose("refund_processing") reason: "purpose required"
   }
 

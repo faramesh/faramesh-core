@@ -96,6 +96,25 @@ func fplDocToPolicy(fplDoc *fpl.Document) *Doc {
 				doc.Vars[k] = v
 			}
 		}
+		if strings.TrimSpace(ag.Model) != "" {
+			if doc.Vars == nil {
+				doc.Vars = make(map[string]any)
+			}
+			doc.Vars["agent.model"] = strings.TrimSpace(ag.Model)
+			doc.Vars["model_name"] = strings.TrimSpace(ag.Model)
+		}
+		if strings.TrimSpace(ag.Framework) != "" {
+			if doc.Vars == nil {
+				doc.Vars = make(map[string]any)
+			}
+			doc.Vars["agent.framework"] = strings.TrimSpace(ag.Framework)
+		}
+		if strings.TrimSpace(ag.Version) != "" {
+			if doc.Vars == nil {
+				doc.Vars = make(map[string]any)
+			}
+			doc.Vars["agent.version"] = strings.TrimSpace(ag.Version)
+		}
 
 		if len(ag.Budgets) > 0 {
 			b := ag.Budgets[0]
@@ -134,6 +153,12 @@ func fplDocToPolicy(fplDoc *fpl.Document) *Doc {
 					toolID := strings.TrimSpace(target)
 					if toolID == "" {
 						continue
+					}
+					if !strings.Contains(toolID, "/") {
+						base := strings.TrimSpace(cred.ID)
+						if base != "" {
+							toolID = base + "/" + toolID
+						}
 					}
 					entry := doc.Tools[toolID]
 					entry.Tags = appendUniqueStrings(entry.Tags, tags...)
@@ -195,6 +220,7 @@ func fplRuleToRule(r *fpl.Rule, seq int) Rule {
 		ID:         fmt.Sprintf("fpl-%d", seq),
 		Match:      Match{Tool: r.Tool, When: when},
 		Effect:     effect,
+		Notify:     strings.TrimSpace(r.Notify),
 		Reason:     reason,
 		ReasonCode: reasonCode,
 	}
