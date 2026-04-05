@@ -139,6 +139,7 @@ type Config struct {
 	PhaseManager     *phases.PhaseManager
 	PolicySourceType string
 	PolicySourceID   string
+	StrictModelVerification bool
 	HMACKey          []byte
 	Log              *zap.Logger
 }

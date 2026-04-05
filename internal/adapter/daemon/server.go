@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/faramesh/faramesh-core/internal/core"
+	"github.com/faramesh/faramesh-core/internal/core/principal"
 	deferPkg "github.com/faramesh/faramesh-core/internal/core/defer"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
@@ -51,9 +52,10 @@ type Server struct {
 
 // Config holds construction parameters.
 type Config struct {
-	Pipeline         *core.Pipeline
-	TLSConfig        *tls.Config
-	PolicyAdminToken string
+	Pipeline          *core.Pipeline
+	TLSConfig         *tls.Config
+	PolicyAdminToken  string
+	PrincipalResolver func(context.Context, string) (*principal.Identity, error)
 }
 
 // NewServer creates a new A2 daemon server.
