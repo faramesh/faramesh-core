@@ -118,6 +118,30 @@ func fplDocToPolicy(fplDoc *fpl.Document) *Doc {
 			}
 		}
 
+		if len(ag.Credentials) > 0 {
+			if doc.Tools == nil {
+				doc.Tools = make(map[string]Tool)
+			}
+			for _, cred := range ag.Credentials {
+				if cred == nil {
+					continue
+				}
+				tags := []string{"credential:broker", "credential:required"}
+				if scope := strings.TrimSpace(cred.MaxScope); scope != "" {
+					tags = append(tags, "credential:scope:"+scope)
+				}
+				for _, target := range cred.Scope {
+					toolID := strings.TrimSpace(target)
+					if toolID == "" {
+						continue
+					}
+					entry := doc.Tools[toolID]
+					entry.Tags = appendUniqueStrings(entry.Tags, tags...)
+					doc.Tools[toolID] = entry
+				}
+			}
+		}
+
 		for i, r := range ag.Rules {
 			doc.Rules = append(doc.Rules, fplRuleToRule(r, i))
 		}
@@ -174,6 +198,37 @@ func fplRuleToRule(r *fpl.Rule, seq int) Rule {
 		Reason:     reason,
 		ReasonCode: reasonCode,
 	}
+}
+
+func appendUniqueStrings(existing []string, values ...string) []string {
+	if len(values) == 0 {
+		return existing
+	}
+	seen := make(map[string]struct{}, len(existing)+len(values))
+	out := make([]string, 0, len(existing)+len(values))
+	for _, raw := range existing {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	for _, raw := range values {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
 }
 
 // LoadBytes parses policy YAML from raw bytes.

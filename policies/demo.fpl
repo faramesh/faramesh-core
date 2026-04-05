@@ -2,12 +2,19 @@ agent demo {
   default permit
 
   rules {
-    deny! shell/run when cmd matches "rm\\s+-[rf]|mkfs|dd if="
+    deny! shell/run when args.cmd != nil && args.cmd matches "rm\\s+-[rf]|mkfs|dd if="
       reason: "destructive shell command blocked by policy"
-    defer stripe/refund when amount > 500
+    deny stripe/refund when principal.verified != true
+      reason: "refund requires verified principal"
+    defer stripe/refund when args.amount > 500 && principal.verified == true
       reason: "refund exceeds threshold and requires finance approval"
-    deny send_email when recipients > 50
+    deny send_email when args_array_len("recipients") > 50
       reason: "mass email to more than 50 recipients requires manual review"
-    permit stripe/refund when amount <= 500
+    permit stripe/refund when args.amount <= 500 && principal.verified == true
+  }
+
+  credential stripe {
+    scope stripe/refund
+    max_scope "refund:amount<=500"
   }
 }
