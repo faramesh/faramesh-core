@@ -121,7 +121,7 @@ func TestPolicyValidateFPLCatchesEngineCompileErrors(t *testing.T) {
   default deny
 
   rules {
-    defer stripe/refund when amount > 100
+		defer stripe/refund when unknown_symbol > 100
   }
 }`
 	if err := os.WriteFile(fplPath, []byte(fplSrc), 0o600); err != nil {
@@ -134,7 +134,7 @@ func TestPolicyValidateFPLCatchesEngineCompileErrors(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected validation failure, got success: %s", string(out))
 	}
-	if !strings.Contains(string(out), "invalid when expression") && !strings.Contains(string(out), "unknown name amount") {
+	if !strings.Contains(string(out), "invalid when expression") && !strings.Contains(string(out), "unknown name unknown_symbol") {
 		t.Fatalf("unexpected validation error: %s", string(out))
 	}
 }
