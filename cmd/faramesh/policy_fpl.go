@@ -166,6 +166,9 @@ func runPolicyFPLDecompile(_ *cobra.Command, args []string) error {
 		decompilePhases(doc.Phases),
 		decompileRules(doc.Rules),
 		decompileBudget(doc.Budget),
+		nil,
+		nil,
+		nil,
 	)
 	fmt.Print(out)
 	return nil
