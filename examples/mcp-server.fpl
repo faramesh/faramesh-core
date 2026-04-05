@@ -7,15 +7,15 @@ agent mcp-server {
       reason: "MCP servers must not run shell commands"
 
     deny! fs/write
-      when path matches "/etc|/usr|/var"
+      when args.path != nil && args.path matches "/etc|/usr|/var"
       reason: "system path write blocked"
 
     permit tools/list
     permit tools/call
-      when tool_name matches "search|read|query"
+      when args.tool_name != nil && args.tool_name matches "search|read|query"
 
     defer tools/call
-      when tool_name matches "delete|drop|destroy"
+      when args.tool_name != nil && args.tool_name matches "delete|drop|destroy"
       notify: "ops-team"
   }
 }

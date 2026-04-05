@@ -11,19 +11,19 @@ import (
 
 // Doc is the top-level structure of a faramesh policy file.
 type Doc struct {
-	FarameshVersion string            `yaml:"faramesh-version"`
-	AgentID         string            `yaml:"agent-id"`
-	Vars            map[string]any    `yaml:"vars"`
-	Tools           map[string]Tool   `yaml:"tools"`
-	Phases          map[string]Phase  `yaml:"phases"`
-	Rules           []Rule            `yaml:"rules"`
-	PostRules       []postcondition.PostRule `yaml:"post_rules"`
-	Budget          *Budget           `yaml:"budget"`
-	Session         *SessionConfig    `yaml:"session"`
-	DefaultEffect   string            `yaml:"default_effect"`
-	ContextGuards   []ContextGuard    `yaml:"context_guards"`
-	Webhooks        *WebhookConfig    `yaml:"webhooks"`
-	MaxOutputBytes  int               `yaml:"max_output_bytes"`
+	FarameshVersion string                      `yaml:"faramesh-version"`
+	AgentID         string                      `yaml:"agent-id"`
+	Vars            map[string]any              `yaml:"vars"`
+	Tools           map[string]Tool             `yaml:"tools"`
+	Phases          map[string]Phase            `yaml:"phases"`
+	Rules           []Rule                      `yaml:"rules"`
+	PostRules       []postcondition.PostRule    `yaml:"post_rules"`
+	Budget          *Budget                     `yaml:"budget"`
+	Session         *SessionConfig              `yaml:"session"`
+	DefaultEffect   string                      `yaml:"default_effect"`
+	ContextGuards   []ContextGuard              `yaml:"context_guards"`
+	Webhooks        *WebhookConfig              `yaml:"webhooks"`
+	MaxOutputBytes  int                         `yaml:"max_output_bytes"`
 	Compensation    map[string]CompensationMeta `yaml:"compensation"`
 
 	// ── v1.0 Extensions ──
@@ -98,11 +98,12 @@ type Phase struct {
 // Rule is a single governance rule. Rules are evaluated in document order.
 // The first matching rule's effect is applied (first-match-wins).
 type Rule struct {
-	ID           string `yaml:"id"`
-	Match        Match  `yaml:"match"`
-	Effect       string `yaml:"effect"`
-	Reason       string `yaml:"reason"`
-	ReasonCode   string `yaml:"reason_code"`
+	ID               string `yaml:"id"`
+	Match            Match  `yaml:"match"`
+	Effect           string `yaml:"effect"`
+	Notify           string `yaml:"notify,omitempty"`
+	Reason           string `yaml:"reason"`
+	ReasonCode       string `yaml:"reason_code"`
 	IncidentCategory string `yaml:"incident_category"`
 	IncidentSeverity string `yaml:"incident_severity"`
 }
@@ -114,7 +115,7 @@ type Match struct {
 	Tool string `yaml:"tool"`
 
 	// When is an expr-lang expression evaluated against the call context.
-	// Available variables: args, vars, session, tool
+	// Available variables: args, vars, session, tool, principal, delegation, time
 	When string `yaml:"when"`
 }
 
@@ -232,13 +233,13 @@ type ReadSanitizationConf struct {
 
 // CrossSessionGuard detects accumulation attacks across sessions.
 type CrossSessionGuard struct {
-	Scope             string `yaml:"scope"`             // "principal"
-	ToolPattern       string `yaml:"tool_pattern"`
-	Metric            string `yaml:"metric"`            // "unique_record_count", "call_count"
-	Window            string `yaml:"window"`            // e.g. "24h"
-	MaxUniqueRecords  int    `yaml:"max_unique_records"`
-	OnExceed          string `yaml:"on_exceed"`         // "deny" or "defer"
-	Reason            string `yaml:"reason"`
+	Scope            string `yaml:"scope"` // "principal"
+	ToolPattern      string `yaml:"tool_pattern"`
+	Metric           string `yaml:"metric"` // "unique_record_count", "call_count"
+	Window           string `yaml:"window"` // e.g. "24h"
+	MaxUniqueRecords int    `yaml:"max_unique_records"`
+	OnExceed         string `yaml:"on_exceed"` // "deny" or "defer"
+	Reason           string `yaml:"reason"`
 }
 
 // DeferPriorityConfig configures triage tiers for DEFER events.
@@ -250,11 +251,11 @@ type DeferPriorityConfig struct {
 
 // DeferTier defines SLA and routing for a DEFER priority level.
 type DeferTier struct {
-	Criteria              string `yaml:"criteria"`               // expr-lang expression
-	SLASeconds            int    `yaml:"sla_seconds"`
-	Channel               string `yaml:"channel"`                // "pagerduty", "slack", etc.
-	EscalationAfterSecs   int    `yaml:"escalation_after_seconds"`
-	AutoDenyAfterSecs     int    `yaml:"auto_deny_after_seconds"`
+	Criteria            string `yaml:"criteria"` // expr-lang expression
+	SLASeconds          int    `yaml:"sla_seconds"`
+	Channel             string `yaml:"channel"` // "pagerduty", "slack", etc.
+	EscalationAfterSecs int    `yaml:"escalation_after_seconds"`
+	AutoDenyAfterSecs   int    `yaml:"auto_deny_after_seconds"`
 }
 
 // ParallelBudget configures aggregate cost limits across parallel agents.
@@ -268,12 +269,12 @@ type ParallelBudget struct {
 
 // LoopGovernance configures critique/loop pattern governance.
 type LoopGovernance struct {
-	AgentID           string                 `yaml:"agent_id"`
-	MaxIterations     int                    `yaml:"max_iterations"`
-	MaxTotalCostUSD   float64                `yaml:"max_total_cost_usd"`
-	MaxDurationSecs   int                    `yaml:"max_duration_seconds"`
-	OnMaxReached      string                 `yaml:"on_max_reached"` // "deny" or "defer"
-	ConvergenceTrack  *ConvergenceConfig     `yaml:"convergence_tracking"`
+	AgentID          string             `yaml:"agent_id"`
+	MaxIterations    int                `yaml:"max_iterations"`
+	MaxTotalCostUSD  float64            `yaml:"max_total_cost_usd"`
+	MaxDurationSecs  int                `yaml:"max_duration_seconds"`
+	OnMaxReached     string             `yaml:"on_max_reached"` // "deny" or "defer"
+	ConvergenceTrack *ConvergenceConfig `yaml:"convergence_tracking"`
 }
 
 // ConvergenceConfig detects when a loop is optimizing against governance.
@@ -286,23 +287,23 @@ type ConvergenceConfig struct {
 
 // OrchestratorManifest declares all permitted sub-agent invocations.
 type OrchestratorManifest struct {
-	AgentID                  string              `yaml:"agent_id"`
-	PermittedInvocations     []AgentInvocation   `yaml:"permitted_invocations"`
+	AgentID                    string            `yaml:"agent_id"`
+	PermittedInvocations       []AgentInvocation `yaml:"permitted_invocations"`
 	UndeclaredInvocationPolicy string            `yaml:"undeclared_invocation_policy"` // "deny"
 }
 
 // AgentInvocation declares a permitted sub-agent invocation.
 type AgentInvocation struct {
-	AgentID                string `yaml:"agent_id"`
-	MaxInvocationsPerSession int  `yaml:"max_invocations_per_session"`
-	RequiresPriorApproval  bool   `yaml:"requires_prior_approval"`
+	AgentID                  string `yaml:"agent_id"`
+	MaxInvocationsPerSession int    `yaml:"max_invocations_per_session"`
+	RequiresPriorApproval    bool   `yaml:"requires_prior_approval"`
 }
 
 // ToolSchema declares a versioned schema for a governed tool.
 type ToolSchema struct {
-	Name       string                   `yaml:"name"`
-	Version    string                   `yaml:"version"`
-	Parameters map[string]ParamSchema   `yaml:"parameters"`
+	Name       string                 `yaml:"name"`
+	Version    string                 `yaml:"version"`
+	Parameters map[string]ParamSchema `yaml:"parameters"`
 }
 
 // ParamSchema describes a tool parameter's type and constraints.
@@ -341,29 +342,29 @@ type OutputPolicy struct {
 
 // OutputRule is a single rule in an output policy.
 type OutputRule struct {
-	ID        string            `yaml:"id"`
-	Scan      map[string]bool   `yaml:"scan"` // e.g. "entity_extraction": true
-	Condition string            `yaml:"condition"` // expr-lang
-	OnMatch   string            `yaml:"on_match"`  // "deny" or "defer"
-	Reason    string            `yaml:"reason"`
+	ID        string          `yaml:"id"`
+	Scan      map[string]bool `yaml:"scan"`      // e.g. "entity_extraction": true
+	Condition string          `yaml:"condition"` // expr-lang
+	OnMatch   string          `yaml:"on_match"`  // "deny" or "defer"
+	Reason    string          `yaml:"reason"`
 }
 
 // ExecutionIsolation configures sandbox/microVM requirements.
 type ExecutionIsolation struct {
-	Enabled         bool                        `yaml:"enabled"`
-	DefaultBackend  string                      `yaml:"default_backend"` // "firecracker", "gvisor", "docker_sandbox"
-	ToolPolicy      map[string]string           `yaml:"tool_isolation_policy"` // tool pattern -> "required"|"optional"|"none"
-	Backends        map[string]IsolationBackend `yaml:"backends"`
+	Enabled        bool                        `yaml:"enabled"`
+	DefaultBackend string                      `yaml:"default_backend"`       // "firecracker", "gvisor", "docker_sandbox"
+	ToolPolicy     map[string]string           `yaml:"tool_isolation_policy"` // tool pattern -> "required"|"optional"|"none"
+	Backends       map[string]IsolationBackend `yaml:"backends"`
 }
 
 // IsolationBackend configures a specific sandbox backend.
 type IsolationBackend struct {
-	Runtime       string `yaml:"runtime"`
-	Platform      string `yaml:"platform"`
-	NetworkMode   string `yaml:"network_mode"`
-	ReadOnly      bool   `yaml:"read_only"`
-	MemSizeMB     int    `yaml:"mem_size_mb"`
-	VCPUCount     int    `yaml:"vcpu_count"`
+	Runtime     string `yaml:"runtime"`
+	Platform    string `yaml:"platform"`
+	NetworkMode string `yaml:"network_mode"`
+	ReadOnly    bool   `yaml:"read_only"`
+	MemSizeMB   int    `yaml:"mem_size_mb"`
+	VCPUCount   int    `yaml:"vcpu_count"`
 }
 
 // SessionConfig configures session behavior.

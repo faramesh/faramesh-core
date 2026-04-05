@@ -26,19 +26,19 @@ agent payment-bot {
   rules {
     deny! shell/* reason: "never shell"
 
-    defer stripe/refund when amount > 500
+    defer stripe/refund when args.amount > 500
       notify: "finance"
       reason: "high value refund"
 
-    permit stripe/* when amount <= 500
+    permit stripe/* when args.amount <= 500
 
     deny read_customer
       when not purpose("refund_processing")
       reason: "purpose required"
 
     deny stripe/refund
-      when session.sum(stripe/refund.amount, window=1h) > 2000
-      reason: "aggregate refund limit exceeded"
+      when history_tool_count("stripe/refund") >= 5
+      reason: "high refund volume limit exceeded"
   }
 
   delegate fraud-check-bot {

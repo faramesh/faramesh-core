@@ -2,6 +2,7 @@ package fpl
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -28,33 +29,33 @@ type Document struct {
 }
 
 type AgentBlock struct {
-	ID            string
-	Default       string // "deny" | "permit"
-	Model         string
-	Framework     string
-	Version       string
-	Budgets       []*BudgetBlock
-	Phases        []*PhaseBlock
-	Rules         []*Rule
-	Delegates     []*DelegateBlock
-	Ambients      []*AmbientBlock
-	Selectors     []*SelectorBlock
-	Credentials   []*CredentialBlock
-	Vars          map[string]string
+	ID          string
+	Default     string // "deny" | "permit"
+	Model       string
+	Framework   string
+	Version     string
+	Budgets     []*BudgetBlock
+	Phases      []*PhaseBlock
+	Rules       []*Rule
+	Delegates   []*DelegateBlock
+	Ambients    []*AmbientBlock
+	Selectors   []*SelectorBlock
+	Credentials []*CredentialBlock
+	Vars        map[string]string
 }
 
 type SystemBlock struct {
-	ID                   string
-	Version              string
-	OnPolicyLoadFailure  string
-	KillSwitchDefault    string
-	MaxOutputBytes       int
+	ID                  string
+	Version             string
+	OnPolicyLoadFailure string
+	KillSwitchDefault   string
+	MaxOutputBytes      int
 }
 
 type BudgetBlock struct {
-	ID      string // "session" | "daily" | custom
-	Max     float64
-	Daily   float64
+	ID       string // "session" | "daily" | custom
+	Max      float64
+	Daily    float64
 	MaxCalls int64
 	OnExceed string
 }
@@ -202,7 +203,7 @@ func tokenize(src string) ([]token, error) {
 	return tokens, nil
 }
 
-func isDigit(c byte) bool      { return c >= '0' && c <= '9' }
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 func isIdentStart(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' ||
 		c == '>' || c == '<' || c == '=' || c == '(' || c == ')' ||
@@ -1147,7 +1148,13 @@ func DecompileToFPL(agentID, defaultEffect string, vars map[string]string,
 		b.WriteString("\n")
 	}
 
-	for k, v := range vars {
+	varKeys := make([]string, 0, len(vars))
+	for k := range vars {
+		varKeys = append(varKeys, k)
+	}
+	sort.Strings(varKeys)
+	for _, k := range varKeys {
+		v := vars[k]
 		b.WriteString("  var ")
 		b.WriteString(k)
 		b.WriteString(" ")
@@ -1178,7 +1185,14 @@ func DecompileToFPL(agentID, defaultEffect string, vars map[string]string,
 		b.WriteString("  }\n")
 	}
 
-	for name, tools := range phases {
+	phaseNames := make([]string, 0, len(phases))
+	for name := range phases {
+		phaseNames = append(phaseNames, name)
+	}
+	sort.Strings(phaseNames)
+	for _, name := range phaseNames {
+		tools := append([]string(nil), phases[name]...)
+		sort.Strings(tools)
 		b.WriteString("\n  phase ")
 		b.WriteString(name)
 		b.WriteString(" {\n")
@@ -1222,11 +1236,11 @@ func DecompileToFPL(agentID, defaultEffect string, vars map[string]string,
 }
 
 type DecompileRule struct {
-	Effect    string
-	Tool      string
-	When      string
-	Notify    string
-	Reason    string
+	Effect     string
+	Tool       string
+	When       string
+	Notify     string
+	Reason     string
 	StrictDeny bool
 }
 
