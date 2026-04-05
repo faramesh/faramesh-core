@@ -81,6 +81,19 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      - name: Check Docker Hub credentials
+        id: dockerhub_creds
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Docker Hub credentials not set; skipping Docker Hub publish"
+          fi
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -89,7 +102,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Log in to Docker Hub
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        if: ${{ steps.dockerhub_creds.outputs.available == 'true' }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -116,7 +129,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push Docker Hub
-        if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        if: ${{ steps.dockerhub_creds.outputs.available == 'true' }}
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -218,14 +231,27 @@ jobs:
     name: Update Homebrew formula
     runs-on: ubuntu-latest
     needs: github-release
-    if: ${{ secrets.TAP_GITHUB_TOKEN != '' }}
 
     steps:
+      - name: Check Homebrew tap token
+        id: tap_token
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -n "$TAP_GITHUB_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "TAP_GITHUB_TOKEN not set; skipping Homebrew update"
+          fi
+
       - name: Extract version
         id: version
+        if: ${{ steps.tap_token.outputs.available == 'true' }}
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Download SHA256 files
+        if: ${{ steps.tap_token.outputs.available == 'true' }}
         run: |
           VERSION=${{ steps.version.outputs.version }}
           BASE="https://github.com/faramesh/faramesh-core/releases/download/v${VERSION}"
@@ -239,6 +265,7 @@ jobs:
           echo "linux-arm64:  $(cat sha-linux-arm64)"
 
       - name: Checkout homebrew-tap
+        if: ${{ steps.tap_token.outputs.available == 'true' }}
         uses: actions/checkout@v4
         with:
           repository: faramesh/homebrew-tap
@@ -246,6 +273,7 @@ jobs:
           path: homebrew-tap
 
       - name: Update formula
+        if: ${{ steps.tap_token.outputs.available == 'true' }}
         run: |
           VERSION=${{ steps.version.outputs.version }}
           SHA_DARWIN_AMD64=$(cat sha-darwin-amd64)
@@ -309,6 +337,7 @@ jobs:
           FORMULA
 
       - name: Commit and push formula update
+        if: ${{ steps.tap_token.outputs.available == 'true' }}
         working-directory: homebrew-tap
         run: |
           git config user.name "faramesh-bot"
@@ -362,29 +391,45 @@ jobs:
     name: Publish npm package
     runs-on: ubuntu-latest
     needs: github-release
-    if: ${{ secrets.NPM_TOKEN != '' }}
     permissions:
       contents: read
 
     steps:
+      - name: Check npm token
+        id: npm_token
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "NPM_TOKEN not set; skipping npm publish"
+          fi
+
       - uses: actions/checkout@v4
+        if: ${{ steps.npm_token.outputs.available == 'true' }}
 
       - name: Extract version
         id: version
+        if: ${{ steps.npm_token.outputs.available == 'true' }}
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - uses: actions/setup-node@v4
+        if: ${{ steps.npm_token.outputs.available == 'true' }}
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
       - name: Set npm package version
+        if: ${{ steps.npm_token.outputs.available == 'true' }}
         run: |
           cd npm
           npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
 
       - name: Check if npm version already exists
         id: npm_exists
+        if: ${{ steps.npm_token.outputs.available == 'true' }}
         run: |
           PKG=$(node -p "require('./npm/package.json').name")
           VER="${{ steps.version.outputs.version }}"
@@ -397,7 +442,7 @@ jobs:
           fi
 
       - name: Publish to npm
-        if: steps.npm_exists.outputs.exists == 'false'
+        if: ${{ steps.npm_token.outputs.available == 'true' && steps.npm_exists.outputs.exists == 'false' }}
         run: |
           cd npm
           npm publish --access public
