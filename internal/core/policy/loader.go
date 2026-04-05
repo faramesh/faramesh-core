@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/faramesh/faramesh-core/internal/core/fpl"
 	"gopkg.in/yaml.v3"
@@ -69,6 +71,9 @@ func loadFPLDocument(data []byte) (*Doc, string, error) {
 	if err != nil {
 		return nil, "", fmt.Errorf("parse FPL: %w", err)
 	}
+	if err := validateRuntimeLowerableFPLDocument(fplDoc); err != nil {
+		return nil, "", err
+	}
 	doc := fplDocToPolicy(fplDoc)
 
 	h := sha256.Sum256(data)
@@ -81,6 +86,16 @@ func fplDocToPolicy(fplDoc *fpl.Document) *Doc {
 	doc := &Doc{
 		FarameshVersion: "1.0",
 		DefaultEffect:   "deny",
+	}
+
+	if len(fplDoc.Systems) > 0 {
+		sys := fplDoc.Systems[0]
+		if v := strings.TrimSpace(sys.Version); v != "" {
+			doc.FarameshVersion = v
+		}
+		if sys.MaxOutputBytes > 0 {
+			doc.MaxOutputBytes = sys.MaxOutputBytes
+		}
 	}
 
 	if len(fplDoc.Agents) > 0 {
@@ -137,6 +152,28 @@ func fplDocToPolicy(fplDoc *fpl.Document) *Doc {
 			}
 		}
 
+		if len(ag.Selectors) > 0 {
+			for _, sel := range ag.Selectors {
+				if sel == nil {
+					continue
+				}
+				doc.ContextGuards = append(doc.ContextGuards, lowerSelectorToContextGuard(sel))
+			}
+		}
+
+		if len(ag.Ambients) > 0 {
+			for _, ambient := range ag.Ambients {
+				if ambient == nil {
+					continue
+				}
+				doc.CrossSessionGuards = append(doc.CrossSessionGuards, lowerAmbientToCrossSessionGuards(ambient)...)
+			}
+		}
+
+		if len(ag.Delegates) > 0 {
+			mergeDelegateManifest(doc, ag)
+		}
+
 		if len(ag.Credentials) > 0 {
 			if doc.Tools == nil {
 				doc.Tools = make(map[string]Tool)
@@ -146,6 +183,15 @@ func fplDocToPolicy(fplDoc *fpl.Document) *Doc {
 					continue
 				}
 				tags := []string{"credential:broker", "credential:required"}
+				if backend := strings.TrimSpace(cred.Backend); backend != "" {
+					tags = append(tags, "credential:backend:"+backend)
+				}
+				if path := strings.TrimSpace(cred.Path); path != "" {
+					tags = append(tags, "credential:path:"+path)
+				}
+				if ttl := strings.TrimSpace(cred.TTL); ttl != "" {
+					tags = append(tags, "credential:ttl:"+ttl)
+				}
 				if scope := strings.TrimSpace(cred.MaxScope); scope != "" {
 					tags = append(tags, "credential:scope:"+scope)
 				}
@@ -154,15 +200,18 @@ func fplDocToPolicy(fplDoc *fpl.Document) *Doc {
 					if toolID == "" {
 						continue
 					}
+					resolved := []string{toolID}
 					if !strings.Contains(toolID, "/") {
 						base := strings.TrimSpace(cred.ID)
 						if base != "" {
-							toolID = base + "/" + toolID
+							resolved = append(resolved, base+"/"+toolID)
 						}
 					}
-					entry := doc.Tools[toolID]
-					entry.Tags = appendUniqueStrings(entry.Tags, tags...)
-					doc.Tools[toolID] = entry
+					for _, id := range resolved {
+						entry := doc.Tools[id]
+						entry.Tags = appendUniqueStrings(entry.Tags, tags...)
+						doc.Tools[id] = entry
+					}
 				}
 			}
 		}
@@ -170,15 +219,19 @@ func fplDocToPolicy(fplDoc *fpl.Document) *Doc {
 		for i, r := range ag.Rules {
 			doc.Rules = append(doc.Rules, fplRuleToRule(r, i))
 		}
+		seq := len(doc.Rules)
 		for _, ph := range ag.Phases {
-			for i, r := range ph.Rules {
-				doc.Rules = append(doc.Rules, fplRuleToRule(r, len(doc.Rules)+i))
+			for _, r := range ph.Rules {
+				doc.Rules = append(doc.Rules, fplRuleToRule(r, seq))
+				seq++
 			}
 		}
 	}
 
-	for i, r := range fplDoc.FlatRules {
-		doc.Rules = append(doc.Rules, fplRuleToRule(r, len(doc.Rules)+i))
+	seq := len(doc.Rules)
+	for _, r := range fplDoc.FlatRules {
+		doc.Rules = append(doc.Rules, fplRuleToRule(r, seq))
+		seq++
 	}
 
 	if len(fplDoc.Topo) > 0 {
@@ -224,6 +277,344 @@ func fplRuleToRule(r *fpl.Rule, seq int) Rule {
 		Reason:     reason,
 		ReasonCode: reasonCode,
 	}
+}
+
+func validateRuntimeLowerableFPLDocument(fplDoc *fpl.Document) error {
+	if fplDoc == nil {
+		return fmt.Errorf("parse FPL: empty document")
+	}
+	if len(fplDoc.Agents) > 1 {
+		return fmt.Errorf("parse FPL: multi-agent documents are not runtime-loadable yet (found %d agents)", len(fplDoc.Agents))
+	}
+	if len(fplDoc.Systems) > 1 {
+		return fmt.Errorf("parse FPL: multiple system blocks are not supported (found %d)", len(fplDoc.Systems))
+	}
+	if len(fplDoc.Systems) == 1 {
+		sys := fplDoc.Systems[0]
+		if onLoad := strings.TrimSpace(sys.OnPolicyLoadFailure); onLoad != "" {
+			v := strings.ToLower(onLoad)
+			if v != "deny_all" && v != "deny" {
+				return fmt.Errorf("parse FPL: system.on_policy_load_failure=%q is unsupported (supported: deny_all)", onLoad)
+			}
+		}
+		if ks := strings.TrimSpace(sys.KillSwitchDefault); ks != "" {
+			return fmt.Errorf("parse FPL: system.kill_switch_default=%q is unsupported by runtime loader", ks)
+		}
+		if sys.MaxOutputBytes < 0 {
+			return fmt.Errorf("parse FPL: system.max_output_bytes must be >= 0")
+		}
+	}
+	if len(fplDoc.Agents) == 1 {
+		ag := fplDoc.Agents[0]
+		if len(ag.Budgets) > 1 {
+			return fmt.Errorf("parse FPL: multiple budget blocks are not runtime-loadable yet (found %d)", len(ag.Budgets))
+		}
+		for _, delegate := range ag.Delegates {
+			if delegate == nil {
+				continue
+			}
+			if strings.TrimSpace(delegate.TargetAgent) == "" {
+				return fmt.Errorf("parse FPL: delegate block requires a target agent")
+			}
+			if scope := strings.TrimSpace(delegate.Scope); scope != "" {
+				if delegateToolPattern(scope) == "" {
+					return fmt.Errorf("parse FPL: delegate %q has invalid scope %q", strings.TrimSpace(delegate.TargetAgent), scope)
+				}
+			}
+			if ttl := strings.TrimSpace(delegate.TTL); ttl != "" {
+				if _, err := time.ParseDuration(ttl); err != nil {
+					return fmt.Errorf("parse FPL: delegate %q ttl %q is invalid: %w", strings.TrimSpace(delegate.TargetAgent), ttl, err)
+				}
+			}
+			if ceiling := strings.ToLower(strings.TrimSpace(delegate.Ceiling)); ceiling != "" && ceiling != "inherited" && ceiling != "approval" {
+				return fmt.Errorf("parse FPL: delegate %q ceiling %q is unsupported (supported: inherited|approval)", strings.TrimSpace(delegate.TargetAgent), strings.TrimSpace(delegate.Ceiling))
+			}
+		}
+		for _, ambient := range ag.Ambients {
+			if ambient == nil {
+				continue
+			}
+			if _, err := normalizeGuardEffect(ambient.OnExceed, "ambient.on_exceed"); err != nil {
+				return err
+			}
+			for key, raw := range ambient.Limits {
+				switch strings.ToLower(strings.TrimSpace(key)) {
+				case "max_customers_per_day", "max_calls_per_day":
+					if _, err := parsePositiveIntLimit(raw); err != nil {
+						return fmt.Errorf("parse FPL: ambient %s=%q is invalid: %w", key, raw, err)
+					}
+				case "max_data_volume":
+					if _, err := parseByteSizeLimit(raw); err != nil {
+						return fmt.Errorf("parse FPL: ambient %s=%q is invalid: %w", key, raw, err)
+					}
+				default:
+					return fmt.Errorf("parse FPL: ambient limit %q is unsupported (supported: max_customers_per_day|max_calls_per_day|max_data_volume)", strings.TrimSpace(key))
+				}
+			}
+		}
+		for _, sel := range ag.Selectors {
+			if sel == nil {
+				continue
+			}
+			if strings.TrimSpace(sel.ID) == "" {
+				return fmt.Errorf("parse FPL: selector block requires an id")
+			}
+			if strings.TrimSpace(sel.Source) == "" {
+				return fmt.Errorf("parse FPL: selector %q requires source", strings.TrimSpace(sel.ID))
+			}
+			if cache := strings.TrimSpace(sel.Cache); cache != "" {
+				if _, err := time.ParseDuration(cache); err != nil {
+					return fmt.Errorf("parse FPL: selector %q cache %q is invalid: %w", strings.TrimSpace(sel.ID), cache, err)
+				}
+			}
+			if _, err := normalizeGuardEffect(sel.OnUnavailable, "selector.on_unavailable"); err != nil {
+				return err
+			}
+			if _, err := normalizeGuardEffect(sel.OnTimeout, "selector.on_timeout"); err != nil {
+				return err
+			}
+		}
+		for _, cred := range ag.Credentials {
+			if cred == nil {
+				continue
+			}
+			if len(cred.Scope) == 0 {
+				return fmt.Errorf("parse FPL: credential %q requires at least one scope target", strings.TrimSpace(cred.ID))
+			}
+		}
+	}
+	return nil
+}
+
+func lowerSelectorToContextGuard(sel *fpl.SelectorBlock) ContextGuard {
+	maxAgeSecs := 0
+	if cache := strings.TrimSpace(sel.Cache); cache != "" {
+		if d, err := time.ParseDuration(cache); err == nil && d > 0 {
+			maxAgeSecs = int(d / time.Second)
+		}
+	}
+	onMissing, _ := normalizeGuardEffect(sel.OnUnavailable, "selector.on_unavailable")
+	onStale, _ := normalizeGuardEffect(sel.OnTimeout, "selector.on_timeout")
+	if onMissing == "" {
+		onMissing = "deny"
+	}
+	if onStale == "" {
+		onStale = onMissing
+	}
+	source := strings.TrimSpace(sel.ID)
+	if source == "" {
+		source = strings.TrimSpace(sel.Source)
+	}
+	return ContextGuard{
+		Source:         source,
+		Endpoint:       strings.TrimSpace(sel.Source),
+		MaxAgeSecs:     maxAgeSecs,
+		OnMissing:      onMissing,
+		OnStale:        onStale,
+		OnInconsistent: onMissing,
+	}
+}
+
+func lowerAmbientToCrossSessionGuards(ambient *fpl.AmbientBlock) []CrossSessionGuard {
+	if ambient == nil || len(ambient.Limits) == 0 {
+		return nil
+	}
+	onExceed, _ := normalizeGuardEffect(ambient.OnExceed, "ambient.on_exceed")
+	if onExceed == "" {
+		onExceed = "deny"
+	}
+	out := make([]CrossSessionGuard, 0, len(ambient.Limits))
+	for rawKey, rawValue := range ambient.Limits {
+		key := strings.ToLower(strings.TrimSpace(rawKey))
+		switch key {
+		case "max_customers_per_day":
+			limit, err := parsePositiveIntLimit(rawValue)
+			if err != nil {
+				continue
+			}
+			out = append(out, CrossSessionGuard{
+				Scope:            "principal",
+				ToolPattern:      "*",
+				Metric:           "unique_record_count",
+				Window:           "24h",
+				MaxUniqueRecords: limit,
+				OnExceed:         onExceed,
+				Reason:           "ambient max_customers_per_day limit exceeded",
+			})
+		case "max_calls_per_day":
+			limit, err := parsePositiveIntLimit(rawValue)
+			if err != nil {
+				continue
+			}
+			out = append(out, CrossSessionGuard{
+				Scope:            "principal",
+				ToolPattern:      "*",
+				Metric:           "call_count",
+				Window:           "24h",
+				MaxUniqueRecords: limit,
+				OnExceed:         onExceed,
+				Reason:           "ambient max_calls_per_day limit exceeded",
+			})
+		case "max_data_volume":
+			limit, err := parseByteSizeLimit(rawValue)
+			if err != nil {
+				continue
+			}
+			out = append(out, CrossSessionGuard{
+				Scope:            "principal",
+				ToolPattern:      "*",
+				Metric:           "data_volume_bytes",
+				Window:           "24h",
+				MaxUniqueRecords: limit,
+				OnExceed:         onExceed,
+				Reason:           "ambient max_data_volume limit exceeded",
+			})
+		}
+	}
+	return out
+}
+
+func mergeDelegateManifest(doc *Doc, ag *fpl.AgentBlock) {
+	if doc == nil || ag == nil || len(ag.Delegates) == 0 {
+		return
+	}
+	if doc.OrchestratorManifest == nil {
+		doc.OrchestratorManifest = &OrchestratorManifest{}
+	}
+	if strings.TrimSpace(doc.OrchestratorManifest.AgentID) == "" {
+		doc.OrchestratorManifest.AgentID = strings.TrimSpace(doc.AgentID)
+	}
+	if strings.TrimSpace(doc.OrchestratorManifest.UndeclaredInvocationPolicy) == "" {
+		doc.OrchestratorManifest.UndeclaredInvocationPolicy = "deny"
+	}
+	indexByTarget := make(map[string]int, len(doc.OrchestratorManifest.PermittedInvocations))
+	for i, inv := range doc.OrchestratorManifest.PermittedInvocations {
+		indexByTarget[strings.TrimSpace(inv.AgentID)] = i
+	}
+	policyIndexByTarget := make(map[string]int, len(doc.DelegationPolicies))
+	for i, p := range doc.DelegationPolicies {
+		policyIndexByTarget[strings.TrimSpace(p.TargetAgent)] = i
+	}
+	for _, delegate := range ag.Delegates {
+		if delegate == nil {
+			continue
+		}
+		target := strings.TrimSpace(delegate.TargetAgent)
+		if target == "" {
+			continue
+		}
+		requiresApproval := strings.EqualFold(strings.TrimSpace(delegate.Ceiling), "approval")
+		if idx, ok := indexByTarget[target]; ok {
+			current := doc.OrchestratorManifest.PermittedInvocations[idx]
+			if requiresApproval {
+				current.RequiresPriorApproval = true
+			}
+			doc.OrchestratorManifest.PermittedInvocations[idx] = current
+		} else {
+			doc.OrchestratorManifest.PermittedInvocations = append(doc.OrchestratorManifest.PermittedInvocations, AgentInvocation{
+				AgentID:               target,
+				RequiresPriorApproval: requiresApproval,
+			})
+			indexByTarget[target] = len(doc.OrchestratorManifest.PermittedInvocations) - 1
+		}
+
+		nextPolicy := DelegationPolicy{
+			TargetAgent: target,
+			Scope:       strings.TrimSpace(delegate.Scope),
+			TTL:         strings.TrimSpace(delegate.TTL),
+			Ceiling:     strings.ToLower(strings.TrimSpace(delegate.Ceiling)),
+		}
+		if idx, ok := policyIndexByTarget[target]; ok {
+			current := doc.DelegationPolicies[idx]
+			if current.Scope == "" {
+				current.Scope = nextPolicy.Scope
+			}
+			if current.TTL == "" {
+				current.TTL = nextPolicy.TTL
+			}
+			if current.Ceiling == "" {
+				current.Ceiling = nextPolicy.Ceiling
+			}
+			doc.DelegationPolicies[idx] = current
+		} else {
+			doc.DelegationPolicies = append(doc.DelegationPolicies, nextPolicy)
+			policyIndexByTarget[target] = len(doc.DelegationPolicies) - 1
+		}
+	}
+}
+
+func normalizeGuardEffect(raw, field string) (string, error) {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	if v == "" {
+		return "", nil
+	}
+	if v != "deny" && v != "defer" {
+		return "", fmt.Errorf("parse FPL: %s=%q is unsupported (supported: deny|defer)", field, strings.TrimSpace(raw))
+	}
+	return v, nil
+}
+
+func delegateToolPattern(scope string) string {
+	v := strings.TrimSpace(scope)
+	if v == "" {
+		return ""
+	}
+	if idx := strings.Index(v, ":"); idx >= 0 {
+		v = strings.TrimSpace(v[:idx])
+	}
+	return v
+}
+
+func parsePositiveIntLimit(raw string) (int, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return 0, fmt.Errorf("value is empty")
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, err
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("value must be > 0")
+	}
+	return n, nil
+}
+
+func parseByteSizeLimit(raw string) (int, error) {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	if v == "" {
+		return 0, fmt.Errorf("value is empty")
+	}
+	multiplier := int64(1)
+	switch {
+	case strings.HasSuffix(v, "tb"):
+		multiplier = 1024 * 1024 * 1024 * 1024
+		v = strings.TrimSpace(strings.TrimSuffix(v, "tb"))
+	case strings.HasSuffix(v, "gb"):
+		multiplier = 1024 * 1024 * 1024
+		v = strings.TrimSpace(strings.TrimSuffix(v, "gb"))
+	case strings.HasSuffix(v, "mb"):
+		multiplier = 1024 * 1024
+		v = strings.TrimSpace(strings.TrimSuffix(v, "mb"))
+	case strings.HasSuffix(v, "kb"):
+		multiplier = 1024
+		v = strings.TrimSpace(strings.TrimSuffix(v, "kb"))
+	case strings.HasSuffix(v, "b"):
+		multiplier = 1
+		v = strings.TrimSpace(strings.TrimSuffix(v, "b"))
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("value must be > 0")
+	}
+	maxInt := int64(^uint(0) >> 1)
+	if n > maxInt/multiplier {
+		return 0, fmt.Errorf("value overflows int")
+	}
+	return int(n * multiplier), nil
 }
 
 func appendUniqueStrings(existing []string, values ...string) []string {
@@ -282,6 +673,7 @@ func parsePolicyYAML(data []byte) (*Doc, error) {
 // without evaluating them. Returns a list of human-readable errors and warnings.
 func Validate(doc *Doc) []string {
 	var errs []string
+	compileEnv := evalEnv(doc, nil)
 
 	if doc.DefaultEffect != "" {
 		effect := strings.ToLower(doc.DefaultEffect)
@@ -306,8 +698,41 @@ func Validate(doc *Doc) []string {
 			errs = append(errs, fmt.Sprintf("rule %q: unknown effect %q (must be permit|deny|defer|shadow)", rule.ID, effect))
 		}
 		if rule.Match.When != "" {
-			if _, err := compileExpr(rule.Match.When, evalEnv(doc, nil)); err != nil {
+			if _, err := compileExpr(rule.Match.When, compileEnv); err != nil {
 				errs = append(errs, fmt.Sprintf("rule %q: invalid when expression: %v", rule.ID, err))
+			}
+		}
+	}
+
+	for i, tr := range doc.PhaseTransitions {
+		label := fmt.Sprintf("phase_transition[%d]", i)
+		from := strings.TrimSpace(tr.From)
+		to := strings.TrimSpace(tr.To)
+		if from == "" {
+			errs = append(errs, fmt.Sprintf("%s: missing from phase", label))
+		}
+		if to == "" {
+			errs = append(errs, fmt.Sprintf("%s: missing to phase", label))
+		}
+		effect := normalizePhaseTransitionEffect(tr.Effect)
+		if effect == "" {
+			errs = append(errs, fmt.Sprintf("%s: invalid effect %q (must be permit_transition|defer)", label, strings.TrimSpace(tr.Effect)))
+		}
+		if len(doc.Phases) > 0 {
+			if from != "" {
+				if _, ok := doc.Phases[from]; !ok {
+					errs = append(errs, fmt.Sprintf("%s: from phase %q not declared in phases", label, from))
+				}
+			}
+			if to != "" {
+				if _, ok := doc.Phases[to]; !ok {
+					errs = append(errs, fmt.Sprintf("%s: to phase %q not declared in phases", label, to))
+				}
+			}
+		}
+		if strings.TrimSpace(tr.Conditions) != "" {
+			if _, err := compileExpr(tr.Conditions, compileEnv); err != nil {
+				errs = append(errs, fmt.Sprintf("%s: invalid conditions expression: %v", label, err))
 			}
 		}
 	}

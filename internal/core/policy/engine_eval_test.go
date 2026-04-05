@@ -3,6 +3,7 @@ package policy
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -110,5 +111,78 @@ func TestEvaluateWithTimeoutCancellationReturnsExplicitDeny(t *testing.T) {
 	}
 	if res.ReasonCode != "GOVERNANCE_TIMEOUT" {
 		t.Fatalf("expected GOVERNANCE_TIMEOUT, got %q", res.ReasonCode)
+	}
+}
+
+func TestNewEngineRejectsInvalidPhaseTransitionCondition(t *testing.T) {
+	doc := &Doc{
+		DefaultEffect: "deny",
+		Phases: map[string]Phase{
+			"intake":    {Tools: []string{"safe/read"}},
+			"execution": {Tools: []string{"safe/write"}},
+		},
+		PhaseTransitions: []PhaseTransition{
+			{
+				From:       "intake",
+				To:         "execution",
+				Conditions: "mystery_symbol > 0",
+				Effect:     "permit_transition",
+			},
+		},
+	}
+
+	_, err := NewEngine(doc, "v-test")
+	if err == nil {
+		t.Fatal("expected transition condition compile error")
+	}
+	if got := err.Error(); !strings.Contains(got, "phase_transition") {
+		t.Fatalf("expected phase_transition context in error, got: %v", err)
+	}
+}
+
+func TestEvaluatePhaseTransitionMatchesCondition(t *testing.T) {
+	doc := &Doc{
+		DefaultEffect: "deny",
+		Phases: map[string]Phase{
+			"intake":    {Tools: []string{"safe/read"}},
+			"execution": {Tools: []string{"safe/write"}},
+		},
+		PhaseTransitions: []PhaseTransition{
+			{
+				From:       "intake",
+				To:         "execution",
+				Conditions: "args.promote == true",
+				Effect:     "permit_transition",
+				Reason:     "ready to execute",
+			},
+		},
+	}
+
+	e, err := NewEngine(doc, "v-test")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	matchedTransition, matched, err := e.EvaluatePhaseTransition("intake", EvalContext{
+		Args: map[string]any{"promote": true},
+	})
+	if err != nil {
+		t.Fatalf("evaluate phase transition: %v", err)
+	}
+	if !matched {
+		t.Fatal("expected phase transition match")
+	}
+	if matchedTransition.To != "execution" || matchedTransition.Effect != "permit_transition" {
+		t.Fatalf("unexpected transition result: %+v", matchedTransition)
+	}
+
+	_, matched, err = e.EvaluatePhaseTransition("intake", EvalContext{
+		Args: map[string]any{"promote": false},
+	})
+	if err != nil {
+		t.Fatalf("evaluate phase transition no-match: %v", err)
+	}
+	if matched {
+		t.Fatal("expected no transition match when condition is false")
 	}
 }

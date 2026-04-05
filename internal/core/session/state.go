@@ -7,6 +7,7 @@ package session
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,7 +30,7 @@ type State struct {
 	killed     atomic.Bool
 
 	// Cost tracking — session-scoped, resets with session.
-	sessionCostMu sync.Mutex
+	sessionCostMu  sync.Mutex
 	sessionCostUSD float64
 
 	// Daily cost — persists across sessions; resets at midnight.
@@ -38,10 +39,10 @@ type State struct {
 	dailyCostUSD float64
 	dailyCostDay string // "2006-01-02" — day the counter applies to
 
-	backend   Backend
+	backend    Backend
 	dailyStore DailyCostStore
-	agentID   string
-	sessionID string
+	agentID    string
+	sessionID  string
 }
 
 // NewState creates a new session state with a history buffer of the given size.
@@ -207,6 +208,16 @@ func (s *State) EnsurePhase(phase string) {
 	}
 }
 
+// SetPhase overwrites the current workflow phase for this session.
+func (s *State) SetPhase(phase string) {
+	if strings.TrimSpace(phase) == "" {
+		return
+	}
+	s.mu.Lock()
+	s.phase = strings.TrimSpace(phase)
+	s.mu.Unlock()
+}
+
 // History returns a snapshot of the history buffer, newest first.
 func (s *State) History() []HistoryEntry {
 	if s.backend != nil && s.agentID != "" {
@@ -242,11 +253,47 @@ func (s *State) IsKilled() bool {
 	return s.killed.Load()
 }
 
+// Reset clears selected session counters/state for this agent.
+// Supported counters: all, call_count, session_cost, daily_cost, history, phase, kill_switch.
+func (s *State) Reset(counter string) {
+	mode := strings.TrimSpace(strings.ToLower(counter))
+	if mode == "" {
+		mode = "all"
+	}
+	if mode == "all" || mode == "call_count" {
+		atomic.StoreInt64(&s.callCount, 0)
+	}
+	if mode == "all" || mode == "session_cost" {
+		s.sessionCostMu.Lock()
+		s.sessionCostUSD = 0
+		s.sessionCostMu.Unlock()
+	}
+	if mode == "all" || mode == "daily_cost" {
+		s.dailyCostMu.Lock()
+		s.dailyCostUSD = 0
+		s.dailyCostDay = ""
+		s.dailyCostMu.Unlock()
+	}
+	if mode == "all" || mode == "history" || mode == "phase" {
+		s.mu.Lock()
+		if mode == "all" || mode == "history" {
+			s.history = nil
+		}
+		if mode == "all" || mode == "phase" {
+			s.phase = ""
+		}
+		s.mu.Unlock()
+	}
+	if mode == "all" || mode == "kill_switch" {
+		s.killed.Store(false)
+	}
+}
+
 // Manager holds session states for all active agents, keyed by agentID.
 type Manager struct {
-	mu     sync.RWMutex
-	states map[string]*State
-	backend Backend
+	mu         sync.RWMutex
+	states     map[string]*State
+	backend    Backend
 	dailyStore DailyCostStore
 }
 
@@ -259,8 +306,8 @@ func NewManager() *Manager {
 // external backend (e.g. Redis) for shared counters/history/cost.
 func NewManagerWithBackend(backend Backend) *Manager {
 	return &Manager{
-		states:   make(map[string]*State),
-		backend:  backend,
+		states:  make(map[string]*State),
+		backend: backend,
 	}
 }
 
@@ -268,8 +315,8 @@ func NewManagerWithBackend(backend Backend) *Manager {
 // in an external store while keeping session counters local.
 func NewManagerWithDailyStore(dailyStore DailyCostStore) *Manager {
 	return &Manager{
-		states:      make(map[string]*State),
-		dailyStore:  dailyStore,
+		states:     make(map[string]*State),
+		dailyStore: dailyStore,
 	}
 }
 
@@ -277,9 +324,9 @@ func NewManagerWithDailyStore(dailyStore DailyCostStore) *Manager {
 // and daily cost persistence store.
 func NewManagerWithStores(backend Backend, dailyStore DailyCostStore) *Manager {
 	return &Manager{
-		states:      make(map[string]*State),
-		backend:     backend,
-		dailyStore:  dailyStore,
+		states:     make(map[string]*State),
+		backend:    backend,
+		dailyStore: dailyStore,
 	}
 }
 
@@ -310,6 +357,18 @@ func (m *Manager) Kill(agentID string) {
 	m.Get(agentID).Kill()
 }
 
+// Reset clears selected session counters/state for an agent.
+func (m *Manager) Reset(agentID, counter string) {
+	m.Get(agentID).Reset(counter)
+}
+
+// Count returns the number of active in-memory agent session states.
+func (m *Manager) Count() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.states)
+}
+
 func matchPattern(pattern, toolID string) bool {
 	if pattern == "*" || pattern == "" {
 		return true
@@ -320,4 +379,3 @@ func matchPattern(pattern, toolID string) bool {
 	}
 	return pattern == toolID
 }
-

@@ -26,46 +26,23 @@ agent payment-bot {
   rules {
     deny! shell/* reason: "never shell"
 
-    defer stripe/refund when args.amount > 500
+    defer stripe/refund when amount > 500
       notify: "finance"
       reason: "high value refund"
 
-    permit stripe/* when args.amount <= 500
+    permit stripe/* when amount <= 500
 
     deny read_customer
       when not purpose("refund_processing")
       reason: "purpose required"
 
     deny stripe/refund
-      when history_tool_count("stripe/refund") >= 5
-      reason: "high refund volume limit exceeded"
-  }
-
-  delegate fraud-check-bot {
-    scope "stripe/refund:amount<=500"
-    ttl 24h
-    ceiling inherited
-  }
-
-  ambient {
-    max_customers_per_day 1000
-    max_data_volume 10mb
-    on_exceed deny
-  }
-
-  selector account {
-    source "https://api.internal/account"
-    cache 30s
-    on_unavailable deny
+      when history_tool_count("stripe/refund") > 20
+      reason: "refund call volume limit exceeded"
   }
 
   credential stripe {
     scope refund read_charge
     max_scope "refund:amount<=1000"
   }
-}
-
-system global {
-  version "1.0"
-  on_policy_load_failure deny_all
 }

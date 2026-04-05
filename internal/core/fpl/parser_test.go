@@ -68,3 +68,17 @@ func TestParseRulesWithAllOptionalClauses(t *testing.T) {
 		t.Fatalf("unexpected reason parse: %+v", r)
 	}
 }
+
+func TestParseRulesWhenSupportsSingleQuotedStrings(t *testing.T) {
+	src := `permit http/get when args.endpoint == 'https://safe.example'`
+	rules, err := ParseRules(src)
+	if err != nil {
+		t.Fatalf("parse single-quoted when expression: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Condition != `args.endpoint == "https://safe.example"` {
+		t.Fatalf("unexpected normalized condition: %q", rules[0].Condition)
+	}
+}

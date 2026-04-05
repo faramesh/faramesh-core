@@ -1,5 +1,5 @@
 # Faramesh Core — local developer entrypoints (CI: monorepo `.github/workflows/faramesh-core-release-gate.yml`).
-.PHONY: all build build-release compile clean test test-race vet sbom docker verify-reproducible release install
+.PHONY: all build build-release compile clean test test-race vet sbom docker verify-reproducible release install setup setup-status setup-stop langchain-single langchain-real langchain-real-fpl langchain-wizard govern-wizard
 
 all: vet compile test build
 
@@ -68,3 +68,35 @@ install: build-release
 	@echo "==> Installing faramesh to /usr/local/bin…"
 	install -m 755 bin/faramesh /usr/local/bin/faramesh
 	@echo "✔ Installed $$(faramesh --version 2>&1 || echo 'faramesh')"
+
+# Canonical local setup entrypoint (wizard by default).
+setup:
+	bash scripts/faramesh_setup.sh
+
+# Show setup-managed runtime status.
+setup-status:
+	bash scripts/faramesh_setup.sh status
+
+# Stop setup-managed runtime.
+setup-stop:
+	bash scripts/faramesh_setup.sh stop
+
+# Strict end-to-end smoke for a single LangChain agent governed over socket.
+langchain-single:
+	bash tests/langchain_single_agent_governed.sh
+
+# Real-stack strict governance test for a single LangChain agent with Vault + identity gates.
+langchain-real:
+	bash tests/langchain_single_agent_real_stack.sh
+
+# Real-stack strict governance test using the FPL policy variant.
+langchain-real-fpl:
+	bash tests/langchain_single_agent_real_stack_fpl.sh
+
+# Minimal-interaction installer/wizard for governed LangChain agent runs.
+langchain-wizard:
+	bash scripts/faramesh_govern_wizard.sh --agent-cmd "python ../demo_interactive_ai_agent.py"
+
+# Minimal-interaction installer/wizard for any agent command.
+govern-wizard:
+	bash scripts/faramesh_govern_wizard.sh

@@ -1,0 +1,16 @@
+agent langchain-single {
+  default deny
+
+  credential vault_probe {
+    scope vault/probe
+    backend vault
+    max_scope payments
+  }
+
+  rules {
+    permit http/get
+    permit vault/probe
+    defer payment/refund reason: "refund requires operator approval"
+    permit idp/probe when principal.verified == true
+  }
+}

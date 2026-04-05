@@ -1,7 +1,6 @@
 package policy
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 )
@@ -17,7 +16,7 @@ func TestCompileExprAcceptsBoundaryLimits(t *testing.T) {
 	t.Run("max function calls accepted", func(t *testing.T) {
 		parts := make([]string, 0, maxExpressionFunctionCalls)
 		for i := 0; i < maxExpressionFunctionCalls; i++ {
-			parts = append(parts, fmt.Sprintf("f%d() == nil", i))
+			parts = append(parts, `len("abc") == 3`)
 		}
 		exprText := strings.Join(parts, " || ")
 		if _, err := compileExpr(exprText, nil); err != nil {
@@ -49,7 +48,7 @@ func TestCompileExprRejectsOnBounds(t *testing.T) {
 			expression: func() string {
 				parts := make([]string, 0, maxExpressionFunctionCalls+1)
 				for i := 0; i < maxExpressionFunctionCalls+1; i++ {
-					parts = append(parts, fmt.Sprintf("f%d() == nil", i))
+					parts = append(parts, `len("abc") == 3`)
 				}
 				return strings.Join(parts, " || ")
 			}(),
@@ -99,5 +98,17 @@ func TestNewEngineIncludesRuleIDOnBoundsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds max nesting depth") {
 		t.Fatalf("expected actionable reason, got: %v", err)
+	}
+}
+
+func TestCompileExprRejectsUnknownSymbolsInPolicyEnv(t *testing.T) {
+	doc := &Doc{DefaultEffect: "deny"}
+	env := evalEnv(doc, nil)
+
+	if _, err := compileExpr("amount > 10 && purpose(\"refund\")", env); err != nil {
+		t.Fatalf("expected known aliases/helpers to compile, got: %v", err)
+	}
+	if _, err := compileExpr("mystery_symbol > 0", env); err == nil {
+		t.Fatal("expected unknown symbol compile error")
 	}
 }

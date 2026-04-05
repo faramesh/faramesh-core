@@ -36,6 +36,27 @@ type compensateOutput struct {
 	Operation *compensateOperation `json:"operation,omitempty"`
 }
 
+func compensateSocketRequestWithHTTPFallback(op string, payload map[string]any, httpMethod, httpPath string, httpQuery map[string]string) (json.RawMessage, error) {
+	req := map[string]any{"type": "compensate", "op": op}
+	for k, v := range payload {
+		req[k] = v
+	}
+	resp, err := daemonSocketRequest(req)
+	if err == nil {
+		return resp, nil
+	}
+	if !daemonHTTPFallback {
+		return nil, err
+	}
+	if httpMethod == "GET" {
+		if len(httpQuery) > 0 {
+			return daemonGetWithQuery(httpPath, httpQuery)
+		}
+		return daemonGet(httpPath)
+	}
+	return daemonPost(httpPath, payload)
+}
+
 var compensateCmd = &cobra.Command{
 	Use:   "compensate",
 	Short: "Compensation operations: build, list, inspect, apply, status, retry",
@@ -56,10 +77,12 @@ var compensateListCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		q := map[string]string{}
+		payload := map[string]any{}
 		if compensateListAgent != "" {
 			q["agent"] = compensateListAgent
+			payload["agent"] = compensateListAgent
 		}
-		raw, err := daemonGetWithQuery("/api/v1/compensate/list", q)
+		raw, err := compensateSocketRequestWithHTTPFallback("list", payload, "GET", "/api/v1/compensate/list", q)
 		if err != nil {
 			return err
 		}
@@ -73,7 +96,7 @@ var compensateInspectCmd = &cobra.Command{
 	Short: "Show details for a compensation record",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		raw, err := daemonGetWithQuery("/api/v1/compensate/inspect", map[string]string{"id": args[0]})
+		raw, err := compensateSocketRequestWithHTTPFallback("inspect", map[string]any{"id": args[0]}, "GET", "/api/v1/compensate/inspect", map[string]string{"id": args[0]})
 		if err != nil {
 			return err
 		}
@@ -87,7 +110,7 @@ var compensateApplyCmd = &cobra.Command{
 	Short: "Execute a previously-built compensation",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		raw, err := daemonPost("/api/v1/compensate/apply", map[string]string{"id": args[0]})
+		raw, err := compensateSocketRequestWithHTTPFallback("apply", map[string]any{"id": args[0]}, "POST", "/api/v1/compensate/apply", nil)
 		if err != nil {
 			return err
 		}
@@ -101,7 +124,7 @@ var compensateStatusCmd = &cobra.Command{
 	Short: "Check execution status of a compensation",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		raw, err := daemonGetWithQuery("/api/v1/compensate/status", map[string]string{"id": args[0]})
+		raw, err := compensateSocketRequestWithHTTPFallback("status", map[string]any{"id": args[0]}, "GET", "/api/v1/compensate/status", map[string]string{"id": args[0]})
 		if err != nil {
 			return err
 		}
@@ -117,11 +140,11 @@ var compensateRetryCmd = &cobra.Command{
 	Short: "Retry a failed compensation (optionally from a specific step)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		body := map[string]string{"id": args[0]}
+		body := map[string]any{"id": args[0]}
 		if compensateRetryFromStep != "" {
 			body["from_step"] = compensateRetryFromStep
 		}
-		raw, err := daemonPost("/api/v1/compensate/retry", body)
+		raw, err := compensateSocketRequestWithHTTPFallback("retry", body, "POST", "/api/v1/compensate/retry", nil)
 		if err != nil {
 			return err
 		}

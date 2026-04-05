@@ -1,10 +1,29 @@
 package main
 
 import (
+	"encoding/json"
 	"net/url"
 
 	"github.com/spf13/cobra"
 )
+
+func credentialSocketRequestWithHTTPFallback(op string, payload map[string]any, httpMethod, httpPath string) (json.RawMessage, error) {
+	req := map[string]any{"type": "credential", "op": op}
+	for k, v := range payload {
+		req[k] = v
+	}
+	resp, err := daemonSocketRequest(req)
+	if err == nil {
+		return resp, nil
+	}
+	if !daemonHTTPFallback {
+		return nil, err
+	}
+	if httpMethod == "GET" {
+		return daemonGet(httpPath)
+	}
+	return daemonPost(httpPath, payload)
+}
 
 var credentialCmd = &cobra.Command{
 	Use:   "credential",
@@ -37,7 +56,7 @@ var credentialRegisterCmd = &cobra.Command{
 		if cmd.Flags().Changed("max-scope") {
 			body["max_scope"] = credRegisterMaxScope
 		}
-		data, err := daemonPost("/api/v1/credential/register", body)
+		data, err := credentialSocketRequestWithHTTPFallback("register", body, "POST", "/api/v1/credential/register")
 		if err != nil {
 			return err
 		}
@@ -54,7 +73,7 @@ var credentialListCmd = &cobra.Command{
 	Short: "List all registered credentials",
 	Args:  cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		data, err := daemonGet("/api/v1/credential/list")
+		data, err := credentialSocketRequestWithHTTPFallback("list", map[string]any{}, "GET", "/api/v1/credential/list")
 		if err != nil {
 			return err
 		}
@@ -71,7 +90,8 @@ var credentialInspectCmd = &cobra.Command{
 	Short: "Inspect a credential's metadata and usage",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		data, err := daemonGet("/api/v1/credential/inspect/" + url.PathEscape(args[0]))
+		httpPath := "/api/v1/credential/inspect/" + url.PathEscape(args[0])
+		data, err := credentialSocketRequestWithHTTPFallback("inspect", map[string]any{"name": args[0]}, "GET", httpPath)
 		if err != nil {
 			return err
 		}
@@ -94,7 +114,7 @@ var credentialRotateCmd = &cobra.Command{
 		if cmd.Flags().Changed("key") {
 			body["key"] = credRotateKey
 		}
-		data, err := daemonPost("/api/v1/credential/rotate", body)
+		data, err := credentialSocketRequestWithHTTPFallback("rotate", body, "POST", "/api/v1/credential/rotate")
 		if err != nil {
 			return err
 		}
@@ -111,7 +131,7 @@ var credentialHealthCmd = &cobra.Command{
 	Short: "Check health of all credential backends",
 	Args:  cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		data, err := daemonGet("/api/v1/credential/health")
+		data, err := credentialSocketRequestWithHTTPFallback("health", map[string]any{}, "GET", "/api/v1/credential/health")
 		if err != nil {
 			return err
 		}
@@ -129,7 +149,7 @@ var credentialRevokeCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		body := map[string]any{"name": args[0]}
-		data, err := daemonPost("/api/v1/credential/revoke", body)
+		data, err := credentialSocketRequestWithHTTPFallback("revoke", body, "POST", "/api/v1/credential/revoke")
 		if err != nil {
 			return err
 		}
@@ -149,10 +169,12 @@ var credentialAuditCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		path := "/api/v1/credential/audit/" + url.PathEscape(args[0])
+		payload := map[string]any{"name": args[0]}
 		if cmd.Flags().Changed("window") {
+			payload["window"] = credAuditWindow
 			path += "?" + url.Values{"window": {credAuditWindow}}.Encode()
 		}
-		data, err := daemonGet(path)
+		data, err := credentialSocketRequestWithHTTPFallback("audit", payload, "GET", path)
 		if err != nil {
 			return err
 		}

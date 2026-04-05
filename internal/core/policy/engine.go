@@ -6,6 +6,7 @@ import (
 	"path"
 	"reflect"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,9 +17,10 @@ import (
 
 // Engine holds a compiled policy and evaluates requests against it.
 type Engine struct {
-	doc      *Doc
-	version  string
-	programs []*vm.Program // compiled expr programs, parallel to doc.Rules
+	doc                *Doc
+	version            string
+	programs           []*vm.Program // compiled expr programs, parallel to doc.Rules
+	transitionPrograms []*vm.Program // compiled expr programs, parallel to doc.PhaseTransitions
 }
 
 const (
@@ -69,7 +71,36 @@ func NewEngine(doc *Doc, version string) (*Engine, error) {
 		}
 		programs[i] = prog
 	}
-	return &Engine{doc: doc, version: version, programs: programs}, nil
+
+	transitionPrograms := make([]*vm.Program, len(doc.PhaseTransitions))
+	for i, tr := range doc.PhaseTransitions {
+		from := strings.TrimSpace(tr.From)
+		to := strings.TrimSpace(tr.To)
+		if from == "" || to == "" {
+			return nil, fmt.Errorf("phase_transition[%d]: from and to are required", i)
+		}
+		effect := normalizePhaseTransitionEffect(tr.Effect)
+		if effect == "" {
+			return nil, fmt.Errorf("phase_transition[%d]: invalid effect %q (must be permit_transition or defer)", i, strings.TrimSpace(tr.Effect))
+		}
+		cond := strings.TrimSpace(tr.Conditions)
+		if cond == "" {
+			transitionPrograms[i] = nil
+			continue
+		}
+		prog, err := compileExpr(cond, evalEnv(doc, nil))
+		if err != nil {
+			return nil, fmt.Errorf("phase_transition[%d] %q->%q: %w", i, from, to, err)
+		}
+		transitionPrograms[i] = prog
+	}
+
+	return &Engine{
+		doc:                doc,
+		version:            version,
+		programs:           programs,
+		transitionPrograms: transitionPrograms,
+	}, nil
 }
 
 // EvalContext is the runtime data available to policy conditions.
@@ -78,6 +109,7 @@ type EvalContext struct {
 	Vars       map[string]any `expr:"vars"`
 	Session    SessionCtx     `expr:"session"`
 	Tool       ToolCtx        `expr:"tool"`
+	ToolID     string         `expr:"tool_name"`
 	Principal  *PrincipalCtx  `expr:"principal"`
 	Delegation *DelegationCtx `expr:"delegation"`
 	Time       TimeCtx        `expr:"time"`
@@ -86,10 +118,11 @@ type EvalContext struct {
 // SessionCtx exposes session-level data to policy conditions.
 //
 // Available in policy when: expressions as:
-//   session.call_count         — total calls in this session
-//   session.history            — array of recent tool calls (newest first)
-//   session.cost_usd           — session cost in USD (when CostShield is enabled)
-//   session.daily_cost_usd     — daily cost in USD (when CostShield is enabled)
+//
+//	session.call_count         — total calls in this session
+//	session.history            — array of recent tool calls (newest first)
+//	session.cost_usd           — session cost in USD (when CostShield is enabled)
+//	session.daily_cost_usd     — daily cost in USD (when CostShield is enabled)
 type SessionCtx struct {
 	CallCount    int64            `expr:"call_count"`
 	History      []map[string]any `expr:"history"` // [{tool, effect, timestamp}, ...]
@@ -100,9 +133,10 @@ type SessionCtx struct {
 // ToolCtx exposes per-tool metadata declared in the policy tools: block.
 //
 // Available in policy when: expressions as:
-//   tool.reversibility         — "irreversible" | "reversible" | "compensatable"
-//   tool.blast_radius          — "none" | "local" | "scoped" | "system" | "external"
-//   tool.tags                  — array of string tags
+//
+//	tool.reversibility         — "irreversible" | "reversible" | "compensatable"
+//	tool.blast_radius          — "none" | "local" | "scoped" | "system" | "external"
+//	tool.tags                  — array of string tags
 type ToolCtx struct {
 	Reversibility string   `expr:"reversibility"`
 	BlastRadius   string   `expr:"blast_radius"`
@@ -112,11 +146,12 @@ type ToolCtx struct {
 // PrincipalCtx exposes the invoking principal's identity to policy conditions.
 //
 // Available in policy when: expressions as:
-//   principal.id               — IDP-verified identity (e.g. "user@company.com")
-//   principal.tier             — SaaS tier (free, pro, enterprise)
-//   principal.role             — organizational role (analyst, operator, admin)
-//   principal.org              — organization identifier
-//   principal.verified         — whether identity is IDP-verified
+//
+//	principal.id               — IDP-verified identity (e.g. "user@company.com")
+//	principal.tier             — SaaS tier (free, pro, enterprise)
+//	principal.role             — organizational role (analyst, operator, admin)
+//	principal.org              — organization identifier
+//	principal.verified         — whether identity is IDP-verified
 type PrincipalCtx struct {
 	ID       string `expr:"id"`
 	Tier     string `expr:"tier"`
@@ -128,24 +163,26 @@ type PrincipalCtx struct {
 // DelegationCtx exposes the delegation chain to policy conditions.
 //
 // Available in policy when: expressions as:
-//   delegation.depth                — delegation chain depth (0 = direct)
-//   delegation.origin_agent         — root orchestrator agent ID
-//   delegation.origin_org           — root orchestrator organization
-//   delegation.agent_identity_verified — all agents in chain verified
+//
+//	delegation.depth                — delegation chain depth (0 = direct)
+//	delegation.origin_agent         — root orchestrator agent ID
+//	delegation.origin_org           — root orchestrator organization
+//	delegation.agent_identity_verified — all agents in chain verified
 type DelegationCtx struct {
-	Depth                  int    `expr:"depth"`
-	OriginAgent            string `expr:"origin_agent"`
-	OriginOrg              string `expr:"origin_org"`
-	AgentIdentityVerified  bool   `expr:"agent_identity_verified"`
+	Depth                 int    `expr:"depth"`
+	OriginAgent           string `expr:"origin_agent"`
+	OriginOrg             string `expr:"origin_org"`
+	AgentIdentityVerified bool   `expr:"agent_identity_verified"`
 }
 
 // TimeCtx exposes temporal conditions to policy rules.
 //
 // Available in policy when: expressions as:
-//   time.hour                — current hour (0-23, UTC)
-//   time.weekday             — current day of week (1=Mon, 7=Sun)
-//   time.month               — current month (1-12)
-//   time.day                 — current day of month (1-31)
+//
+//	time.hour                — current hour (0-23, UTC)
+//	time.weekday             — current day of week (1=Mon, 7=Sun)
+//	time.month               — current month (1-12)
+//	time.day                 — current day of month (1-31)
 type TimeCtx struct {
 	Hour    int `expr:"hour"`
 	Weekday int `expr:"weekday"`
@@ -161,11 +198,22 @@ type EvalResult struct {
 	Reason     string
 }
 
+// PhaseTransitionResult describes a matched phase transition.
+type PhaseTransitionResult struct {
+	From   string
+	To     string
+	Effect string
+	Reason string
+}
+
 // Evaluate runs the first-match-wins evaluation pipeline.
 // If no rule matches, the policy's default_effect is applied.
 func (e *Engine) Evaluate(toolID string, ctx EvalContext) EvalResult {
 	if ctx.Vars == nil {
 		ctx.Vars = e.doc.Vars
+	}
+	if strings.TrimSpace(ctx.ToolID) == "" {
+		ctx.ToolID = toolID
 	}
 
 	for i, rule := range e.doc.Rules {
@@ -207,6 +255,54 @@ func (e *Engine) Evaluate(toolID string, ctx EvalContext) EvalResult {
 		ReasonCode: unmatchedReasonCode(e.doc.DefaultEffect),
 		Reason:     "no rule matched; applying default_effect",
 	}
+}
+
+// EvaluatePhaseTransition checks phase_transitions for a matching transition from
+// fromPhase. Returns the first matched transition in declaration order.
+func (e *Engine) EvaluatePhaseTransition(fromPhase string, ctx EvalContext) (PhaseTransitionResult, bool, error) {
+	from := strings.TrimSpace(fromPhase)
+	if from == "" || len(e.doc.PhaseTransitions) == 0 {
+		return PhaseTransitionResult{}, false, nil
+	}
+	if ctx.Vars == nil {
+		ctx.Vars = e.doc.Vars
+	}
+
+	for i, tr := range e.doc.PhaseTransitions {
+		if strings.TrimSpace(tr.From) != from {
+			continue
+		}
+		if i < len(e.transitionPrograms) && e.transitionPrograms[i] != nil {
+			env := evalEnv(e.doc, &ctx)
+			out, err := vm.Run(e.transitionPrograms[i], env)
+			if err != nil {
+				return PhaseTransitionResult{}, false, fmt.Errorf("phase_transition[%d] runtime error: %w", i, err)
+			}
+			if out == nil {
+				return PhaseTransitionResult{}, false, fmt.Errorf("phase_transition[%d] expression produced nil result", i)
+			}
+			matched, ok := out.(bool)
+			if !ok {
+				return PhaseTransitionResult{}, false, fmt.Errorf("phase_transition[%d] expression returned non-bool %T", i, out)
+			}
+			if !matched {
+				continue
+			}
+		}
+
+		effect := normalizePhaseTransitionEffect(tr.Effect)
+		if effect == "" {
+			return PhaseTransitionResult{}, false, fmt.Errorf("phase_transition[%d] has invalid effect %q", i, strings.TrimSpace(tr.Effect))
+		}
+		return PhaseTransitionResult{
+			From:   strings.TrimSpace(tr.From),
+			To:     strings.TrimSpace(tr.To),
+			Effect: effect,
+			Reason: strings.TrimSpace(tr.Reason),
+		}, true, nil
+	}
+
+	return PhaseTransitionResult{}, false, nil
 }
 
 func evalFailureResult(rule Rule, err error) EvalResult {
@@ -267,6 +363,25 @@ func matchTool(pattern, toolID string) bool {
 //	args_array_any_match(path, pattern) bool
 //	  Returns true if any array element matches a glob pattern.
 //	  Example: args_array_any_match("recipients", "*@external.com")
+//
+//	purpose(expected) bool
+//	  Returns true when args.purpose equals expected (case-insensitive).
+//	  Example: purpose("refund_processing")
+//
+//	amount
+//	  Alias for numeric args.amount (defaults to 0 when missing/non-numeric).
+//
+//	cmd
+//	  Alias for string args.cmd (defaults to empty string).
+//
+//	host / path
+//	  Aliases for args.host / args.path.
+//
+//	tool_name
+//	  Alias for the current tool ID.
+//
+//	recipients
+//	  Alias for args_array_len("recipients").
 func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 	vars := make(map[string]any)
 	for k, v := range doc.Vars {
@@ -282,6 +397,7 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 	sentinelArgsArrayLen := func(path string) int { return 0 }
 	sentinelArgsArrayContains := func(path, value string) bool { return false }
 	sentinelArgsArrayAnyMatch := func(path, pattern string) bool { return false }
+	sentinelPurpose := func(expected string) bool { return false }
 
 	// Default zero-value environment (used at compile time for type checking).
 	env := map[string]any{
@@ -306,7 +422,7 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 			"verified": false,
 		},
 		"delegation": map[string]any{
-			"depth":                    0,
+			"depth":                   0,
 			"origin_agent":            "",
 			"origin_org":              "",
 			"agent_identity_verified": false,
@@ -317,6 +433,13 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 			"month":   0,
 			"day":     0,
 		},
+		"amount":                  float64(0),
+		"cmd":                     "",
+		"host":                    "",
+		"path":                    "",
+		"tool_name":               "",
+		"recipients":              0,
+		"purpose":                 sentinelPurpose,
 		"history_contains_within": sentinelHistoryContainsWithin,
 		"history_sequence":        sentinelHistorySequence,
 		"history_tool_count":      sentinelHistoryToolCount,
@@ -374,7 +497,7 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 	// Inject delegation context if available.
 	if ctx.Delegation != nil {
 		env["delegation"] = map[string]any{
-			"depth":                    ctx.Delegation.Depth,
+			"depth":                   ctx.Delegation.Depth,
 			"origin_agent":            ctx.Delegation.OriginAgent,
 			"origin_org":              ctx.Delegation.OriginOrg,
 			"agent_identity_verified": ctx.Delegation.AgentIdentityVerified,
@@ -404,6 +527,13 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 	env["args_array_len"] = argsArrayLen(ctx.Args)
 	env["args_array_contains"] = argsArrayContains(ctx.Args)
 	env["args_array_any_match"] = argsArrayAnyMatch(ctx.Args)
+	env["amount"] = argsNumber(ctx.Args, "amount")
+	env["cmd"] = argsString(ctx.Args, "cmd")
+	env["host"] = argsString(ctx.Args, "host")
+	env["path"] = argsString(ctx.Args, "path")
+	env["tool_name"] = strings.TrimSpace(ctx.ToolID)
+	env["recipients"] = argsArrayLen(ctx.Args)("recipients")
+	env["purpose"] = purposeMatches(ctx.Args)
 
 	// contains helper: check if a string slice contains a given string.
 	env["contains"] = func(arr []string, s string) bool {
@@ -619,10 +749,8 @@ func compileExpr(expression string, env map[string]any) (*vm.Program, error) {
 	if err := validateExpressionBounds(expression); err != nil {
 		return nil, err
 	}
-	env = enrichEnvForExpression(expression, env)
 	opts := []expr.Option{
 		expr.AsBool(),
-		expr.AllowUndefinedVariables(),
 	}
 	if env != nil {
 		opts = append(opts, expr.Env(env))
@@ -687,35 +815,84 @@ func expressionDepthHeuristic(expression string) (int, error) {
 	return maxDepth, nil
 }
 
-func enrichEnvForExpression(expression string, env map[string]any) map[string]any {
-	if env == nil {
-		env = map[string]any{}
+func argsNumber(args map[string]any, key string) float64 {
+	if args == nil {
+		return 0
 	}
-	out := make(map[string]any, len(env))
-	for k, v := range env {
-		out[k] = v
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return 0
 	}
-	// Add placeholders for namespaced function calls (e.g. data.feature_flag()).
-	for _, m := range namespacedCallRe.FindAllStringSubmatch(expression, -1) {
-		ns := m[1]
-		fn := m[2]
-		nsMap, _ := out[ns].(map[string]any)
-		if nsMap == nil {
-			nsMap = map[string]any{}
+	switch v := raw.(type) {
+	case int:
+		return float64(v)
+	case int8:
+		return float64(v)
+	case int16:
+		return float64(v)
+	case int32:
+		return float64(v)
+	case int64:
+		return float64(v)
+	case uint:
+		return float64(v)
+	case uint8:
+		return float64(v)
+	case uint16:
+		return float64(v)
+	case uint32:
+		return float64(v)
+	case uint64:
+		return float64(v)
+	case float32:
+		return float64(v)
+	case float64:
+		return v
+	case string:
+		if f, err := strconv.ParseFloat(strings.TrimSpace(v), 64); err == nil {
+			return f
 		}
-		if _, ok := nsMap[fn]; !ok {
-			nsMap[fn] = func(args ...any) any { return nil }
-		}
-		out[ns] = nsMap
 	}
-	// Add placeholders for bare function calls.
-	for _, m := range funcCallRe.FindAllStringSubmatch(expression, -1) {
-		name := m[1]
-		if _, exists := out[name]; !exists {
-			out[name] = func(args ...any) any { return nil }
-		}
+	if f, err := strconv.ParseFloat(strings.TrimSpace(fmt.Sprint(raw)), 64); err == nil {
+		return f
 	}
-	return out
+	return 0
+}
+
+func argsString(args map[string]any, key string) string {
+	if args == nil {
+		return ""
+	}
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return ""
+	}
+	if s, ok := raw.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return strings.TrimSpace(fmt.Sprint(raw))
+}
+
+func purposeMatches(args map[string]any) func(string) bool {
+	actual := strings.TrimSpace(argsString(args, "purpose"))
+	return func(expected string) bool {
+		expected = strings.TrimSpace(expected)
+		if actual == "" || expected == "" {
+			return false
+		}
+		return strings.EqualFold(actual, expected)
+	}
+}
+
+func normalizePhaseTransitionEffect(raw string) string {
+	effect := strings.ToLower(strings.TrimSpace(raw))
+	if effect == "" {
+		return "permit_transition"
+	}
+	if effect != "permit_transition" && effect != "defer" {
+		return ""
+	}
+	return effect
 }
 
 func unmatchedReasonCode(effect string) string {

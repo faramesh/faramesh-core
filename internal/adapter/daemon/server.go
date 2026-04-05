@@ -35,17 +35,19 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/principal"
 	deferPkg "github.com/faramesh/faramesh-core/internal/core/defer"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
+	"github.com/faramesh/faramesh-core/internal/core/principal"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
 	"github.com/google/uuid"
 )
 
 // Server is the A2 gRPC daemon adapter.
 type Server struct {
-	pipeline   *core.Pipeline
-	server     *grpc.Server
-	mu         sync.RWMutex
-	clients    map[string]time.Time // agentID → last seen
-	adminToken string
+	pipeline          *core.Pipeline
+	server            *grpc.Server
+	mu                sync.RWMutex
+	clients           map[string]time.Time // agentID → last seen
+	adminToken        string
+	principalResolver func(context.Context, string) (*principal.Identity, error)
 
 	UnimplementedFarameshDaemonServer
 }
@@ -61,9 +63,10 @@ type Config struct {
 // NewServer creates a new A2 daemon server.
 func NewServer(cfg Config) *Server {
 	s := &Server{
-		pipeline:   cfg.Pipeline,
-		clients:    make(map[string]time.Time),
-		adminToken: strings.TrimSpace(cfg.PolicyAdminToken),
+		pipeline:          cfg.Pipeline,
+		clients:           make(map[string]time.Time),
+		adminToken:        strings.TrimSpace(cfg.PolicyAdminToken),
+		principalResolver: cfg.PrincipalResolver,
 	}
 
 	opts := []grpc.ServerOption{
@@ -140,6 +143,7 @@ func (s *Server) Govern(ctx context.Context, req *GovernRequest) (*GovernRespons
 	if callID == "" {
 		callID = uuid.New().String()
 	}
+	resolvedPrincipal := s.resolvePrincipalFromToken(req.PrincipalToken)
 
 	car := core.CanonicalActionRequest{
 		CallID:             callID,
@@ -147,6 +151,7 @@ func (s *Server) Govern(ctx context.Context, req *GovernRequest) (*GovernRespons
 		SessionID:          req.SessionId,
 		ToolID:             req.ToolId,
 		Args:               args,
+		Principal:          resolvedPrincipal,
 		ExecutionTimeoutMS: req.ExecutionTimeoutMs,
 		Timestamp:          time.Now(),
 		InterceptAdapter:   "daemon",
@@ -194,6 +199,27 @@ func (s *Server) Govern(ctx context.Context, req *GovernRequest) (*GovernRespons
 	}
 
 	return resp, nil
+}
+
+func (s *Server) resolvePrincipalFromToken(principalToken string) *principal.Identity {
+	token := strings.TrimSpace(principalToken)
+	if token == "" {
+		return nil
+	}
+	if s.principalResolver == nil {
+		return &principal.Identity{ID: "idp:unverified", Verified: true, Method: "idp_untrusted"}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	resolved, err := s.principalResolver(ctx, token)
+	if err != nil {
+		return &principal.Identity{ID: "idp:unverified", Verified: true, Method: "idp_untrusted"}
+	}
+	if resolved == nil || strings.TrimSpace(resolved.ID) == "" || !resolved.Verified {
+		return &principal.Identity{ID: "idp:unverified", Verified: true, Method: "idp_untrusted"}
+	}
+	return resolved
 }
 
 // Kill implements the FarameshDaemonServer interface.

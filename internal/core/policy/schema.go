@@ -52,6 +52,9 @@ type Doc struct {
 	// OrchestratorManifest declares all permitted sub-agent invocations.
 	OrchestratorManifest *OrchestratorManifest `yaml:"orchestrator_manifest"`
 
+	// DelegationPolicies preserve parsed delegate block constraints for invoke-time enforcement.
+	DelegationPolicies []DelegationPolicy `yaml:"delegation_policies"`
+
 	// ToolSchemas declares versioned schemas for governed tools.
 	ToolSchemas map[string]ToolSchema `yaml:"tool_schemas"`
 
@@ -115,7 +118,11 @@ type Match struct {
 	Tool string `yaml:"tool"`
 
 	// When is an expr-lang expression evaluated against the call context.
-	// Available variables: args, vars, session, tool, principal, delegation, time
+	// Available variables: args, vars, session, tool, principal, delegation, time,
+	// plus convenience aliases/functions: amount, cmd, purpose(...),
+	// history_contains_within(...), history_sequence(...), history_tool_count(...),
+	// deny_count_within(...), args_array_len(...), args_array_contains(...),
+	// args_array_any_match(...)
 	When string `yaml:"when"`
 }
 
@@ -235,7 +242,7 @@ type ReadSanitizationConf struct {
 type CrossSessionGuard struct {
 	Scope            string `yaml:"scope"` // "principal"
 	ToolPattern      string `yaml:"tool_pattern"`
-	Metric           string `yaml:"metric"` // "unique_record_count", "call_count"
+	Metric           string `yaml:"metric"` // "unique_record_count", "call_count", "data_volume_bytes"
 	Window           string `yaml:"window"` // e.g. "24h"
 	MaxUniqueRecords int    `yaml:"max_unique_records"`
 	OnExceed         string `yaml:"on_exceed"` // "deny" or "defer"
@@ -297,6 +304,14 @@ type AgentInvocation struct {
 	AgentID                  string `yaml:"agent_id"`
 	MaxInvocationsPerSession int    `yaml:"max_invocations_per_session"`
 	RequiresPriorApproval    bool   `yaml:"requires_prior_approval"`
+}
+
+// DelegationPolicy constrains delegated invoke_agent requests from FPL delegate blocks.
+type DelegationPolicy struct {
+	TargetAgent string `yaml:"target_agent"`
+	Scope       string `yaml:"scope"`
+	TTL         string `yaml:"ttl"`
+	Ceiling     string `yaml:"ceiling"`
 }
 
 // ToolSchema declares a versioned schema for a governed tool.

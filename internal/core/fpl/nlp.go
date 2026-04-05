@@ -39,7 +39,7 @@ func NLPToFPL(agentID, nlp string) string {
 	if agentID == "" {
 		agentID = "my-agent"
 	}
-	return DecompileToFPL(agentID, "deny", nil, nil, decompRules, nil)
+	return DecompileToFPL(agentID, "deny", nil, nil, decompRules, nil, nil, nil, nil)
 }
 
 var (

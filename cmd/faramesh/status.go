@@ -22,7 +22,11 @@ func init() {
 }
 
 func runStatus(_ *cobra.Command, _ []string) error {
-	raw, err := daemonGet("/api/v1/status")
+	raw, err := daemonSocketRequest(map[string]any{"type": "status"})
+	if err != nil && daemonHTTPFallback {
+		// Compatibility fallback while HTTP management APIs are still present.
+		raw, err = daemonGet("/api/v1/status")
+	}
 	if err != nil {
 		return err
 	}

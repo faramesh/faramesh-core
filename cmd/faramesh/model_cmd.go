@@ -1,10 +1,38 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
 )
+
+func modelSocketRequestWithHTTPFallback(op string, payload map[string]any, httpMethod, httpPath string) (json.RawMessage, error) {
+	req := map[string]any{"type": "model", "op": op}
+	for k, v := range payload {
+		req[k] = v
+	}
+	resp, err := daemonSocketRequest(req)
+	if err == nil {
+		return resp, nil
+	}
+	if !daemonHTTPFallback {
+		return nil, err
+	}
+	if httpMethod == "GET" {
+		if len(payload) == 0 {
+			return daemonGet(httpPath)
+		}
+		q := map[string]string{}
+		for k, v := range payload {
+			if s, ok := v.(string); ok {
+				q[k] = s
+			}
+		}
+		return daemonGetWithQuery(httpPath, q)
+	}
+	return daemonPost(httpPath, payload)
+}
 
 var modelCmd = &cobra.Command{
 	Use:   "model",
@@ -74,12 +102,13 @@ func init() {
 }
 
 func runModelRegister(_ *cobra.Command, args []string) error {
-	resp, err := daemonPost("/api/v1/model/register", map[string]any{
+	payload := map[string]any{
 		"name":        args[0],
 		"fingerprint": modelRegFingerprint,
 		"provider":    modelRegProvider,
 		"version":     modelRegVersion,
-	})
+	}
+	resp, err := modelSocketRequestWithHTTPFallback("register", payload, "POST", "/api/v1/model/register")
 	if err != nil {
 		return err
 	}
@@ -92,7 +121,7 @@ func runModelVerify(_ *cobra.Command, _ []string) error {
 	if modelVerifyAgent != "" {
 		body["agent"] = modelVerifyAgent
 	}
-	resp, err := daemonPost("/api/v1/model/verify", body)
+	resp, err := modelSocketRequestWithHTTPFallback("verify", body, "POST", "/api/v1/model/verify")
 	if err != nil {
 		return err
 	}
@@ -107,7 +136,7 @@ func runModelConsistency(_ *cobra.Command, _ []string) error {
 	if modelConsistAgent != "" {
 		body["agent"] = modelConsistAgent
 	}
-	resp, err := daemonPost("/api/v1/model/consistency", body)
+	resp, err := modelSocketRequestWithHTTPFallback("consistency", body, "POST", "/api/v1/model/consistency")
 	if err != nil {
 		return err
 	}
@@ -116,7 +145,7 @@ func runModelConsistency(_ *cobra.Command, _ []string) error {
 }
 
 func runModelList(_ *cobra.Command, _ []string) error {
-	resp, err := daemonGet("/api/v1/model/list")
+	resp, err := modelSocketRequestWithHTTPFallback("list", map[string]any{}, "GET", "/api/v1/model/list")
 	if err != nil {
 		return err
 	}
@@ -125,9 +154,7 @@ func runModelList(_ *cobra.Command, _ []string) error {
 }
 
 func runModelAlert(_ *cobra.Command, args []string) error {
-	resp, err := daemonGetWithQuery("/api/v1/model/alert", map[string]string{
-		"agent": args[0],
-	})
+	resp, err := modelSocketRequestWithHTTPFallback("alert", map[string]any{"agent": args[0]}, "GET", "/api/v1/model/alert")
 	if err != nil {
 		return err
 	}
