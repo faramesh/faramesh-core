@@ -70,44 +70,57 @@ type WorkloadIdentityDetector interface {
 // before the Decision is returned. If the WAL write fails, DENY is returned.
 // Execution must never precede the audit record.
 type Pipeline struct {
-	engine           *policy.AtomicEngine
-	wal              dpr.Writer
-	store            dpr.StoreBackend // may be nil (in-memory / demo mode)
-	dprQueue         jobs.DPRQueue
-	sessions         *session.Manager
-	sessionGovernor  *session.Governor
-	defers           *deferwork.Workflow
-	chainMu          map[string]string      // agentID -> last record hash (in-memory cache)
-	chainLock        sync.Mutex             // protects chainMu
-	syncer           DecisionSyncer         // optional Horizon sync (nil = disabled)
-	postScanner      *postcondition.Scanner // post-execution output scanner (nil = disabled)
-	httpClient       *http.Client           // shared HTTP client for context guards
-	webhooks         *webhook.Sender
-	degraded         *degraded.Manager
-	subPolicies      *multiagent.SubPolicyManager
-	routingGovernor  *multiagent.RoutingGovernor
-	loopGovernor     *multiagent.LoopGovernor
-	aggGovernor      *multiagent.AggregationGovernor
-	callbacks        callbacks.Dispatcher
-	revocations      PrincipalRevocationChecker
-	elevations       PrincipalElevationResolver
-	workloadIdentity WorkloadIdentityDetector
-	credentialRouter *credential.Router
-	provenance       observe.ArgProvenanceTracker
-	phaseManager     *phases.PhaseManager
-	policySourceType string
-	policySourceID   string
-	hmacKey          []byte
-	log              *zap.Logger
-	artifacts        atomic.Value // *policyArtifacts
-	callChainMu      sync.Mutex
-	activeCallChains map[string]struct{}
+	engine            *policy.AtomicEngine
+	wal               dpr.Writer
+	store             dpr.StoreBackend // may be nil (in-memory / demo mode)
+	dprQueue          jobs.DPRQueue
+	sessions          *session.Manager
+	sessionGovernor   *session.Governor
+	defers            *deferwork.Workflow
+	chainMu           map[string]string      // agentID -> last record hash (in-memory cache)
+	chainLock         sync.Mutex             // protects chainMu
+	syncer            DecisionSyncer         // optional Horizon sync (nil = disabled)
+	postScanner       *postcondition.Scanner // post-execution output scanner (nil = disabled)
+	httpClient        *http.Client           // shared HTTP client for context guards
+	webhooks          *webhook.Sender
+	degraded          *degraded.Manager
+	subPolicies       *multiagent.SubPolicyManager
+	routingGovernor   *multiagent.RoutingGovernor
+	loopGovernor      *multiagent.LoopGovernor
+	aggGovernor       *multiagent.AggregationGovernor
+	crossSession      *crossSessionGuardTracker
+	callbacks         callbacks.Dispatcher
+	revocations       PrincipalRevocationChecker
+	elevations        PrincipalElevationResolver
+	workloadIdentity  WorkloadIdentityDetector
+	credentialRouter  *credential.Router
+	provenance        observe.ArgProvenanceTracker
+	phaseManager      *phases.PhaseManager
+	policySourceType  string
+	policySourceID    string
+	strictModelVerify bool
+	hmacKey           []byte
+	log               *zap.Logger
+	artifacts         atomic.Value // *policyArtifacts
+	callChainMu       sync.Mutex
+	activeCallChains  map[string]struct{}
+	modelMu           sync.RWMutex
+	models            map[string]ModelRegistration
 }
 
 type policyArtifacts struct {
 	engine      *policy.Engine
 	toolSchemas *policy.ToolSchemaRegistry
 	postScanner *postcondition.Scanner
+}
+
+// RuntimeStatus is a lightweight snapshot of governance runtime health.
+type RuntimeStatus struct {
+	PolicyLoaded   bool
+	PolicyVersion  string
+	DPRHealthy     bool
+	ActiveSessions int
+	TrustLevel     string
 }
 
 const (
@@ -117,31 +130,31 @@ const (
 
 // Config holds construction parameters for the Pipeline.
 type Config struct {
-	Engine           *policy.AtomicEngine
-	WAL              dpr.Writer
-	Store            dpr.StoreBackend // optional
-	DPRQueue         jobs.DPRQueue    // optional async persistence queue
-	Sessions         *session.Manager
-	SessionGovernor  *session.Governor
-	Defers           *deferwork.Workflow
-	Webhooks         *webhook.Sender
-	Degraded         *degraded.Manager
-	SubPolicies      *multiagent.SubPolicyManager
-	RoutingGovernor  *multiagent.RoutingGovernor
-	LoopGovernor     *multiagent.LoopGovernor
-	AggregationGov   *multiagent.AggregationGovernor
-	Callbacks        callbacks.Dispatcher
-	Revocations      PrincipalRevocationChecker
-	Elevations       PrincipalElevationResolver
-	WorkloadIdentity WorkloadIdentityDetector
-	CredentialRouter *credential.Router
-	Provenance       observe.ArgProvenanceTracker
-	PhaseManager     *phases.PhaseManager
-	PolicySourceType string
-	PolicySourceID   string
+	Engine                  *policy.AtomicEngine
+	WAL                     dpr.Writer
+	Store                   dpr.StoreBackend // optional
+	DPRQueue                jobs.DPRQueue    // optional async persistence queue
+	Sessions                *session.Manager
+	SessionGovernor         *session.Governor
+	Defers                  *deferwork.Workflow
+	Webhooks                *webhook.Sender
+	Degraded                *degraded.Manager
+	SubPolicies             *multiagent.SubPolicyManager
+	RoutingGovernor         *multiagent.RoutingGovernor
+	LoopGovernor            *multiagent.LoopGovernor
+	AggregationGov          *multiagent.AggregationGovernor
+	Callbacks               callbacks.Dispatcher
+	Revocations             PrincipalRevocationChecker
+	Elevations              PrincipalElevationResolver
+	WorkloadIdentity        WorkloadIdentityDetector
+	CredentialRouter        *credential.Router
+	Provenance              observe.ArgProvenanceTracker
+	PhaseManager            *phases.PhaseManager
+	PolicySourceType        string
+	PolicySourceID          string
 	StrictModelVerification bool
-	HMACKey          []byte
-	Log              *zap.Logger
+	HMACKey                 []byte
+	Log                     *zap.Logger
 }
 
 // NewPipeline constructs a Pipeline from a Config.
@@ -161,33 +174,36 @@ func NewPipeline(cfg Config) *Pipeline {
 		cfg.Defers = deferwork.NewWorkflow("")
 	}
 	p := &Pipeline{
-		engine:           cfg.Engine,
-		wal:              cfg.WAL,
-		store:            cfg.Store,
-		dprQueue:         cfg.DPRQueue,
-		sessions:         cfg.Sessions,
-		sessionGovernor:  cfg.SessionGovernor,
-		defers:           cfg.Defers,
-		chainMu:          make(map[string]string),
-		httpClient:       &http.Client{Timeout: 10 * time.Second},
-		webhooks:         cfg.Webhooks,
-		degraded:         cfg.Degraded,
-		subPolicies:      cfg.SubPolicies,
-		routingGovernor:  cfg.RoutingGovernor,
-		loopGovernor:     cfg.LoopGovernor,
-		aggGovernor:      cfg.AggregationGov,
-		callbacks:        cfg.Callbacks,
-		revocations:      cfg.Revocations,
-		elevations:       cfg.Elevations,
-		workloadIdentity: cfg.WorkloadIdentity,
-		credentialRouter: cfg.CredentialRouter,
-		provenance:       cfg.Provenance,
-		phaseManager:     cfg.PhaseManager,
-		policySourceType: cfg.PolicySourceType,
-		policySourceID:   cfg.PolicySourceID,
-		hmacKey:          cfg.HMACKey,
-		log:              cfg.Log,
-		activeCallChains: make(map[string]struct{}),
+		engine:            cfg.Engine,
+		wal:               cfg.WAL,
+		store:             cfg.Store,
+		dprQueue:          cfg.DPRQueue,
+		sessions:          cfg.Sessions,
+		sessionGovernor:   cfg.SessionGovernor,
+		defers:            cfg.Defers,
+		chainMu:           make(map[string]string),
+		httpClient:        &http.Client{Timeout: 10 * time.Second},
+		webhooks:          cfg.Webhooks,
+		degraded:          cfg.Degraded,
+		subPolicies:       cfg.SubPolicies,
+		routingGovernor:   cfg.RoutingGovernor,
+		loopGovernor:      cfg.LoopGovernor,
+		aggGovernor:       cfg.AggregationGov,
+		crossSession:      newCrossSessionGuardTracker(),
+		callbacks:         cfg.Callbacks,
+		revocations:       cfg.Revocations,
+		elevations:        cfg.Elevations,
+		workloadIdentity:  cfg.WorkloadIdentity,
+		credentialRouter:  cfg.CredentialRouter,
+		provenance:        cfg.Provenance,
+		phaseManager:      cfg.PhaseManager,
+		policySourceType:  cfg.PolicySourceType,
+		policySourceID:    cfg.PolicySourceID,
+		strictModelVerify: cfg.StrictModelVerification,
+		hmacKey:           cfg.HMACKey,
+		log:               cfg.Log,
+		activeCallChains:  make(map[string]struct{}),
+		models:            make(map[string]ModelRegistration),
 	}
 	if p.log == nil {
 		p.log = zap.NewNop()
@@ -328,6 +344,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			Reason:     "policy engine not loaded",
 		}, p.sessions.Get(req.AgentID), start, nil)
 	}
+	doc := engine.Doc()
 
 	if req.Timestamp.IsZero() {
 		req.Timestamp = start
@@ -397,6 +414,19 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 		}
 	}
 
+	// [0.45] Strict runtime model identity verification.
+	modelVerification := p.assessModelVerification(req, doc)
+	if modelVerification != nil {
+		req.ModelVerification = modelVerification
+		if p.strictModelVerify && modelVerification.Required && !modelVerification.Verified {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: reasons.IdentityUnverified,
+				Reason:     modelVerification.Reason,
+			}, p.sessions.Get(req.AgentID), start, nil)
+		}
+	}
+
 	// [1] Kill switch check — nanoseconds, no network.
 	sess := p.sessions.Get(req.AgentID)
 	if p.sessionGovernor != nil {
@@ -411,8 +441,6 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 		}, sess, start, argProvenance)
 	}
 
-	doc := engine.Doc()
-
 	// [2] Phase check — tool visibility.
 	if len(doc.Phases) > 0 {
 		phaseName := sess.CurrentPhase()
@@ -420,12 +448,72 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			phaseName = firstPhaseName(doc.Phases)
 			sess.EnsurePhase(phaseName)
 		}
+		if transition, matched, err := engine.EvaluatePhaseTransition(phaseName, buildPhaseTransitionEvalContext(req, doc, sess)); err != nil {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: reasons.PolicyLoadError,
+				Reason:     fmt.Sprintf("phase transition evaluation failed: %v", err),
+			}, sess, start, argProvenance)
+		} else if matched {
+			switch transition.Effect {
+			case "defer":
+				reason := transition.Reason
+				if reason == "" {
+					reason = fmt.Sprintf("phase transition %q -> %q requires approval", transition.From, transition.To)
+				}
+				return p.decide(req, Decision{
+					Effect:     EffectDefer,
+					ReasonCode: reasons.PhaseTransitionDefer,
+					Reason:     reason,
+				}, sess, start, argProvenance)
+			case "permit_transition":
+				nextPhase := strings.TrimSpace(transition.To)
+				if nextPhase == "" {
+					return p.decide(req, Decision{
+						Effect:     EffectDeny,
+						ReasonCode: reasons.PolicyLoadError,
+						Reason:     "phase transition target is empty",
+					}, sess, start, argProvenance)
+				}
+				if _, ok := doc.Phases[nextPhase]; !ok {
+					return p.decide(req, Decision{
+						Effect:     EffectDeny,
+						ReasonCode: reasons.PolicyLoadError,
+						Reason:     fmt.Sprintf("phase transition target %q is not declared", nextPhase),
+					}, sess, start, argProvenance)
+				}
+				if p.phaseManager != nil && nextPhase != phaseName {
+					if p.phaseManager.CurrentPhase(req.AgentID) == "" {
+						_ = p.phaseManager.SetPhase(req.AgentID, phaseName)
+					}
+					if _, err := p.phaseManager.Transition(req.AgentID, nextPhase, transition.Reason); err != nil {
+						return p.decide(req, Decision{
+							Effect:     EffectDeny,
+							ReasonCode: reasons.PriorPhaseIncomplete,
+							Reason:     fmt.Sprintf("phase transition %q -> %q rejected: %v", phaseName, nextPhase, err),
+						}, sess, start, argProvenance)
+					}
+				}
+				sess.SetPhase(nextPhase)
+				phaseName = nextPhase
+			}
+		}
 		if ph, ok := doc.Phases[phaseName]; ok && len(ph.Tools) > 0 {
 			phaseTools, stepToolAllowlist := splitPhaseAndStepToolVisibility(ph.Tools)
 			if !p.isToolAllowedInPhase(req.AgentID, phaseName, req.ToolID, phaseTools) {
+				effect := EffectDeny
+				reasonCode := reasons.OutOfPhaseToolCall
+				if doc.PhaseEnforcement != nil {
+					if strings.EqualFold(strings.TrimSpace(doc.PhaseEnforcement.OnOutOfPhaseCall), "defer") {
+						effect = EffectDefer
+					}
+					if rc := strings.TrimSpace(doc.PhaseEnforcement.ReasonCode); rc != "" {
+						reasonCode = rc
+					}
+				}
 				return p.decide(req, Decision{
-					Effect:     EffectDeny,
-					ReasonCode: reasons.OutOfPhaseToolCall,
+					Effect:     effect,
+					ReasonCode: reasonCode,
 					Reason:     fmt.Sprintf("tool %q not allowed in phase %q", req.ToolID, phaseName),
 				}, sess, start, argProvenance)
 			}
@@ -538,6 +626,25 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 		}
 	}
 
+	// [3.10] Delegate constraints — enforce delegate scope/ttl on invoke_agent requests.
+	if topologyInvokeTool(req.ToolID) && len(doc.DelegationPolicies) > 0 {
+		target := extractTargetAgentID(req.Args)
+		if target == "" {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: reasons.SchemaValidationFail,
+				Reason:     "invoke_agent requires target_agent_id (or agent_id) in args",
+			}, sess, start, argProvenance)
+		}
+		if allowed, code, reason := enforceDelegationConstraints(doc, target, req.Args); !allowed {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: code,
+				Reason:     reason,
+			}, sess, start, argProvenance)
+		}
+	}
+
 	// [3.11] Orchestrator topology — invoke_agent targets must match orchestrator_manifest.
 	if p.routingGovernor != nil && topologyInvokeTool(req.ToolID) && p.routingGovernor.HasManifest(req.AgentID) {
 		target := extractTargetAgentID(req.Args)
@@ -618,6 +725,18 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 		}
 	}
 
+	// [3.3] Cross-session accumulation guard — enforce principal-scoped limits across sessions.
+	if len(doc.CrossSessionGuards) > 0 && p.crossSession != nil {
+		allowed, effect, code, reason := p.crossSession.CheckAndTrack(doc.CrossSessionGuards, req, req.Timestamp)
+		if !allowed {
+			return p.decide(req, Decision{
+				Effect:     effect,
+				ReasonCode: code,
+				Reason:     reason,
+			}, sess, start, argProvenance)
+		}
+	}
+
 	// [4] Session state — increment call count.
 	callCount := sess.IncrCallCount()
 
@@ -670,8 +789,9 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	}
 
 	ctx := policy.EvalContext{
-		Args: req.Args,
-		Vars: runtimeenv.MergeDocVars(doc.Vars, runtimeenv.PolicyVarOverlay()),
+		Args:   req.Args,
+		Vars:   runtimeenv.MergeDocVars(doc.Vars, runtimeenv.PolicyVarOverlay()),
+		ToolID: req.ToolID,
 		Session: policy.SessionCtx{
 			CallCount:    callCount,
 			History:      historyEntries,
@@ -1047,6 +1167,7 @@ func (p *Pipeline) buildRecord(req CanonicalActionRequest, d Decision, argProven
 		rec.DegradedMode = p.degraded.Current().String()
 	}
 	setRecordCredentialMeta(rec, credentialMetaFromArgs(req.Args))
+	setRecordModelVerificationMeta(rec, req.ModelVerification)
 
 	// Populate principal hash if available.
 	if req.Principal != nil && req.Principal.ID != "" {
@@ -1124,6 +1245,61 @@ func enforceExecutionTimeoutContract(reqTimeoutMS int, args map[string]any, doc 
 	return false, "", "", normalized
 }
 
+func buildPhaseTransitionEvalContext(req CanonicalActionRequest, doc *policy.Doc, sess *session.State) policy.EvalContext {
+	history := sess.History()
+	historyEntries := make([]map[string]any, len(history))
+	for i, h := range history {
+		historyEntries[i] = map[string]any{
+			"tool":      h.ToolID,
+			"effect":    h.Effect,
+			"timestamp": h.Timestamp.Unix(),
+		}
+	}
+
+	toolMeta := policy.ToolCtx{}
+	if doc.Tools != nil {
+		if t, ok := doc.Tools[req.ToolID]; ok {
+			toolMeta = policy.ToolCtx{
+				Reversibility: t.Reversibility,
+				BlastRadius:   t.BlastRadius,
+				Tags:          t.Tags,
+			}
+		}
+	}
+
+	ctx := policy.EvalContext{
+		Args:   req.Args,
+		Vars:   runtimeenv.MergeDocVars(doc.Vars, runtimeenv.PolicyVarOverlay()),
+		ToolID: req.ToolID,
+		Session: policy.SessionCtx{
+			CallCount:    sess.CallCount(),
+			History:      historyEntries,
+			CostUSD:      sess.CurrentCostUSD(),
+			DailyCostUSD: sess.DailyCostUSD(),
+		},
+		Tool: toolMeta,
+	}
+
+	if req.Principal != nil {
+		ctx.Principal = &policy.PrincipalCtx{
+			ID:       req.Principal.ID,
+			Tier:     req.Principal.Tier,
+			Role:     req.Principal.Role,
+			Org:      req.Principal.Org,
+			Verified: req.Principal.Verified,
+		}
+	}
+	if req.Delegation != nil {
+		ctx.Delegation = &policy.DelegationCtx{
+			Depth:                 req.Delegation.Depth(),
+			OriginAgent:           req.Delegation.OriginAgent(),
+			OriginOrg:             req.Delegation.OriginOrg(),
+			AgentIdentityVerified: req.Delegation.AllIdentitiesVerified(),
+		}
+	}
+
+	return ctx
+}
 func timeoutFromArgs(args map[string]any) int {
 	if len(args) == 0 {
 		return 0
@@ -1267,6 +1443,317 @@ func setRecordCredentialMeta(rec *dpr.Record, meta credential.DPRMeta) {
 	}
 }
 
+func (p *Pipeline) assessModelVerification(req CanonicalActionRequest, doc *policy.Doc) *ModelVerificationResult {
+	declared := declaredModelIdentityFromPolicy(doc)
+	presented := presentedModelIdentityFromRequest(req)
+
+	if declared == nil && presented == nil && !p.strictModelVerify {
+		return nil
+	}
+
+	registered := p.ListModelIdentities()
+	result := &ModelVerificationResult{
+		Strict:          p.strictModelVerify,
+		Required:        p.strictModelVerify && declared != nil,
+		Declared:        declared,
+		Presented:       presented,
+		RegisteredCount: len(registered),
+	}
+
+	if declared == nil {
+		result.Verified = true
+		result.Reason = "policy does not declare model identity requirements"
+		return result
+	}
+
+	if len(registered) == 0 {
+		result.Verified = false
+		result.Reason = "no model identities are registered in daemon core"
+		return result
+	}
+
+	if presented == nil {
+		result.Verified = false
+		result.Reason = "runtime request did not include model identity"
+		return result
+	}
+
+	match, reason := findRegisteredModelMatch(declared, presented, registered)
+	if match == nil {
+		result.Verified = false
+		result.Reason = reason
+		return result
+	}
+
+	result.Registered = &ModelIdentity{
+		Name:        match.Name,
+		Fingerprint: match.Fingerprint,
+		Provider:    match.Provider,
+		Version:     match.Version,
+	}
+
+	if strings.TrimSpace(match.Fingerprint) == "" {
+		result.Verified = false
+		result.Reason = fmt.Sprintf("registered model %q has no fingerprint", match.Name)
+		return result
+	}
+	if strings.TrimSpace(presented.Fingerprint) == "" {
+		result.Verified = false
+		result.Reason = "runtime model fingerprint is required"
+		return result
+	}
+
+	if err := verifyModelIdentityAgainstRegistration(declared, *match); err != nil {
+		result.Verified = false
+		result.Reason = err.Error()
+		return result
+	}
+	if err := verifyModelIdentityAgainstRegistration(presented, *match); err != nil {
+		result.Verified = false
+		result.Reason = err.Error()
+		return result
+	}
+
+	result.Verified = true
+	result.Reason = "runtime model identity verified against registry policy"
+	return result
+}
+
+func findRegisteredModelMatch(declared, presented *ModelIdentity, registered []ModelRegistration) (*ModelRegistration, string) {
+	if declared != nil && strings.TrimSpace(declared.Name) != "" {
+		for i := range registered {
+			if strings.EqualFold(registered[i].Name, declared.Name) {
+				return &registered[i], ""
+			}
+		}
+		return nil, fmt.Sprintf("declared model %q is not registered", declared.Name)
+	}
+
+	if presented != nil && strings.TrimSpace(presented.Name) != "" {
+		for i := range registered {
+			if strings.EqualFold(registered[i].Name, presented.Name) {
+				return &registered[i], ""
+			}
+		}
+	}
+
+	for i := range registered {
+		if identityMatchesRegistration(declared, registered[i]) && identityMatchesRegistration(presented, registered[i]) {
+			return &registered[i], ""
+		}
+	}
+
+	return nil, "no registered model matches declared/runtime identity"
+}
+
+func identityMatchesRegistration(identity *ModelIdentity, reg ModelRegistration) bool {
+	if identity == nil {
+		return true
+	}
+	if strings.TrimSpace(identity.Name) != "" && !strings.EqualFold(identity.Name, reg.Name) {
+		return false
+	}
+	if strings.TrimSpace(identity.Fingerprint) != "" && !strings.EqualFold(identity.Fingerprint, reg.Fingerprint) {
+		return false
+	}
+	if strings.TrimSpace(identity.Provider) != "" && !strings.EqualFold(identity.Provider, reg.Provider) {
+		return false
+	}
+	if strings.TrimSpace(identity.Version) != "" && strings.TrimSpace(identity.Version) != strings.TrimSpace(reg.Version) {
+		return false
+	}
+	return true
+}
+
+func verifyModelIdentityAgainstRegistration(identity *ModelIdentity, reg ModelRegistration) error {
+	if identity == nil {
+		return nil
+	}
+	if strings.TrimSpace(identity.Name) != "" && !strings.EqualFold(identity.Name, reg.Name) {
+		return fmt.Errorf("model name mismatch: presented=%q registered=%q", identity.Name, reg.Name)
+	}
+	if strings.TrimSpace(identity.Fingerprint) != "" && !strings.EqualFold(identity.Fingerprint, reg.Fingerprint) {
+		return fmt.Errorf("model fingerprint mismatch for %q", reg.Name)
+	}
+	if strings.TrimSpace(identity.Provider) != "" && strings.TrimSpace(reg.Provider) != "" && !strings.EqualFold(identity.Provider, reg.Provider) {
+		return fmt.Errorf("model provider mismatch for %q", reg.Name)
+	}
+	if strings.TrimSpace(identity.Version) != "" && strings.TrimSpace(reg.Version) != "" && strings.TrimSpace(identity.Version) != strings.TrimSpace(reg.Version) {
+		return fmt.Errorf("model version mismatch for %q", reg.Name)
+	}
+	return nil
+}
+
+func declaredModelIdentityFromPolicy(doc *policy.Doc) *ModelIdentity {
+	if doc == nil || doc.Vars == nil {
+		return nil
+	}
+
+	var m ModelIdentity
+	if raw, ok := doc.Vars["model"]; ok {
+		switch v := raw.(type) {
+		case string:
+			m.Name = v
+		case map[string]any:
+			m.Name = stringFromAny(v["name"])
+			m.Fingerprint = stringFromAny(v["fingerprint"])
+			m.Provider = stringFromAny(v["provider"])
+			m.Version = stringFromAny(v["version"])
+		}
+	}
+	if raw, ok := doc.Vars["model_identity"]; ok {
+		if v, ok := raw.(map[string]any); ok {
+			if strings.TrimSpace(m.Name) == "" {
+				m.Name = stringFromAny(v["name"])
+			}
+			if strings.TrimSpace(m.Fingerprint) == "" {
+				m.Fingerprint = stringFromAny(v["fingerprint"])
+			}
+			if strings.TrimSpace(m.Provider) == "" {
+				m.Provider = stringFromAny(v["provider"])
+			}
+			if strings.TrimSpace(m.Version) == "" {
+				m.Version = stringFromAny(v["version"])
+			}
+		}
+	}
+	if strings.TrimSpace(m.Name) == "" {
+		m.Name = stringFromAny(doc.Vars["model_name"])
+	}
+	if strings.TrimSpace(m.Name) == "" {
+		m.Name = stringFromAny(doc.Vars["agent.model"])
+	}
+	if strings.TrimSpace(m.Fingerprint) == "" {
+		m.Fingerprint = stringFromAny(doc.Vars["model_fingerprint"])
+	}
+	if strings.TrimSpace(m.Provider) == "" {
+		m.Provider = stringFromAny(doc.Vars["model_provider"])
+	}
+	if strings.TrimSpace(m.Version) == "" {
+		m.Version = stringFromAny(doc.Vars["model_version"])
+	}
+
+	m.Name = strings.TrimSpace(m.Name)
+	m.Fingerprint = strings.ToLower(strings.TrimSpace(m.Fingerprint))
+	m.Provider = strings.ToLower(strings.TrimSpace(m.Provider))
+	m.Version = strings.TrimSpace(m.Version)
+	if m.Name == "" && m.Fingerprint == "" && m.Provider == "" && m.Version == "" {
+		return nil
+	}
+	return &m
+}
+
+func presentedModelIdentityFromRequest(req CanonicalActionRequest) *ModelIdentity {
+	if req.Model != nil {
+		m := *req.Model
+		m.Name = strings.TrimSpace(m.Name)
+		m.Fingerprint = strings.ToLower(strings.TrimSpace(m.Fingerprint))
+		m.Provider = strings.ToLower(strings.TrimSpace(m.Provider))
+		m.Version = strings.TrimSpace(m.Version)
+		if m.Name != "" || m.Fingerprint != "" || m.Provider != "" || m.Version != "" {
+			return &m
+		}
+	}
+
+	if req.Args == nil {
+		return nil
+	}
+
+	m := &ModelIdentity{
+		Name:        stringFromAny(req.Args["_model_name"]),
+		Fingerprint: stringFromAny(req.Args["_model_fingerprint"]),
+		Provider:    stringFromAny(req.Args["_model_provider"]),
+		Version:     stringFromAny(req.Args["_model_version"]),
+	}
+
+	if fm, ok := req.Args["_faramesh"].(map[string]any); ok {
+		if rawModel, ok := fm["model"].(map[string]any); ok {
+			if strings.TrimSpace(m.Name) == "" {
+				m.Name = stringFromAny(rawModel["name"])
+			}
+			if strings.TrimSpace(m.Fingerprint) == "" {
+				m.Fingerprint = stringFromAny(rawModel["fingerprint"])
+			}
+			if strings.TrimSpace(m.Provider) == "" {
+				m.Provider = stringFromAny(rawModel["provider"])
+			}
+			if strings.TrimSpace(m.Version) == "" {
+				m.Version = stringFromAny(rawModel["version"])
+			}
+		}
+	}
+
+	m.Name = strings.TrimSpace(m.Name)
+	m.Fingerprint = strings.ToLower(strings.TrimSpace(m.Fingerprint))
+	m.Provider = strings.ToLower(strings.TrimSpace(m.Provider))
+	m.Version = strings.TrimSpace(m.Version)
+	if m.Name == "" && m.Fingerprint == "" && m.Provider == "" && m.Version == "" {
+		return nil
+	}
+	return m
+}
+
+func stringFromAny(v any) string {
+	s, _ := v.(string)
+	return strings.TrimSpace(s)
+}
+
+func setRecordModelVerificationMeta(rec *dpr.Record, verification *ModelVerificationResult) {
+	if rec == nil || verification == nil {
+		return
+	}
+
+	evidence := map[string]any{
+		"required":         verification.Required,
+		"strict":           verification.Strict,
+		"verified":         verification.Verified,
+		"reason":           verification.Reason,
+		"registered_count": verification.RegisteredCount,
+	}
+	if verification.Declared != nil {
+		evidence["declared"] = modelIdentityToMap(verification.Declared)
+	}
+	if verification.Presented != nil {
+		evidence["presented"] = modelIdentityToMap(verification.Presented)
+	}
+	if verification.Registered != nil {
+		evidence["registered"] = modelIdentityToMap(verification.Registered)
+	}
+
+	if rec.OperatorResults == nil {
+		rec.OperatorResults = map[string]any{}
+	}
+	const evidenceKey = "model_identity_verification"
+	rec.OperatorResults[evidenceKey] = evidence
+
+	for _, item := range rec.CustomOperatorsEvaluated {
+		if item == evidenceKey {
+			return
+		}
+	}
+	rec.CustomOperatorsEvaluated = append(rec.CustomOperatorsEvaluated, evidenceKey)
+}
+
+func modelIdentityToMap(identity *ModelIdentity) map[string]any {
+	if identity == nil {
+		return nil
+	}
+	out := map[string]any{}
+	if strings.TrimSpace(identity.Name) != "" {
+		out["name"] = identity.Name
+	}
+	if strings.TrimSpace(identity.Fingerprint) != "" {
+		out["fingerprint"] = identity.Fingerprint
+	}
+	if strings.TrimSpace(identity.Provider) != "" {
+		out["provider"] = identity.Provider
+	}
+	if strings.TrimSpace(identity.Version) != "" {
+		out["version"] = identity.Version
+	}
+	return out
+}
+
 // SetHorizonSyncer attaches a DecisionSyncer. Every governance decision will
 // be forwarded to it after the WAL write. Safe to call before or after Run().
 func (p *Pipeline) SetHorizonSyncer(s DecisionSyncer) {
@@ -1286,6 +1773,80 @@ func (p *Pipeline) SessionManager() *session.Manager {
 // SessionGovernor returns the session write governor.
 func (p *Pipeline) SessionGovernor() *session.Governor {
 	return p.sessionGovernor
+}
+
+// RegisterModelIdentity upserts a model identity entry in daemon-core state.
+func (p *Pipeline) RegisterModelIdentity(name, fingerprint, provider, version string) ModelRegistration {
+	now := time.Now().UTC().Format(time.RFC3339)
+	rec := ModelRegistration{
+		Name:        strings.TrimSpace(name),
+		Fingerprint: strings.ToLower(strings.TrimSpace(fingerprint)),
+		Provider:    strings.ToLower(strings.TrimSpace(provider)),
+		Version:     strings.TrimSpace(version),
+		UpdatedAt:   now,
+	}
+
+	p.modelMu.Lock()
+	defer p.modelMu.Unlock()
+	if existing, ok := p.models[rec.Name]; ok {
+		rec.Registered = existing.Registered
+	} else {
+		rec.Registered = now
+	}
+	p.models[rec.Name] = rec
+	return rec
+}
+
+// ListModelIdentities returns a deterministic snapshot of registered models.
+func (p *Pipeline) ListModelIdentities() []ModelRegistration {
+	p.modelMu.RLock()
+	out := make([]ModelRegistration, 0, len(p.models))
+	for _, rec := range p.models {
+		out = append(out, rec)
+	}
+	p.modelMu.RUnlock()
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+// VerifyModelIdentity returns runtime model verification status for an agent.
+func (p *Pipeline) VerifyModelIdentity(agentID string, presented *ModelIdentity) ModelVerificationResult {
+	art := p.currentArtifacts()
+	var doc *policy.Doc
+	if art != nil && art.engine != nil {
+		doc = art.engine.Doc()
+	}
+	registeredCount := len(p.ListModelIdentities())
+	result := p.assessModelVerification(CanonicalActionRequest{
+		AgentID: agentID,
+		Model:   presented,
+	}, doc)
+	if result == nil {
+		return ModelVerificationResult{Verified: true, Reason: "model verification not required", Strict: p.strictModelVerify, RegisteredCount: registeredCount}
+	}
+	return *result
+}
+
+// StatusSnapshot returns a runtime health snapshot for control-plane introspection.
+func (p *Pipeline) StatusSnapshot() RuntimeStatus {
+	art := p.currentArtifacts()
+	policyVersion := ""
+	if art != nil && art.engine != nil {
+		policyVersion = strings.TrimSpace(art.engine.Version())
+	}
+	activeSessions := 0
+	if p.sessions != nil {
+		activeSessions = p.sessions.Count()
+	}
+	return RuntimeStatus{
+		PolicyLoaded:   policyVersion != "",
+		PolicyVersion:  policyVersion,
+		DPRHealthy:     p.wal != nil,
+		ActiveSessions: activeSessions,
+		TrustLevel:     "unknown",
+	}
 }
 
 func (p *Pipeline) emitWebhook(req CanonicalActionRequest, d Decision) {

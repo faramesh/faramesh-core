@@ -1,8 +1,28 @@
 package main
 
 import (
+	"encoding/json"
+
 	"github.com/spf13/cobra"
 )
+
+func identitySocketRequestWithHTTPFallback(op string, payload map[string]any, httpMethod, httpPath string) (json.RawMessage, error) {
+	req := map[string]any{"type": "identity", "op": op}
+	for k, v := range payload {
+		req[k] = v
+	}
+	resp, err := daemonSocketRequest(req)
+	if err == nil {
+		return resp, nil
+	}
+	if !daemonHTTPFallback {
+		return nil, err
+	}
+	if httpMethod == "GET" {
+		return daemonGet(httpPath)
+	}
+	return daemonPost(httpPath, payload)
+}
 
 var identityCmd = &cobra.Command{
 	Use:   "identity",
@@ -24,7 +44,7 @@ var identityVerifyCmd = &cobra.Command{
 		if cmd.Flags().Changed("spiffe") {
 			body["spiffe_id"] = identityVerifySPIFFE
 		}
-		data, err := daemonPost("/api/v1/identity/verify", body)
+		data, err := identitySocketRequestWithHTTPFallback("verify", body, "POST", "/api/v1/identity/verify")
 		if err != nil {
 			return err
 		}
@@ -53,7 +73,7 @@ var identityTrustCmd = &cobra.Command{
 		if cmd.Flags().Changed("bundle") {
 			body["bundle"] = identityTrustBundle
 		}
-		data, err := daemonPost("/api/v1/identity/trust", body)
+		data, err := identitySocketRequestWithHTTPFallback("trust", body, "POST", "/api/v1/identity/trust")
 		if err != nil {
 			return err
 		}
@@ -70,7 +90,7 @@ var identityWhoamiCmd = &cobra.Command{
 	Short: "Display the current agent identity",
 	Args:  cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		data, err := daemonGet("/api/v1/identity/whoami")
+		data, err := identitySocketRequestWithHTTPFallback("whoami", map[string]any{}, "GET", "/api/v1/identity/whoami")
 		if err != nil {
 			return err
 		}
@@ -93,7 +113,7 @@ var identityAttestCmd = &cobra.Command{
 		if cmd.Flags().Changed("workload") {
 			body["workload"] = identityAttestWorkload
 		}
-		data, err := daemonPost("/api/v1/identity/attest", body)
+		data, err := identitySocketRequestWithHTTPFallback("attest", body, "POST", "/api/v1/identity/attest")
 		if err != nil {
 			return err
 		}
@@ -131,7 +151,7 @@ var identityFederationAddCmd = &cobra.Command{
 		if cmd.Flags().Changed("scope") {
 			body["scope"] = identityFedAddScope
 		}
-		data, err := daemonPost("/api/v1/identity/federation/add", body)
+		data, err := identitySocketRequestWithHTTPFallback("federation_add", body, "POST", "/api/v1/identity/federation/add")
 		if err != nil {
 			return err
 		}
@@ -146,7 +166,7 @@ var identityFederationListCmd = &cobra.Command{
 	Short: "List configured identity federations",
 	Args:  cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		data, err := daemonGet("/api/v1/identity/federation/list")
+		data, err := identitySocketRequestWithHTTPFallback("federation_list", map[string]any{}, "GET", "/api/v1/identity/federation/list")
 		if err != nil {
 			return err
 		}
@@ -167,7 +187,7 @@ var identityFederationRevokeCmd = &cobra.Command{
 		if cmd.Flags().Changed("idp") {
 			body["idp"] = identityFedRevokeIDP
 		}
-		data, err := daemonPost("/api/v1/identity/federation/revoke", body)
+		data, err := identitySocketRequestWithHTTPFallback("federation_revoke", body, "POST", "/api/v1/identity/federation/revoke")
 		if err != nil {
 			return err
 		}
@@ -184,7 +204,7 @@ var identityTrustLevelCmd = &cobra.Command{
 	Short: "Display the computed trust level for the current environment",
 	Args:  cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		data, err := daemonGet("/api/v1/identity/trust-level")
+		data, err := identitySocketRequestWithHTTPFallback("trust_level", map[string]any{}, "GET", "/api/v1/identity/trust-level")
 		if err != nil {
 			return err
 		}

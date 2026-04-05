@@ -1,13 +1,15 @@
 """
 Faramesh sitecustomize hook.
 
-When installed via PYTHONPATH or as a .pth file, this activates
-the auto-patcher at Python startup. The patcher only fires when
+This activates the auto-patcher at Python startup. The patcher only fires when
 FARAMESH_AUTOLOAD=1 is set (by `faramesh run`).
 
 Installation:
-  # Option 1: Set PYTHONPATH (faramesh run does this automatically)
-  export PYTHONPATH=/path/to/faramesh-python-sdk-code:$PYTHONPATH
+  # Preferred: install faramesh-sdk package (ships sitecustomize module)
+  pip install faramesh-sdk
+
+  # Source checkout: add sdk/python to PYTHONPATH
+  export PYTHONPATH=/path/to/faramesh-core/sdk/python:$PYTHONPATH
 
   # Option 2: Add a .pth file to site-packages
   echo "import faramesh.autopatch" > $(python -c "import site; print(site.getsitepackages()[0])")/faramesh-autopatch.pth

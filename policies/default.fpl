@@ -10,15 +10,7 @@ agent default {
   rules {
     permit http/get
     defer shell/* reason: "shell commands require human approval"
-    deny stripe/refund when principal.verified != true
-      reason: "refund requires verified principal"
-    defer stripe/refund when args.amount > 500 && principal.verified == true
-      reason: "refund over $500 requires human approval"
-    permit stripe/refund when args.amount <= 500 && principal.verified == true
-  }
-
-  credential stripe {
-    scope stripe/refund
-    max_scope "refund:amount<=500"
+    defer stripe/refund
+      reason: "refund requires human approval"
   }
 }

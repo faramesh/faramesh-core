@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -109,5 +110,61 @@ func TestShouldEnforce(t *testing.T) {
 	}
 	if !shouldEnforce("full") {
 		t.Fatal("full should enforce")
+	}
+}
+
+func TestLooksLikePythonCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "python binary", args: []string{"python", "agent.py"}, want: true},
+		{name: "python3 binary", args: []string{"python3", "-m", "app"}, want: true},
+		{name: "script entrypoint", args: []string{"./agent.py"}, want: true},
+		{name: "non python", args: []string{"node", "agent.js"}, want: false},
+		{name: "empty", args: nil, want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := looksLikePythonCommand(tc.args)
+			if got != tc.want {
+				t.Fatalf("looksLikePythonCommand(%v) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPrependPathListEnv(t *testing.T) {
+	base := []string{"PATH=/usr/bin", "PYTHONPATH=/x:/y"}
+	out := prependPathListEnv(base, "PYTHONPATH", "/sdk")
+	got := envValue(out, "PYTHONPATH")
+	if got != "/sdk"+string(os.PathListSeparator)+"/x:/y" {
+		t.Fatalf("unexpected PYTHONPATH: %q", got)
+	}
+
+	out2 := prependPathListEnv(out, "PYTHONPATH", "/sdk")
+	got2 := envValue(out2, "PYTHONPATH")
+	if got2 != got {
+		t.Fatalf("expected idempotent prepend, got %q want %q", got2, got)
+	}
+}
+
+func TestResolvePythonSDKPathFromEnv(t *testing.T) {
+	sdkDir := t.TempDir()
+	t.Setenv("FARAMESH_PYTHON_SDK_PATH", sdkDir)
+
+	got, ok := resolvePythonSDKPath(t.TempDir())
+	if !ok {
+		t.Fatal("expected sdk path resolution from env override")
+	}
+
+	abs, err := filepath.Abs(sdkDir)
+	if err != nil {
+		t.Fatalf("abs: %v", err)
+	}
+	if got != abs {
+		t.Fatalf("resolvePythonSDKPath = %q, want %q", got, abs)
 	}
 }

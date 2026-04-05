@@ -105,6 +105,7 @@ def _govern_via_socket(socket_path: str, tool_id: str, args: dict[str, Any]) -> 
     parts = tool_id.rsplit("/", 1)
     tool = parts[0] if len(parts) > 1 else tool_id
     operation = parts[1] if len(parts) > 1 else "invoke"
+    principal_token = os.environ.get("FARAMESH_PRINCIPAL_TOKEN", "")
 
     payload = json.dumps({
         "jsonrpc": "2.0",
@@ -115,6 +116,7 @@ def _govern_via_socket(socket_path: str, tool_id: str, args: dict[str, Any]) -> 
             "tool": tool,
             "operation": operation,
             "args": args,
+            "principal_token": principal_token,
         },
     }).encode("utf-8")
 
@@ -157,7 +159,7 @@ def _wrap_method(cls: type, method_name: str, framework: str, tool_id_fn: Callab
     @functools.wraps(original)
     def wrapper(self, *args, **kwargs):
         tid = tool_id_fn(self, args, kwargs)
-        call_args = _extract_args(args, kwargs)
+        call_args = _json_safe(_extract_args(args, kwargs))
         result = _govern_call(tid, call_args)
         effect = result.get("effect", "PERMIT")
         if effect == "DENY":
@@ -182,6 +184,38 @@ def _extract_args(args: tuple, kwargs: dict) -> dict[str, Any]:
         else:
             result["_positional"] = list(args)
     return result
+
+
+def _json_safe(value: Any) -> Any:
+    """Best-effort conversion to JSON-safe primitives for governance payloads."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8", errors="replace")
+        except Exception:
+            return str(value)
+
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+
+    if hasattr(value, "model_dump") and callable(getattr(value, "model_dump")):
+        try:
+            return _json_safe(value.model_dump())
+        except Exception:
+            return str(value)
+
+    if hasattr(value, "dict") and callable(getattr(value, "dict")):
+        try:
+            return _json_safe(value.dict())
+        except Exception:
+            return str(value)
+
+    return str(value)
 
 
 # --- Framework-specific patchers ---

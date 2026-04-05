@@ -1,10 +1,32 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/spf13/cobra"
 )
+
+func incidentSocketRequestWithHTTPFallback(op string, payload map[string]any, httpMethod, httpPath string, httpQuery map[string]string) (json.RawMessage, error) {
+	req := map[string]any{"type": "incident", "op": op}
+	for k, v := range payload {
+		req[k] = v
+	}
+	resp, err := daemonSocketRequest(req)
+	if err == nil {
+		return resp, nil
+	}
+	if !daemonHTTPFallback {
+		return nil, err
+	}
+	if httpMethod == "GET" {
+		if len(httpQuery) > 0 {
+			return daemonGetWithQuery(httpPath, httpQuery)
+		}
+		return daemonGet(httpPath)
+	}
+	return daemonPost(httpPath, payload)
+}
 
 var incidentCmd = &cobra.Command{
 	Use:   "incident",
@@ -83,11 +105,12 @@ func init() {
 }
 
 func runIncidentDeclare(_ *cobra.Command, _ []string) error {
-	resp, err := daemonPost("/api/v1/incident/declare", map[string]any{
+	payload := map[string]any{
 		"agent":    incDeclareAgent,
 		"severity": incDeclareSeverity,
 		"reason":   incDeclareReason,
-	})
+	}
+	resp, err := incidentSocketRequestWithHTTPFallback("declare", payload, "POST", "/api/v1/incident/declare", nil)
 	if err != nil {
 		return err
 	}
@@ -96,7 +119,7 @@ func runIncidentDeclare(_ *cobra.Command, _ []string) error {
 }
 
 func runIncidentList(_ *cobra.Command, _ []string) error {
-	resp, err := daemonGet("/api/v1/incident/list")
+	resp, err := incidentSocketRequestWithHTTPFallback("list", map[string]any{}, "GET", "/api/v1/incident/list", nil)
 	if err != nil {
 		return err
 	}
@@ -105,9 +128,8 @@ func runIncidentList(_ *cobra.Command, _ []string) error {
 }
 
 func runIncidentInspect(_ *cobra.Command, args []string) error {
-	resp, err := daemonGetWithQuery("/api/v1/incident/inspect", map[string]string{
-		"id": args[0],
-	})
+	payload := map[string]any{"id": args[0]}
+	resp, err := incidentSocketRequestWithHTTPFallback("inspect", payload, "GET", "/api/v1/incident/inspect", map[string]string{"id": args[0]})
 	if err != nil {
 		return err
 	}
@@ -116,9 +138,8 @@ func runIncidentInspect(_ *cobra.Command, args []string) error {
 }
 
 func runIncidentIsolate(_ *cobra.Command, args []string) error {
-	resp, err := daemonPost("/api/v1/incident/isolate", map[string]any{
-		"agent_id": args[0],
-	})
+	payload := map[string]any{"agent_id": args[0]}
+	resp, err := incidentSocketRequestWithHTTPFallback("isolate", payload, "POST", "/api/v1/incident/isolate", nil)
 	if err != nil {
 		return err
 	}
@@ -127,9 +148,8 @@ func runIncidentIsolate(_ *cobra.Command, args []string) error {
 }
 
 func runIncidentEvidence(_ *cobra.Command, args []string) error {
-	resp, err := daemonGetWithQuery("/api/v1/incident/evidence", map[string]string{
-		"id": args[0],
-	})
+	payload := map[string]any{"id": args[0]}
+	resp, err := incidentSocketRequestWithHTTPFallback("evidence", payload, "GET", "/api/v1/incident/evidence", map[string]string{"id": args[0]})
 	if err != nil {
 		return err
 	}
@@ -138,9 +158,8 @@ func runIncidentEvidence(_ *cobra.Command, args []string) error {
 }
 
 func runIncidentResolve(_ *cobra.Command, args []string) error {
-	resp, err := daemonPost("/api/v1/incident/resolve", map[string]any{
-		"incident_id": args[0],
-	})
+	payload := map[string]any{"incident_id": args[0], "id": args[0]}
+	resp, err := incidentSocketRequestWithHTTPFallback("resolve", payload, "POST", "/api/v1/incident/resolve", nil)
 	if err != nil {
 		return err
 	}
@@ -149,9 +168,8 @@ func runIncidentResolve(_ *cobra.Command, args []string) error {
 }
 
 func runIncidentPlaybook(_ *cobra.Command, args []string) error {
-	resp, err := daemonGetWithQuery("/api/v1/incident/playbook", map[string]string{
-		"id": args[0],
-	})
+	payload := map[string]any{"id": args[0]}
+	resp, err := incidentSocketRequestWithHTTPFallback("playbook", payload, "GET", "/api/v1/incident/playbook", map[string]string{"id": args[0]})
 	if err != nil {
 		return err
 	}

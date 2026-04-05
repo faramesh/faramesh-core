@@ -1,10 +1,29 @@
 package main
 
 import (
+	"encoding/json"
 	"net/url"
 
 	"github.com/spf13/cobra"
 )
+
+func provenanceSocketRequestWithHTTPFallback(op string, payload map[string]any, httpMethod, httpPath string) (json.RawMessage, error) {
+	req := map[string]any{"type": "provenance", "op": op}
+	for k, v := range payload {
+		req[k] = v
+	}
+	resp, err := daemonSocketRequest(req)
+	if err == nil {
+		return resp, nil
+	}
+	if !daemonHTTPFallback {
+		return nil, err
+	}
+	if httpMethod == "GET" {
+		return daemonGet(httpPath)
+	}
+	return daemonPost(httpPath, payload)
+}
 
 var provenanceCmd = &cobra.Command{
 	Use:   "provenance",
@@ -45,7 +64,7 @@ var provenanceSignCmd = &cobra.Command{
 		if cmd.Flags().Changed("key") {
 			body["signing_key"] = provSignKey
 		}
-		data, err := daemonPost("/api/v1/provenance/sign", body)
+		data, err := provenanceSocketRequestWithHTTPFallback("sign", body, "POST", "/api/v1/provenance/sign")
 		if err != nil {
 			return err
 		}
@@ -62,7 +81,8 @@ var provenanceVerifyCmd = &cobra.Command{
 	Short: "Verify an agent's provenance attestation",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		data, err := daemonGet("/api/v1/provenance/verify/" + url.PathEscape(args[0]))
+		httpPath := "/api/v1/provenance/verify/" + url.PathEscape(args[0])
+		data, err := provenanceSocketRequestWithHTTPFallback("verify", map[string]any{"agent_id": args[0]}, "GET", httpPath)
 		if err != nil {
 			return err
 		}
@@ -79,7 +99,8 @@ var provenanceInspectCmd = &cobra.Command{
 	Short: "Inspect a provenance attestation's full details",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		data, err := daemonGet("/api/v1/provenance/inspect/" + url.PathEscape(args[0]))
+		httpPath := "/api/v1/provenance/inspect/" + url.PathEscape(args[0])
+		data, err := provenanceSocketRequestWithHTTPFallback("inspect", map[string]any{"agent_id": args[0]}, "GET", httpPath)
 		if err != nil {
 			return err
 		}
@@ -96,7 +117,8 @@ var provenanceDiffCmd = &cobra.Command{
 	Short: "Show drift between current agent state and signed provenance",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		data, err := daemonGet("/api/v1/provenance/diff/" + url.PathEscape(args[0]))
+		httpPath := "/api/v1/provenance/diff/" + url.PathEscape(args[0])
+		data, err := provenanceSocketRequestWithHTTPFallback("diff", map[string]any{"agent_id": args[0]}, "GET", httpPath)
 		if err != nil {
 			return err
 		}
@@ -113,7 +135,7 @@ var provenanceListCmd = &cobra.Command{
 	Short: "List all provenance attestations",
 	Args:  cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		data, err := daemonGet("/api/v1/provenance/list")
+		data, err := provenanceSocketRequestWithHTTPFallback("list", map[string]any{}, "GET", "/api/v1/provenance/list")
 		if err != nil {
 			return err
 		}

@@ -35,6 +35,7 @@ agent support-bot {
   }
 
   credential zendesk {
+    scope read_customer get_order search_kb send_email issue_credit
     backend vault
     path secret/data/zendesk
     ttl 15m

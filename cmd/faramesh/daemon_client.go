@@ -1,26 +1,33 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 	"github.com/fatih/color"
 )
 
 var (
-	daemonAddr       string
-	daemonHTTPClient = &http.Client{Timeout: 30 * time.Second}
+	daemonAddr         string
+	daemonSocket       string
+	daemonHTTPFallback bool
+	daemonHTTPClient   = &http.Client{Timeout: 30 * time.Second}
 )
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&daemonAddr, "addr", "http://localhost:7777", "daemon HTTP address")
+	rootCmd.PersistentFlags().StringVar(&daemonAddr, "addr", "", "daemon HTTP address (used only with --http-fallback)")
+	rootCmd.PersistentFlags().StringVar(&daemonSocket, "daemon-socket", sdk.SocketPath, "daemon Unix socket path")
+	rootCmd.PersistentFlags().BoolVar(&daemonHTTPFallback, "http-fallback", false, "allow fallback to HTTP control API when socket control call fails")
 }
 
 func daemonURL(path string) string {
@@ -32,6 +39,11 @@ func daemonURL(path string) string {
 }
 
 func daemonPost(path string, payload any) (json.RawMessage, error) {
+	addr, err := resolveDaemonHTTPAddr()
+	if err != nil {
+		return nil, err
+	}
+
 	var reqBody io.Reader
 	if payload != nil {
 		data, err := json.Marshal(payload)
@@ -42,22 +54,32 @@ func daemonPost(path string, payload any) (json.RawMessage, error) {
 	}
 	resp, err := daemonHTTPClient.Post(daemonURL(path), "application/json", reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("cannot reach daemon at %s: %w", daemonAddr, err)
+		return nil, fmt.Errorf("cannot reach daemon at %s: %w", addr, err)
 	}
 	defer resp.Body.Close()
 	return readDaemonResponse(resp)
 }
 
 func daemonGet(path string) (json.RawMessage, error) {
+	addr, err := resolveDaemonHTTPAddr()
+	if err != nil {
+		return nil, err
+	}
+
 	resp, err := daemonHTTPClient.Get(daemonURL(path))
 	if err != nil {
-		return nil, fmt.Errorf("cannot reach daemon at %s: %w", daemonAddr, err)
+		return nil, fmt.Errorf("cannot reach daemon at %s: %w", addr, err)
 	}
 	defer resp.Body.Close()
 	return readDaemonResponse(resp)
 }
 
 func daemonGetWithQuery(path string, query map[string]string) (json.RawMessage, error) {
+	addr, err := resolveDaemonHTTPAddr()
+	if err != nil {
+		return nil, err
+	}
+
 	u := daemonURL(path)
 	if len(query) > 0 {
 		params := url.Values{}
@@ -72,10 +94,60 @@ func daemonGetWithQuery(path string, query map[string]string) (json.RawMessage, 
 	}
 	resp, err := daemonHTTPClient.Get(u)
 	if err != nil {
-		return nil, fmt.Errorf("cannot reach daemon at %s: %w", daemonAddr, err)
+		return nil, fmt.Errorf("cannot reach daemon at %s: %w", addr, err)
 	}
 	defer resp.Body.Close()
 	return readDaemonResponse(resp)
+}
+
+func resolveDaemonHTTPAddr() (string, error) {
+	addr := strings.TrimSpace(daemonAddr)
+	if addr == "" {
+		return "", fmt.Errorf("HTTP fallback requires --addr to be set")
+	}
+	return addr, nil
+}
+
+func daemonSocketRequest(msg map[string]any) (json.RawMessage, error) {
+	typ, _ := msg["type"].(string)
+	if strings.TrimSpace(typ) == "" {
+		return nil, fmt.Errorf("socket request missing type")
+	}
+
+	conn, err := net.DialTimeout("unix", daemonSocket, 3*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("cannot reach daemon socket at %s: %w", daemonSocket, err)
+	}
+	defer conn.Close()
+
+	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		return nil, fmt.Errorf("set socket deadline: %w", err)
+	}
+
+	line, err := json.Marshal(msg)
+	if err != nil {
+		return nil, fmt.Errorf("marshal socket request: %w", err)
+	}
+	line = append(line, '\n')
+	if _, err := conn.Write(line); err != nil {
+		return nil, fmt.Errorf("send socket request: %w", err)
+	}
+
+	raw, err := bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil {
+		return nil, fmt.Errorf("read socket response: %w", err)
+	}
+	raw = bytes.TrimSpace(raw)
+
+	var probe map[string]any
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return nil, fmt.Errorf("invalid socket response: %w", err)
+	}
+	if emsg, _ := probe["error"].(string); strings.TrimSpace(emsg) != "" {
+		return nil, fmt.Errorf("daemon socket error: %s", emsg)
+	}
+
+	return json.RawMessage(raw), nil
 }
 
 func readDaemonResponse(resp *http.Response) (json.RawMessage, error) {

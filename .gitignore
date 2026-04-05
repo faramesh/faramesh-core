@@ -3,3 +3,8 @@
 coverage.out
 .tmp/
 .DS_Store
+
+# Internal planning artifacts (keep out of public repo)
+**/*EXECUTION_PLAN*.md
+**/*execution_plan*.md
+**/*.plan.md

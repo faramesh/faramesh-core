@@ -93,6 +93,9 @@ npx @faramesh/cli@latest init
 
 # Go toolchain
 go install github.com/faramesh/faramesh-core/cmd/faramesh@latest
+
+# Source checkout (single setup entrypoint)
+make setup
 ```
 
 ## Quick Start

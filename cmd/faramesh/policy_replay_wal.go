@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -42,7 +41,7 @@ var policyReplayWALCmd = &cobra.Command{
 }
 
 func init() {
-	policyReplayWALCmd.Flags().StringVar(&policyReplayWALPolicyPath, "policy", "", "path to policy YAML file")
+	policyReplayWALCmd.Flags().StringVar(&policyReplayWALPolicyPath, "policy", "", "path to policy file (YAML or FPL)")
 	policyReplayWALCmd.Flags().StringVar(&policyReplayWALPath, "wal", "", "path to DPR WAL file")
 	policyReplayWALCmd.Flags().IntVar(&policyReplayWALLimit, "limit", 0, "maximum number of records to replay (0 = all)")
 	policyReplayWALCmd.Flags().IntVar(&policyReplayWALMaxDivergence, "max-divergence", -1, "fail if divergences exceed this threshold (-1 disables failure)")
@@ -85,11 +84,7 @@ func runPolicyReplayWAL(policyPath, walPath string, limit int) (policyReplaySumm
 		return policyReplaySummary{}, fmt.Errorf("--limit must be >= 0")
 	}
 
-	policyBytes, err := os.ReadFile(policyPath)
-	if err != nil {
-		return policyReplaySummary{}, fmt.Errorf("read --policy file: %w", err)
-	}
-	doc, version, err := policy.LoadBytes(policyBytes)
+	doc, version, err := policy.LoadFile(policyPath)
 	if err != nil {
 		return policyReplaySummary{}, fmt.Errorf("load policy: %w", err)
 	}
@@ -166,4 +161,3 @@ func normalizeWeekday(day int) int {
 	}
 	return day
 }
-

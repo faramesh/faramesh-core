@@ -33,6 +33,7 @@ type GovernRequest struct {
 	SessionId          string `json:"session_id"`
 	ToolId             string `json:"tool_id"`
 	ArgsJson           string `json:"args_json"` // JSON-encoded args
+	PrincipalToken     string `json:"principal_token,omitempty"`
 	ExecutionTimeoutMs int    `json:"execution_timeout_ms,omitempty"`
 	WaitForApproval    bool   `json:"wait_for_approval"`
 	ApiVersion         string `json:"api_version,omitempty"`

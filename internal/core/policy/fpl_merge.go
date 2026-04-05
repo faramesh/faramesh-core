@@ -25,12 +25,15 @@ func mergeFPLIntoDoc(doc *Doc, policyDir string) ([]byte, error) {
 	var topoStmts []fpl.TopoStatement
 
 	if s := strings.TrimSpace(doc.FPLInline); s != "" {
-		p, err := fpl.ParseProgram(s)
+		parsed, err := fpl.ParseDocument(s)
 		if err != nil {
 			return nil, fmt.Errorf("fpl_inline: %w", err)
 		}
-		topoStmts = append(topoStmts, p.Topo...)
-		c, err := fpl.CompileRules(p.Rules)
+		if err := validateEmbeddedFPLDocument(parsed, "fpl_inline"); err != nil {
+			return nil, err
+		}
+		topoStmts = append(topoStmts, parsed.Topo...)
+		c, err := fpl.CompileRules(parsed.FlatRules)
 		if err != nil {
 			return nil, fmt.Errorf("fpl_inline: %w", err)
 		}
@@ -59,12 +62,15 @@ func mergeFPLIntoDoc(doc *Doc, policyDir string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read fpl_files %q: %w", rel, err)
 		}
-		p, err := fpl.ParseProgram(string(b))
+		parsed, err := fpl.ParseDocument(string(b))
 		if err != nil {
 			return nil, fmt.Errorf("compile fpl_files %q: %w", rel, err)
 		}
-		topoStmts = append(topoStmts, p.Topo...)
-		c, err := fpl.CompileRules(p.Rules)
+		if err := validateEmbeddedFPLDocument(parsed, fmt.Sprintf("fpl_files %q", rel)); err != nil {
+			return nil, err
+		}
+		topoStmts = append(topoStmts, parsed.Topo...)
+		c, err := fpl.CompileRules(parsed.FlatRules)
 		if err != nil {
 			return nil, fmt.Errorf("compile fpl_files %q: %w", rel, err)
 		}
@@ -95,11 +101,26 @@ func compiledRuleToRule(cr *fpl.CompiledRule, seq int) Rule {
 	if when == "" {
 		when = "true"
 	}
+	notify := ""
+	if cr.Notify != nil {
+		notify = strings.TrimSpace(cr.Notify.Target)
+	}
 	return Rule{
 		ID:         fmt.Sprintf("fpl-%d", seq),
 		Match:      Match{Tool: cr.Tool, When: when},
 		Effect:     effect,
+		Notify:     notify,
 		Reason:     cr.Reason,
 		ReasonCode: cr.ReasonCode,
 	}
+}
+
+func validateEmbeddedFPLDocument(parsed *fpl.Document, source string) error {
+	if parsed == nil {
+		return fmt.Errorf("%s: empty document", source)
+	}
+	if len(parsed.Agents) > 0 || len(parsed.Systems) > 0 {
+		return fmt.Errorf("%s: embedded FPL only supports flat rule/manifest snippets (agent/system blocks are not allowed)", source)
+	}
+	return nil
 }

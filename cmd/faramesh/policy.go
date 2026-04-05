@@ -15,7 +15,6 @@ import (
 	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 	"github.com/faramesh/faramesh-core/internal/core"
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
-	"github.com/faramesh/faramesh-core/internal/core/fpl"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/session"
 )
@@ -95,15 +94,17 @@ func init() {
 }
 
 var (
-	policyTestTool string
-	policyTestArgs string
-	policyTestJSON bool
+	policyTestTool     string
+	policyTestArgs     string
+	policyTestJSON     bool
+	policyValidateJSON bool
 )
 
 func init() {
 	policyTestCmd.Flags().StringVar(&policyTestTool, "tool", "", "tool ID to test (required)")
 	policyTestCmd.Flags().StringVar(&policyTestArgs, "args", "{}", "tool arguments as JSON object")
 	policyTestCmd.Flags().BoolVar(&policyTestJSON, "json", false, "output full decision as JSON")
+	policyValidateCmd.Flags().BoolVar(&policyValidateJSON, "json", false, "emit machine-readable JSON diagnostics")
 	_ = policyTestCmd.MarkFlagRequired("tool")
 
 	policyCmd.AddCommand(policyValidateCmd)
@@ -115,125 +116,104 @@ func init() {
 
 func runPolicyValidate(cmd *cobra.Command, args []string) error {
 	path := args[0]
+	report := buildPolicyValidateReport(path)
 
-	if strings.HasSuffix(path, ".fpl") {
-		return runFPLValidate(path)
-	}
-
-	doc, version, err := policy.LoadFile(path)
-	if err != nil {
-		printError("parse error: " + err.Error())
-		os.Exit(1)
-	}
-
-	diagnostics := policy.Validate(doc)
-
-	// Separate errors from warnings.
-	var hardErrors, warnings []string
-	for _, d := range diagnostics {
-		if len(d) > 8 && d[:8] == "warning:" {
-			warnings = append(warnings, d)
-		} else {
-			hardErrors = append(hardErrors, d)
+	if policyValidateJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(report); err != nil {
+			return fmt.Errorf("encode validation report: %w", err)
 		}
+		if !report.OK {
+			return fmt.Errorf("validation failed")
+		}
+		return nil
 	}
 
-	for _, w := range warnings {
-		color.Yellow("  ⚠ %s", w[9:]) // strip "warning: " prefix
+	for _, w := range report.Warnings {
+		color.Yellow("  ⚠ %s", w)
 	}
-	if len(hardErrors) > 0 {
-		for _, e := range hardErrors {
+	if !report.OK {
+		for _, e := range report.Errors {
 			printError(e)
 		}
-		os.Exit(1)
-	}
-
-	// Attempt full compilation.
-	if _, err := policy.NewEngine(doc, version); err != nil {
-		printError("compilation error: " + err.Error())
-		os.Exit(1)
+		return fmt.Errorf("validation failed")
 	}
 
 	green := color.New(color.FgGreen, color.Bold)
 	green.Printf("✓ ")
 	fmt.Printf("%s  ", path)
-	color.New(color.FgHiBlack).Printf("[%s]  ", version)
-	fmt.Printf("%d rules  agent=%s", len(doc.Rules), doc.AgentID)
-	if len(warnings) > 0 {
-		color.Yellow("  (%d warning(s))", len(warnings))
+	if strings.TrimSpace(report.Version) != "" {
+		color.New(color.FgHiBlack).Printf("[%s]  ", report.Version)
+	}
+	fmt.Printf("%d rules  agent=%s", report.RuleCount, report.AgentID)
+	if len(report.Warnings) > 0 {
+		color.Yellow("  (%d warning(s))", len(report.Warnings))
 	}
 	fmt.Println()
 	return nil
 }
 
-func runFPLValidate(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		printError("read error: " + err.Error())
-		os.Exit(1)
+type policyValidateReport struct {
+	Path      string   `json:"path"`
+	Format    string   `json:"format"`
+	Version   string   `json:"version,omitempty"`
+	AgentID   string   `json:"agent_id,omitempty"`
+	RuleCount int      `json:"rule_count"`
+	Warnings  []string `json:"warnings,omitempty"`
+	Errors    []string `json:"errors,omitempty"`
+	OK        bool     `json:"ok"`
+}
+
+func buildPolicyValidateReport(path string) policyValidateReport {
+	report := policyValidateReport{
+		Path:   path,
+		Format: "yaml",
 	}
-	fplDoc, err := fpl.ParseDocument(string(data))
-	if err != nil {
-		printError("parse error: " + err.Error())
-		os.Exit(1)
-	}
-	ir, err := fpl.CompileDocument(fplDoc)
-	if err != nil {
-		printError("compile error: " + err.Error())
-		os.Exit(1)
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(path)), ".fpl") {
+		report.Format = "fpl"
 	}
 
 	doc, version, err := policy.LoadFile(path)
 	if err != nil {
-		printError("load error: " + err.Error())
-		os.Exit(1)
+		report.Errors = []string{"parse error: " + err.Error()}
+		report.OK = false
+		return report
 	}
 
-	diagnostics := policy.Validate(doc)
-	var hardErrors, warnings []string
+	report.Version = strings.TrimSpace(version)
+	report.AgentID = strings.TrimSpace(doc.AgentID)
+	if report.AgentID == "" {
+		report.AgentID = "(none)"
+	}
+	report.RuleCount = len(doc.Rules)
+
+	hardErrors, warnings := splitValidationDiagnostics(policy.Validate(doc))
+	report.Warnings = warnings
+	report.Errors = hardErrors
+	if len(report.Errors) == 0 {
+		if _, err := policy.NewEngine(doc, version); err != nil {
+			report.Errors = append(report.Errors, "compilation error: "+err.Error())
+		}
+	}
+	report.OK = len(report.Errors) == 0
+	return report
+}
+
+func splitValidationDiagnostics(diagnostics []string) (errors []string, warnings []string) {
 	for _, d := range diagnostics {
-		if len(d) > 8 && d[:8] == "warning:" {
-			warnings = append(warnings, d)
-		} else {
-			hardErrors = append(hardErrors, d)
+		msg := strings.TrimSpace(d)
+		if msg == "" {
+			continue
 		}
-	}
-
-	for _, w := range warnings {
-		color.Yellow("  ⚠ %s", w[9:])
-	}
-	if len(hardErrors) > 0 {
-		for _, e := range hardErrors {
-			printError(e)
+		lower := strings.ToLower(msg)
+		if strings.HasPrefix(lower, "warning:") {
+			warnings = append(warnings, strings.TrimSpace(msg[len("warning:"):]))
+			continue
 		}
-		os.Exit(1)
+		errors = append(errors, msg)
 	}
-
-	if _, err := policy.NewEngine(doc, version); err != nil {
-		printError("compilation error: " + err.Error())
-		os.Exit(1)
-	}
-
-	ruleCount := len(ir.FlatRules)
-	agentID := "(none)"
-	for _, ag := range ir.Agents {
-		ruleCount += len(ag.Rules)
-		for _, ph := range ag.Phases {
-			ruleCount += len(ph.Rules)
-		}
-		agentID = ag.ID
-	}
-
-	green := color.New(color.FgGreen, color.Bold)
-	green.Printf("✓ ")
-	fmt.Printf("%s  ", path)
-	color.New(color.FgHiBlack).Printf("[%s]  ", version)
-	fmt.Printf("%d rules  agent=%s", ruleCount, agentID)
-	if len(warnings) > 0 {
-		color.Yellow("  (%d warning(s))", len(warnings))
-	}
-	fmt.Println()
-	return nil
+	return errors, warnings
 }
 
 func runPolicyInspect(cmd *cobra.Command, args []string) error {

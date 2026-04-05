@@ -165,9 +165,10 @@ func tokenize(src string) ([]token, error) {
 		case ch == '$':
 			tokens = append(tokens, token{tkDollar, "$", line})
 			i++
-		case ch == '"':
+		case ch == '"' || ch == '\'':
+			quote := ch
 			j := i + 1
-			for j < len(src) && src[j] != '"' {
+			for j < len(src) && src[j] != quote {
 				if src[j] == '\\' {
 					j++
 				}
@@ -1134,7 +1135,8 @@ func joinParts(parts []string) string {
 // DecompileToFPL converts a policy.Doc-compatible structure back to FPL source text.
 // This is used by `faramesh policy fpl decompile`.
 func DecompileToFPL(agentID, defaultEffect string, vars map[string]string,
-	phases map[string][]string, rules []DecompileRule, budget *DecompileBudget) string {
+	phases map[string][]string, rules []DecompileRule, budget *DecompileBudget,
+	delegates []DecompileDelegate, ambient *DecompileAmbient, selectors []DecompileSelector) string {
 
 	var b strings.Builder
 
@@ -1191,8 +1193,7 @@ func DecompileToFPL(agentID, defaultEffect string, vars map[string]string,
 	}
 	sort.Strings(phaseNames)
 	for _, name := range phaseNames {
-		tools := append([]string(nil), phases[name]...)
-		sort.Strings(tools)
+		tools := phases[name]
 		b.WriteString("\n  phase ")
 		b.WriteString(name)
 		b.WriteString(" {\n")
@@ -1202,6 +1203,141 @@ func DecompileToFPL(agentID, defaultEffect string, vars map[string]string,
 			b.WriteString("\n")
 		}
 		b.WriteString("  }\n")
+	}
+
+	if len(delegates) > 0 {
+		for _, d := range delegates {
+			target := strings.TrimSpace(d.TargetAgent)
+			if target == "" {
+				continue
+			}
+			b.WriteString("\n  delegate ")
+			if needsQuotes(target) {
+				b.WriteString(`"` + target + `"`)
+			} else {
+				b.WriteString(target)
+			}
+			b.WriteString(" {\n")
+			if scope := strings.TrimSpace(d.Scope); scope != "" {
+				b.WriteString("    scope ")
+				if needsQuotes(scope) {
+					b.WriteString(`"` + scope + `"`)
+				} else {
+					b.WriteString(scope)
+				}
+				b.WriteString("\n")
+			}
+			if ttl := strings.TrimSpace(d.TTL); ttl != "" {
+				b.WriteString("    ttl ")
+				if needsQuotes(ttl) {
+					b.WriteString(`"` + ttl + `"`)
+				} else {
+					b.WriteString(ttl)
+				}
+				b.WriteString("\n")
+			}
+			if ceiling := strings.TrimSpace(d.Ceiling); ceiling != "" {
+				b.WriteString("    ceiling ")
+				if needsQuotes(ceiling) {
+					b.WriteString(`"` + ceiling + `"`)
+				} else {
+					b.WriteString(ceiling)
+				}
+				b.WriteString("\n")
+			}
+			b.WriteString("  }\n")
+		}
+	}
+
+	if ambient != nil && (len(ambient.Limits) > 0 || strings.TrimSpace(ambient.OnExceed) != "") {
+		b.WriteString("\n  ambient {\n")
+		keys := make([]string, 0, len(ambient.Limits))
+		for k := range ambient.Limits {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			val := strings.TrimSpace(ambient.Limits[key])
+			if val == "" {
+				continue
+			}
+			b.WriteString("    ")
+			b.WriteString(key)
+			b.WriteString(" ")
+			if needsQuotes(val) {
+				b.WriteString(`"` + val + `"`)
+			} else {
+				b.WriteString(val)
+			}
+			b.WriteString("\n")
+		}
+		if onExceed := strings.TrimSpace(ambient.OnExceed); onExceed != "" {
+			b.WriteString("    on_exceed ")
+			if needsQuotes(onExceed) {
+				b.WriteString(`"` + onExceed + `"`)
+			} else {
+				b.WriteString(onExceed)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("  }\n")
+	}
+
+	if len(selectors) > 0 {
+		sorted := append([]DecompileSelector(nil), selectors...)
+		sort.Slice(sorted, func(i, j int) bool {
+			return strings.TrimSpace(sorted[i].ID) < strings.TrimSpace(sorted[j].ID)
+		})
+		for _, s := range sorted {
+			id := strings.TrimSpace(s.ID)
+			if id == "" {
+				continue
+			}
+			b.WriteString("\n  selector ")
+			if needsQuotes(id) {
+				b.WriteString(`"` + id + `"`)
+			} else {
+				b.WriteString(id)
+			}
+			b.WriteString(" {\n")
+			if source := strings.TrimSpace(s.Source); source != "" {
+				b.WriteString("    source ")
+				if needsQuotes(source) {
+					b.WriteString(`"` + source + `"`)
+				} else {
+					b.WriteString(source)
+				}
+				b.WriteString("\n")
+			}
+			if cache := strings.TrimSpace(s.Cache); cache != "" {
+				b.WriteString("    cache ")
+				if needsQuotes(cache) {
+					b.WriteString(`"` + cache + `"`)
+				} else {
+					b.WriteString(cache)
+				}
+				b.WriteString("\n")
+			}
+			if onUnavailable := strings.TrimSpace(s.OnUnavailable); onUnavailable != "" {
+				b.WriteString("    on_unavailable ")
+				if needsQuotes(onUnavailable) {
+					b.WriteString(`"` + onUnavailable + `"`)
+				} else {
+					b.WriteString(onUnavailable)
+				}
+				b.WriteString("\n")
+			}
+			if onTimeout := strings.TrimSpace(s.OnTimeout); onTimeout != "" {
+				b.WriteString("    on_timeout ")
+				if needsQuotes(onTimeout) {
+					b.WriteString(`"` + onTimeout + `"`)
+				} else {
+					b.WriteString(onTimeout)
+				}
+				b.WriteString("\n")
+			}
+			b.WriteString("  }\n")
+		}
 	}
 
 	if len(rules) > 0 {
@@ -1251,11 +1387,73 @@ type DecompileBudget struct {
 	OnExceed   string
 }
 
+type DecompileDelegate struct {
+	TargetAgent string
+	Scope       string
+	TTL         string
+	Ceiling     string
+}
+
+type DecompileAmbient struct {
+	Limits   map[string]string
+	OnExceed string
+}
+
+type DecompileSelector struct {
+	ID            string
+	Source        string
+	Cache         string
+	OnUnavailable string
+	OnTimeout     string
+}
+
 func needsQuotes(s string) bool {
+	if strings.TrimSpace(s) == "" {
+		return false
+	}
 	for _, r := range s {
 		if unicode.IsSpace(r) || r == '"' {
 			return true
 		}
 	}
+	return !isBareFPLLiteral(s)
+}
+
+func isBareFPLLiteral(s string) bool {
+	b := []byte(s)
+	if len(b) == 0 {
+		return false
+	}
+
+	if isIdentStart(b[0]) {
+		for i := 1; i < len(b); i++ {
+			if !isIdentCont(b[i]) {
+				return false
+			}
+		}
+		return true
+	}
+
+	if isDigit(b[0]) || (b[0] == '-' && len(b) > 1 && isDigit(b[1])) {
+		i := 0
+		if b[0] == '-' {
+			i++
+		}
+		hasDot := false
+		for i < len(b) && (isDigit(b[i]) || b[i] == '.') {
+			if b[i] == '.' {
+				if hasDot {
+					return false
+				}
+				hasDot = true
+			}
+			i++
+		}
+		if i == len(b) {
+			return true
+		}
+		return isUnitSuffix(string(b[i:]))
+	}
+
 	return false
 }

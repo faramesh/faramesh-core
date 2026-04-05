@@ -136,11 +136,19 @@ func TestDecompileToFPL(t *testing.T) {
 		{Effect: "permit", Tool: "stripe/*", When: "args.amount <= 500"},
 	}
 	budget := &DecompileBudget{SessionUSD: 500, DailyUSD: 2000}
+	delegates := []DecompileDelegate{{TargetAgent: "fraud-check-bot", Scope: "refund", TTL: "5m", Ceiling: "approval"}}
+	ambient := &DecompileAmbient{
+		Limits: map[string]string{
+			"max_customers_per_day": "1000",
+		},
+		OnExceed: "defer",
+	}
+	selectors := []DecompileSelector{{ID: "account", Source: "https://context.internal/account", Cache: "60s", OnUnavailable: "deny", OnTimeout: "defer"}}
 	phases := map[string][]string{
 		"intake": {"read_customer", "get_order"},
 	}
 
-	out := DecompileToFPL("payment-bot", "deny", nil, phases, rules, budget)
+	out := DecompileToFPL("payment-bot", "deny", nil, phases, rules, budget, delegates, ambient, selectors)
 
 	if out == "" {
 		t.Fatal("decompile returned empty")
@@ -153,5 +161,15 @@ func TestDecompileToFPL(t *testing.T) {
 	}
 	if len(doc.Agents) != 1 || doc.Agents[0].ID != "payment-bot" {
 		t.Fatalf("round-trip agent: %+v", doc.Agents)
+	}
+	ag := doc.Agents[0]
+	if len(ag.Delegates) != 1 || ag.Delegates[0].TargetAgent != "fraud-check-bot" {
+		t.Fatalf("round-trip delegates: %+v", ag.Delegates)
+	}
+	if len(ag.Ambients) != 1 || ag.Ambients[0].Limits["max_customers_per_day"] != "1000" {
+		t.Fatalf("round-trip ambient: %+v", ag.Ambients)
+	}
+	if len(ag.Selectors) != 1 || ag.Selectors[0].ID != "account" || ag.Selectors[0].OnTimeout != "defer" {
+		t.Fatalf("round-trip selectors: %+v", ag.Selectors)
 	}
 }

@@ -1,10 +1,33 @@
 package main
 
 import (
+	"encoding/json"
 	"net/url"
 
 	"github.com/spf13/cobra"
 )
+
+func sessionSocketRequest(op string, payload map[string]any) (json.RawMessage, error) {
+	req := map[string]any{"type": "session", "op": op}
+	for k, v := range payload {
+		req[k] = v
+	}
+	return daemonSocketRequest(req)
+}
+
+func sessionSocketRequestWithHTTPFallback(op string, payload map[string]any, httpMethod, httpPath string) (json.RawMessage, error) {
+	data, err := sessionSocketRequest(op, payload)
+	if err == nil {
+		return data, nil
+	}
+	if !daemonHTTPFallback {
+		return nil, err
+	}
+	if httpMethod == "GET" {
+		return daemonGet(httpPath)
+	}
+	return daemonPost(httpPath, payload)
+}
 
 var sessionCmd = &cobra.Command{
 	Use:   "session",
@@ -32,7 +55,7 @@ var sessionOpenCmd = &cobra.Command{
 		if cmd.Flags().Changed("ttl") {
 			body["ttl"] = sessionOpenTTL
 		}
-		data, err := daemonPost("/api/v1/session/open", body)
+		data, err := sessionSocketRequestWithHTTPFallback("open", body, "POST", "/api/v1/session/open")
 		if err != nil {
 			return err
 		}
@@ -50,7 +73,7 @@ var sessionCloseCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		body := map[string]any{"agent_id": args[0]}
-		data, err := daemonPost("/api/v1/session/close", body)
+		data, err := sessionSocketRequestWithHTTPFallback("close", body, "POST", "/api/v1/session/close")
 		if err != nil {
 			return err
 		}
@@ -70,10 +93,12 @@ var sessionListCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		path := "/api/v1/session/list"
+		payload := map[string]any{}
 		if cmd.Flags().Changed("agent") {
+			payload["agent_id"] = sessionListAgent
 			path += "?" + url.Values{"agent": {sessionListAgent}}.Encode()
 		}
-		data, err := daemonGet(path)
+		data, err := sessionSocketRequestWithHTTPFallback("list", payload, "GET", path)
 		if err != nil {
 			return err
 		}
@@ -98,7 +123,7 @@ var sessionBudgetCmd = &cobra.Command{
 				"agent_id": agentID,
 				"budget":   sessionBudgetSet,
 			}
-			data, err := daemonPost("/api/v1/session/budget", body)
+			data, err := sessionSocketRequestWithHTTPFallback("budget_set", body, "POST", "/api/v1/session/budget")
 			if err != nil {
 				return err
 			}
@@ -106,7 +131,7 @@ var sessionBudgetCmd = &cobra.Command{
 			printJSON(data)
 			return nil
 		}
-		data, err := daemonGet("/api/v1/session/budget?" + url.Values{"agent": {agentID}}.Encode())
+		data, err := sessionSocketRequestWithHTTPFallback("budget_get", map[string]any{"agent_id": agentID}, "GET", "/api/v1/session/budget?"+url.Values{"agent": {agentID}}.Encode())
 		if err != nil {
 			return err
 		}
@@ -129,7 +154,7 @@ var sessionResetCmd = &cobra.Command{
 		if cmd.Flags().Changed("counter") {
 			body["counter"] = sessionResetCounter
 		}
-		data, err := daemonPost("/api/v1/session/reset", body)
+		data, err := sessionSocketRequestWithHTTPFallback("reset", body, "POST", "/api/v1/session/reset")
 		if err != nil {
 			return err
 		}
@@ -146,7 +171,8 @@ var sessionInspectCmd = &cobra.Command{
 	Short: "Inspect the full state of a governance session",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		data, err := daemonGet("/api/v1/session/inspect/" + url.PathEscape(args[0]))
+		httpPath := "/api/v1/session/inspect/" + url.PathEscape(args[0])
+		data, err := sessionSocketRequestWithHTTPFallback("inspect", map[string]any{"agent_id": args[0]}, "GET", httpPath)
 		if err != nil {
 			return err
 		}
@@ -172,7 +198,7 @@ var sessionPurposeDeclareCmd = &cobra.Command{
 			"agent_id": args[0],
 			"purpose":  args[1],
 		}
-		data, err := daemonPost("/api/v1/session/purpose/declare", body)
+		data, err := sessionSocketRequestWithHTTPFallback("purpose_declare", body, "POST", "/api/v1/session/purpose/declare")
 		if err != nil {
 			return err
 		}
@@ -187,7 +213,8 @@ var sessionPurposeListCmd = &cobra.Command{
 	Short: "List purposes declared for a session",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		data, err := daemonGet("/api/v1/session/purpose/" + url.PathEscape(args[0]))
+		httpPath := "/api/v1/session/purpose/" + url.PathEscape(args[0])
+		data, err := sessionSocketRequestWithHTTPFallback("purpose_list", map[string]any{"agent_id": args[0]}, "GET", httpPath)
 		if err != nil {
 			return err
 		}

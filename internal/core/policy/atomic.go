@@ -68,6 +68,9 @@ func (e *Engine) EvaluateWithTimeout(ctx context.Context, toolID string, evalCtx
 	if evalCtx.Vars == nil {
 		evalCtx.Vars = e.doc.Vars
 	}
+	if strings.TrimSpace(evalCtx.ToolID) == "" {
+		evalCtx.ToolID = toolID
+	}
 
 	for i, rule := range e.doc.Rules {
 		if !matchTool(rule.Match.Tool, toolID) {

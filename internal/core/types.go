@@ -64,6 +64,10 @@ type CanonicalActionRequest struct {
 	// field. The pipeline enforces sane bounds and optional policy requirements.
 	ExecutionTimeoutMS int `json:"execution_timeout_ms,omitempty"`
 
+	// Model identifies the model/runtime identity that produced this tool call.
+	// In strict runtime mode this is verified against the daemon model registry.
+	Model *ModelIdentity `json:"model,omitempty"`
+
 	// Principal is the invoking human/system identity (optional).
 	// Policy rules can reference principal.tier, principal.role, etc.
 	Principal *principal.Identity `json:"principal,omitempty"`
@@ -75,6 +79,40 @@ type CanonicalActionRequest struct {
 	// Invocation carries invocation-scoped context for delegated sub-agent calls.
 	// When present, runtime can intersect base policy with invocation sub-policy.
 	Invocation *InvocationContext `json:"invocation,omitempty"`
+
+	// ModelVerification carries runtime model verification outcome metadata.
+	// It is populated by the pipeline and persisted into DPR evidence fields.
+	ModelVerification *ModelVerificationResult `json:"-"`
+}
+
+// ModelIdentity represents a model declaration or presented runtime model.
+type ModelIdentity struct {
+	Name        string `json:"name,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	Version     string `json:"version,omitempty"`
+}
+
+// ModelRegistration is a stored model identity registry entry.
+type ModelRegistration struct {
+	Name        string `json:"name"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	Provider    string `json:"provider,omitempty"`
+	Version     string `json:"version,omitempty"`
+	Registered  string `json:"registered_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
+}
+
+// ModelVerificationResult captures model identity verification outcome.
+type ModelVerificationResult struct {
+	Required        bool           `json:"required"`
+	Strict          bool           `json:"strict"`
+	Verified        bool           `json:"verified"`
+	Reason          string         `json:"reason,omitempty"`
+	Declared        *ModelIdentity `json:"declared,omitempty"`
+	Presented       *ModelIdentity `json:"presented,omitempty"`
+	Registered      *ModelIdentity `json:"registered,omitempty"`
+	RegisteredCount int            `json:"registered_count,omitempty"`
 }
 
 // InvocationContext identifies an invocation-scoped execution context.

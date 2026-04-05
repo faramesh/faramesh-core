@@ -9,6 +9,7 @@ func init() {
 		runCmd,
 		detectEnvCmd,
 		initCmd,
+		onboardCmd,
 		demoCmd,
 		policyCmd,
 		agentCmd,

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	_ "modernc.org/sqlite"
 )
 
 // DailyCostStore persists per-agent daily USD totals.
@@ -20,7 +22,7 @@ type SQLiteDailyCostStore struct {
 
 // NewSQLiteDailyCostStore opens/creates a SQLite file store for daily costs.
 func NewSQLiteDailyCostStore(dbPath string) (*SQLiteDailyCostStore, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite daily cost store: %w", err)
 	}

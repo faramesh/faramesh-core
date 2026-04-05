@@ -105,7 +105,7 @@ func runRunE(_ *cobra.Command, args []string) error {
 	report := &enforcementReport{}
 
 	if shouldEnforce(runEnforce) {
-		env = applyEnforcementStack(det, env, cwd, report)
+		env = applyEnforcementStack(det, env, cwd, args, report)
 	}
 
 	printEnforcementReport(det, report)
@@ -115,6 +115,8 @@ func runRunE(_ *cobra.Command, args []string) error {
 
 type enforcementReport struct {
 	autoload       bool
+	pythonAutoloadAttempted bool
+	pythonAutoloadPath string
 	credentialStrip []string
 	seccomp        bool
 	seccompErr     error
@@ -131,10 +133,19 @@ func shouldEnforce(level string) bool {
 	return level != "none"
 }
 
-func applyEnforcementStack(det *runtimeenv.DetectedEnvironment, env []string, cwd string, r *enforcementReport) []string {
+func applyEnforcementStack(det *runtimeenv.DetectedEnvironment, env []string, cwd string, childArgs []string, r *enforcementReport) []string {
 	// L1: Framework auto-patch (inject FARAMESH_AUTOLOAD=1 so Python/Node hooks activate)
 	env = mergeEnv(env, []string{"FARAMESH_AUTOLOAD=1"})
 	r.autoload = true
+
+	// Python bootstrap: make sure startup hook is importable for source checkouts.
+	if looksLikePythonCommand(childArgs) {
+		r.pythonAutoloadAttempted = true
+		if sdkPath, ok := resolvePythonSDKPath(cwd); ok {
+			env = prependPathListEnv(env, "PYTHONPATH", sdkPath)
+			r.pythonAutoloadPath = sdkPath
+		}
+	}
 
 	// L4: Credential broker — strip ambient API keys from child environment.
 	if runBrokerOn || runEnforce == "full" {
@@ -286,6 +297,11 @@ func printEnforcementReport(det *runtimeenv.DetectedEnvironment, r *enforcementR
 	}
 
 	check("Framework auto-patch (FARAMESH_AUTOLOAD)", r.autoload, nil)
+	if r.pythonAutoloadPath != "" {
+		green.Fprintf(os.Stderr, "  ✓ Python startup hook bootstrap (PYTHONPATH=%s)\n", r.pythonAutoloadPath)
+	} else if r.pythonAutoloadAttempted {
+		yellow.Fprintf(os.Stderr, "  ○ Python startup hook path not detected (set FARAMESH_PYTHON_SDK_PATH or install faramesh-sdk)\n")
+	}
 	if len(r.credentialStrip) > 0 {
 		green.Fprintf(os.Stderr, "  ✓ Credential broker (stripped: %s)\n", strings.Join(r.credentialStrip, ", "))
 	}
@@ -330,4 +346,82 @@ func mergeEnv(base, extra []string) []string {
 		}
 	}
 	return out
+}
+
+func looksLikePythonCommand(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	cmd := strings.ToLower(filepath.Base(args[0]))
+	if strings.Contains(cmd, "python") {
+		return true
+	}
+	for i := 0; i < len(args) && i < 3; i++ {
+		if strings.HasSuffix(strings.ToLower(args[i]), ".py") {
+			return true
+		}
+	}
+	return false
+}
+
+func resolvePythonSDKPath(cwd string) (string, bool) {
+	if override := strings.TrimSpace(os.Getenv("FARAMESH_PYTHON_SDK_PATH")); override != "" {
+		if abs, err := filepath.Abs(override); err == nil {
+			override = abs
+		}
+		if dirExists(override) {
+			return override, true
+		}
+	}
+
+	candidates := []string{
+		filepath.Join(cwd, "faramesh-core", "sdk", "python"),
+		filepath.Join(cwd, "sdk", "python"),
+	}
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(exeDir, "sdk", "python"),
+			filepath.Join(exeDir, "..", "sdk", "python"),
+			filepath.Join(exeDir, "..", "..", "sdk", "python"),
+		)
+	}
+
+	for _, candidate := range candidates {
+		if abs, err := filepath.Abs(candidate); err == nil {
+			candidate = abs
+		}
+		if dirExists(candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func prependPathListEnv(env []string, key, value string) []string {
+	cur := envValue(env, key)
+	if cur == "" {
+		return mergeEnv(env, []string{key + "=" + value})
+	}
+	for _, p := range filepath.SplitList(cur) {
+		if p == value {
+			return env
+		}
+	}
+	return mergeEnv(env, []string{key + "=" + value + string(os.PathListSeparator) + cur})
+}
+
+func envValue(env []string, key string) string {
+	prefix := key + "="
+	for _, e := range env {
+		if strings.HasPrefix(e, prefix) {
+			return strings.TrimPrefix(e, prefix)
+		}
+	}
+	return ""
+}
+
+func dirExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
 }
