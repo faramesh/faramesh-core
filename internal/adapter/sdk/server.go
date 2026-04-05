@@ -28,6 +28,7 @@ package sdk
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -39,6 +40,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/faramesh/faramesh-core/internal/core"
+	"github.com/faramesh/faramesh-core/internal/core/principal"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
 	"github.com/google/uuid"
@@ -145,7 +147,8 @@ type Server struct {
 	wg         sync.WaitGroup
 	rlMu       sync.Mutex
 	rl         map[string]*rate.Limiter
-	connTokens chan struct{}
+	connTokens        chan struct{}
+	principalResolver func(context.Context, string) (*principal.Identity, error)
 }
 
 // NewServer creates a new SDK socket server.
@@ -157,6 +160,13 @@ func NewServer(pipeline *core.Pipeline, log *zap.Logger) *Server {
 		connTokens: make(chan struct{}, 256),
 	}
 }
+
+// SetPrincipalResolver configures a function that resolves a bearer token to
+// a principal identity for requests that carry an Authorization header.
+func (s *Server) SetPrincipalResolver(fn func(context.Context, string) (*principal.Identity, error)) {
+	s.principalResolver = fn
+}
+
 
 // Listen binds the Unix socket and starts accepting connections.
 func (s *Server) Listen(socketPath string) error {
