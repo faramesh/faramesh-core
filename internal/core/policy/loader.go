@@ -280,7 +280,7 @@ func Validate(doc *Doc) []string {
 			errs = append(errs, fmt.Sprintf("rule %q: unknown effect %q (must be permit|deny|defer|shadow)", rule.ID, effect))
 		}
 		if rule.Match.When != "" {
-			if _, err := compileExpr(rule.Match.When, nil); err != nil {
+			if _, err := compileExpr(rule.Match.When, evalEnv(doc, nil)); err != nil {
 				errs = append(errs, fmt.Sprintf("rule %q: invalid when expression: %v", rule.ID, err))
 			}
 		}
