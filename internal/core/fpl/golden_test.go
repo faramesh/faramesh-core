@@ -132,8 +132,8 @@ func TestStructuredFPLFile(t *testing.T) {
 func TestDecompileToFPL(t *testing.T) {
 	rules := []DecompileRule{
 		{Effect: "deny", Tool: "shell/*", StrictDeny: true, Reason: "never shell"},
-		{Effect: "defer", Tool: "stripe/refund", When: "amount > 500", Notify: "finance", Reason: "high value"},
-		{Effect: "permit", Tool: "stripe/*", When: "amount <= 500"},
+		{Effect: "defer", Tool: "stripe/refund", When: "args.amount > 500", Notify: "finance", Reason: "high value"},
+		{Effect: "permit", Tool: "stripe/*", When: "args.amount <= 500"},
 	}
 	budget := &DecompileBudget{SessionUSD: 500, DailyUSD: 2000}
 	phases := map[string][]string{

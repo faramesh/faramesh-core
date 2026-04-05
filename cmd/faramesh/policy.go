@@ -172,14 +172,45 @@ func runFPLValidate(path string) error {
 		printError("read error: " + err.Error())
 		os.Exit(1)
 	}
-	doc, err := fpl.ParseDocument(string(data))
+	fplDoc, err := fpl.ParseDocument(string(data))
 	if err != nil {
 		printError("parse error: " + err.Error())
 		os.Exit(1)
 	}
-	ir, err := fpl.CompileDocument(doc)
+	ir, err := fpl.CompileDocument(fplDoc)
 	if err != nil {
 		printError("compile error: " + err.Error())
+		os.Exit(1)
+	}
+
+	doc, version, err := policy.LoadFile(path)
+	if err != nil {
+		printError("load error: " + err.Error())
+		os.Exit(1)
+	}
+
+	diagnostics := policy.Validate(doc)
+	var hardErrors, warnings []string
+	for _, d := range diagnostics {
+		if len(d) > 8 && d[:8] == "warning:" {
+			warnings = append(warnings, d)
+		} else {
+			hardErrors = append(hardErrors, d)
+		}
+	}
+
+	for _, w := range warnings {
+		color.Yellow("  ⚠ %s", w[9:])
+	}
+	if len(hardErrors) > 0 {
+		for _, e := range hardErrors {
+			printError(e)
+		}
+		os.Exit(1)
+	}
+
+	if _, err := policy.NewEngine(doc, version); err != nil {
+		printError("compilation error: " + err.Error())
 		os.Exit(1)
 	}
 
@@ -196,7 +227,12 @@ func runFPLValidate(path string) error {
 	green := color.New(color.FgGreen, color.Bold)
 	green.Printf("✓ ")
 	fmt.Printf("%s  ", path)
-	fmt.Printf("%d rules  agent=%s\n", ruleCount, agentID)
+	color.New(color.FgHiBlack).Printf("[%s]  ", version)
+	fmt.Printf("%d rules  agent=%s", ruleCount, agentID)
+	if len(warnings) > 0 {
+		color.Yellow("  (%d warning(s))", len(warnings))
+	}
+	fmt.Println()
 	return nil
 }
 

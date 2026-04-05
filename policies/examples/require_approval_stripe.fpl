@@ -2,7 +2,7 @@ agent require-approval-stripe {
   default deny
 
   rules {
-    defer stripe/refund when amount > 1000
+    defer stripe/refund when args.amount > 1000
       reason: "large refunds require approval"
     permit stripe/*
   }
