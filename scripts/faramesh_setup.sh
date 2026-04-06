@@ -15,6 +15,7 @@ Commands:
   status         Show wizard runtime status
   stop           Stop wizard runtime
   onboard        Run onboarding preflight wrapper
+  offboard       Run automatic code offboarding (dry-run by default)
   install        Run binary installer script
   help           Show this help
 
@@ -24,6 +25,7 @@ Examples:
   bash scripts/faramesh_setup.sh status
   bash scripts/faramesh_setup.sh stop
   bash scripts/faramesh_setup.sh onboard --policy policies/default.fpl
+  bash scripts/faramesh_setup.sh offboard --path /path/to/agent --apply
   bash scripts/faramesh_setup.sh install --no-interactive
 EOF
 }
@@ -45,6 +47,10 @@ case "$1" in
   onboard)
     shift
     exec bash "$CORE_DIR/scripts/onboard.sh" "$@"
+    ;;
+  offboard)
+    shift
+    exec faramesh offboard "$@"
     ;;
   install)
     shift
