@@ -46,14 +46,14 @@ def governed_tool(
 
         @functools.wraps(fn)
         async def governed_wrapper(*args, **kwargs):
-            from faramesh.autopatch import _govern_call
+            from faramesh.autopatch import _govern_call, _normalize_effect
 
             call_args = dict(kwargs)
             if args and len(args) > 1:
                 call_args["_positional"] = list(args[1:])
 
             result = _govern_call(tool_id, call_args)
-            effect = result.get("effect", "PERMIT")
+            effect = _normalize_effect(result.get("effect", ""))
 
             if effect == "DENY":
                 reason = result.get("reason_code", "POLICY_DENY")

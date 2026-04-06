@@ -99,6 +99,64 @@ class TestAutopatch(unittest.TestCase):
             instance.run()
         self.assertIn("DEFER", str(ctx.exception))
 
+    @patch("faramesh.autopatch._govern_call")
+    def test_wrapped_method_unknown_effect_fail_closed(self, mock_govern):
+        from faramesh.autopatch import _wrap_method
+
+        mock_govern.return_value = {"effect": "UNEXPECTED_EFFECT"}
+
+        cls = self._make_fake_cls()
+        tool_id_fn = lambda self, a, kw: "test_tool"
+        _wrap_method(cls, "run", "test", tool_id_fn)
+
+        instance = cls()
+        with self.assertRaises(RuntimeError) as ctx:
+            instance.run()
+        self.assertIn("unknown effect", str(ctx.exception).lower())
+
+    @patch("os.path.exists", return_value=False)
+    @patch("faramesh.gate.gate_decide")
+    def test_govern_call_unknown_outcome_fail_closed(self, mock_gate_decide, _mock_exists):
+        from faramesh.autopatch import _govern_call
+
+        mock_gate_decide.return_value = types.SimpleNamespace(
+            outcome="MYSTERY",
+            reason_code="X",
+            provenance_id="",
+        )
+
+        with self.assertRaises(RuntimeError) as ctx:
+            _govern_call("test_tool/invoke", {})
+        self.assertIn("unknown effect", str(ctx.exception).lower())
+
+    @patch("os.path.exists", return_value=True)
+    @patch("socket.socket")
+    def test_govern_call_jsonrpc_error_fail_closed(self, mock_socket_ctor, _mock_exists):
+        from faramesh.autopatch import _govern_call
+
+        mock_sock = MagicMock()
+        mock_sock.recv.side_effect = [
+            b'{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"boom"}}\n'
+        ]
+        mock_socket_ctor.return_value = mock_sock
+
+        with self.assertRaises(RuntimeError) as ctx:
+            _govern_call("test_tool/invoke", {"input": "hello"})
+        self.assertIn("denied", str(ctx.exception).lower())
+
+    @patch("faramesh.adapters.langchain.install_langchain_interceptor")
+    def test_patch_langchain_delegates_to_langchain_adapter(self, mock_install):
+        from faramesh.autopatch import _patch_langchain
+
+        mock_install.return_value = {
+            "langchain": ["run", "arun", "invoke", "ainvoke"],
+            "langgraph": ["_execute_tool_sync", "_execute_tool_async"],
+        }
+
+        patched = _patch_langchain()
+        self.assertTrue(patched)
+        mock_install.assert_called_once_with(include_langgraph=True, fail_open=False)
+
     def test_extract_args(self):
         from faramesh.autopatch import _extract_args
 

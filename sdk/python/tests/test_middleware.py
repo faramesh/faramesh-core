@@ -78,6 +78,15 @@ class TestFarameshMiddleware(unittest.TestCase):
         self.assertIn("DEFER", str(ctx.exception))
 
     @patch("faramesh.autopatch._govern_call")
+    def test_after_tool_call_unknown_effect_fail_closed(self, mock_govern):
+        mock_govern.return_value = {"effect": "MYSTERY"}
+        mw = self._make_middleware()
+
+        with self.assertRaises(RuntimeError) as ctx:
+            mw.after_tool_call("stripe/refund", {"amount": 500}, "pending", {})
+        self.assertIn("unknown effect", str(ctx.exception).lower())
+
+    @patch("faramesh.autopatch._govern_call")
     def test_output_injection_scan(self, mock_govern):
         mock_govern.return_value = {"effect": "PERMIT"}
         mw = self._make_middleware()

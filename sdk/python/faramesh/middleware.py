@@ -94,7 +94,7 @@ class FarameshMiddleware:
         """Called after each tool call. Governs the action and records DPR."""
         self._tool_count += 1
 
-        from faramesh.autopatch import _govern_call
+        from faramesh.autopatch import _govern_call, _normalize_effect
 
         try:
             result = _govern_call(tool_name, tool_args)
@@ -105,7 +105,7 @@ class FarameshMiddleware:
                 return tool_result
             raise
 
-        effect = result.get("effect", "PERMIT")
+        effect = _normalize_effect(result.get("effect", ""))
 
         if effect == "DENY":
             self._deny_count += 1

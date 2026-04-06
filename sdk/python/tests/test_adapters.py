@@ -1,6 +1,7 @@
 """Tests for Faramesh framework adapters."""
 from __future__ import annotations
 
+import asyncio
 import unittest
 from unittest.mock import patch, MagicMock
 
@@ -24,6 +25,29 @@ class TestPydanticAIAdapter(unittest.TestCase):
         from faramesh.autopatch import _govern_call
         result = _govern_call("test/tool", {"amount": 9999})
         self.assertEqual(result["effect"], "DENY")
+
+    @patch("faramesh.autopatch._govern_call")
+    def test_governed_tool_unknown_effect_fail_closed(self, mock_govern):
+        """governed_tool must fail closed on unknown effect values."""
+        mock_govern.return_value = {"effect": "MYSTERY"}
+
+        from faramesh.adapters.pydantic_ai import governed_tool
+
+        class FakeAgent:
+            def tool(self, retries=1):
+                def decorator(fn):
+                    return fn
+                return decorator
+
+        agent = FakeAgent()
+
+        @governed_tool(agent, policy_tool_id="payments/refund")
+        async def refund_tool() -> str:
+            return "ok"
+
+        with self.assertRaises(RuntimeError) as ctx:
+            asyncio.run(refund_tool())
+        self.assertIn("unknown effect", str(ctx.exception).lower())
 
 
 class TestGoogleADKAdapter(unittest.TestCase):
@@ -72,6 +96,20 @@ class TestGoogleADKAdapter(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             refund(amount=500.0)
         self.assertIn("DEFER", str(ctx.exception))
+
+    @patch("faramesh.autopatch._govern_call")
+    def test_faramesh_tool_unknown_effect_fail_closed(self, mock_govern):
+        mock_govern.return_value = {"effect": "MYSTERY"}
+
+        from faramesh.adapters.google_adk import faramesh_tool
+
+        @faramesh_tool(policy_tool_id="danger/execute")
+        def dangerous_op(cmd: str) -> str:
+            return "should not reach"
+
+        with self.assertRaises(RuntimeError) as ctx:
+            dangerous_op(cmd="noop")
+        self.assertIn("unknown effect", str(ctx.exception).lower())
 
     @patch("faramesh.autopatch._govern_call")
     def test_faramesh_tool_fail_open(self, mock_govern):
@@ -138,6 +176,20 @@ class TestBedrockAgentCoreAdapter(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             restricted(data="classified")
         self.assertIn("DENY", str(ctx.exception))
+
+    @patch("faramesh.autopatch._govern_call")
+    def test_govern_agentcore_tool_unknown_effect_fail_closed(self, mock_govern):
+        mock_govern.return_value = {"effect": "MYSTERY"}
+
+        from faramesh.adapters.bedrock_agentcore import govern_agentcore_tool
+
+        @govern_agentcore_tool
+        def restricted(data: str) -> str:
+            return "secret"
+
+        with self.assertRaises(RuntimeError) as ctx:
+            restricted(data="classified")
+        self.assertIn("unknown effect", str(ctx.exception).lower())
 
     def test_strands_hook_init(self):
         from faramesh.adapters.bedrock_agentcore import FarameshStrandsHook
