@@ -262,3 +262,129 @@ func TestExpiryCanRaceWithResolveOnlyOneFinalizes(t *testing.T) {
 		t.Fatalf("wait/status mismatch: wait=%q status=%q", res.Status, st)
 	}
 }
+
+func TestLateResolveAfterTimeoutKeepsExpiredTerminalState(t *testing.T) {
+	w := NewWorkflow("")
+	h, err := w.DeferWithToken("tok-timeout-late", "agent-t", "tool-t", "timeout")
+	if err != nil {
+		t.Fatalf("DeferWithToken() error = %v", err)
+	}
+
+	if _, err := w.resolveInternal("tok-timeout-late", Resolution{Approved: false, Reason: "expired", Status: StatusExpired}); err != nil {
+		t.Fatalf("resolveInternal() timeout winner error = %v", err)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		approved bool
+		reason   string
+	}{
+		{name: "late-approve", approved: true, reason: "late approve"},
+		{name: "late-deny", approved: false, reason: "late deny"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := w.Resolve("tok-timeout-late", tc.approved, tc.reason)
+			if err == nil {
+				t.Fatalf("expected conflict for %s", tc.name)
+			}
+			var conflict *ResolveConflictError
+			if !errors.As(err, &conflict) {
+				t.Fatalf("expected ResolveConflictError for %s, got %T (%v)", tc.name, err, err)
+			}
+			if conflict.Code != ResolveConflictCode {
+				t.Fatalf("conflict code = %q, want %q", conflict.Code, ResolveConflictCode)
+			}
+			if conflict.Status != StatusExpired {
+				t.Fatalf("conflict status = %q, want %q", conflict.Status, StatusExpired)
+			}
+		})
+	}
+
+	res, ok := Wait(h)
+	if ok {
+		t.Fatalf("wait ok = true, want false for expired resolution")
+	}
+	if res.Status != StatusExpired {
+		t.Fatalf("resolution status = %q, want %q", res.Status, StatusExpired)
+	}
+
+	st, pending := w.Status("tok-timeout-late")
+	if pending {
+		t.Fatalf("token should not remain pending after timeout finalization")
+	}
+	if st != StatusExpired {
+		t.Fatalf("status = %q, want %q", st, StatusExpired)
+	}
+}
+
+func TestResolveStressOnlyOneWinnerMaintainsStableFinalState(t *testing.T) {
+	w := NewWorkflow("")
+	h, err := w.DeferWithToken("tok-stress", "agent-s", "tool-s", "stress")
+	if err != nil {
+		t.Fatalf("DeferWithToken() error = %v", err)
+	}
+
+	const workers = 128
+	start := make(chan struct{})
+	out := make(chan error, workers)
+
+	for i := 0; i < workers; i++ {
+		approve := i%2 == 0
+		reason := "deny"
+		if approve {
+			reason = "approve"
+		}
+		go func(approved bool, r string) {
+			<-start
+			out <- w.Resolve("tok-stress", approved, r)
+		}(approve, reason)
+	}
+
+	close(start)
+
+	successes := 0
+	conflicts := 0
+	conflictStatuses := make([]DeferStatus, 0, workers)
+	for i := 0; i < workers; i++ {
+		err := <-out
+		if err == nil {
+			successes++
+			continue
+		}
+		var conflict *ResolveConflictError
+		if !errors.As(err, &conflict) {
+			t.Fatalf("unexpected error type from stress resolver: %T (%v)", err, err)
+		}
+		if conflict.Code != ResolveConflictCode {
+			t.Fatalf("conflict code = %q, want %q", conflict.Code, ResolveConflictCode)
+		}
+		conflicts++
+		conflictStatuses = append(conflictStatuses, conflict.Status)
+	}
+
+	if successes != 1 {
+		t.Fatalf("successes = %d, want 1", successes)
+	}
+	if conflicts != workers-1 {
+		t.Fatalf("conflicts = %d, want %d", conflicts, workers-1)
+	}
+
+	res, ok := Wait(h)
+	if (res.Status == StatusApproved) != ok {
+		t.Fatalf("wait approval mismatch: status=%q ok=%v", res.Status, ok)
+	}
+
+	st, pending := w.Status("tok-stress")
+	if pending {
+		t.Fatalf("token should not remain pending after stress resolve race")
+	}
+	if st != res.Status {
+		t.Fatalf("final status mismatch: wait=%q status=%q", res.Status, st)
+	}
+
+	for _, conflictStatus := range conflictStatuses {
+		if conflictStatus != st {
+			t.Fatalf("conflict status = %q, want final status %q", conflictStatus, st)
+		}
+	}
+}

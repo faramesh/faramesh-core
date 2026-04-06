@@ -52,7 +52,7 @@ func (s *PGStore) Save(rec *Record) error {
 		INSERT INTO dpr_records (
 			schema_version, fpl_version, car_version,
 			record_id, prev_record_hash, record_hash, hmac_signature,
-			agent_id, session_id, tool_id, intercept_adapter, principal_id_hash,
+			agent_id, session_id, tool_id, intercept_adapter, execution_timeout_ms, principal_id_hash,
 			effect, matched_rule_id, reason_code, reason, denial_token,
 			incident_category, incident_severity,
 			policy_version, policy_source_type, policy_source_id,
@@ -69,11 +69,11 @@ func (s *PGStore) Save(rec *Record) error {
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
 			$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-			$39,$40,$41,$42,$43,$44,$45,$46
+			$39,$40,$41,$42,$43,$44,$45,$46,$47
 		) ON CONFLICT (record_id) DO NOTHING`,
 		rec.SchemaVersion, rec.FPLVersion, rec.CARVersion,
 		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig,
-		rec.AgentID, rec.SessionID, rec.ToolID, rec.InterceptAdapter, rec.PrincipalIDHash,
+		rec.AgentID, rec.SessionID, rec.ToolID, rec.InterceptAdapter, rec.ExecutionTimeoutMS, rec.PrincipalIDHash,
 		rec.Effect, rec.MatchedRuleID, rec.ReasonCode, rec.Reason, rec.DenialToken,
 		rec.IncidentCategory, rec.IncidentSeverity,
 		rec.PolicyVersion, rec.PolicySourceType, rec.PolicySourceID,
@@ -212,7 +212,7 @@ func (s *PGStore) Close() error { return s.db.Close() }
 
 const pgSelectCols = `schema_version, fpl_version, car_version,
 	record_id, prev_record_hash, record_hash, hmac_signature,
-	agent_id, session_id, tool_id, intercept_adapter, principal_id_hash,
+	agent_id, session_id, tool_id, intercept_adapter, execution_timeout_ms, principal_id_hash,
 	effect, matched_rule_id, reason_code, reason, denial_token,
 	incident_category, incident_severity,
 	policy_version, policy_source_type, policy_source_id,
@@ -243,6 +243,7 @@ func pgMigrate(db *sql.DB) error {
 		session_id                 TEXT,
 		tool_id                    TEXT NOT NULL,
 		intercept_adapter          TEXT,
+		execution_timeout_ms       INTEGER DEFAULT 0,
 		principal_id_hash          TEXT DEFAULT '',
 		effect                     TEXT NOT NULL,
 		matched_rule_id            TEXT,
@@ -284,6 +285,7 @@ func pgMigrate(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_dpr_session ON dpr_records(session_id, created_at);
 	CREATE INDEX IF NOT EXISTS idx_dpr_incident ON dpr_records(incident_category, incident_severity);
 	CREATE INDEX IF NOT EXISTS idx_dpr_record_hash ON dpr_records(record_hash);
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS execution_timeout_ms INTEGER DEFAULT 0;
 	`)
 	return err
 }
@@ -297,7 +299,7 @@ func pgScanRecords(rows *sql.Rows) ([]*Record, error) {
 		if err := rows.Scan(
 			&r.SchemaVersion, &r.FPLVersion, &r.CARVersion,
 			&r.RecordID, &r.PrevRecordHash, &r.RecordHash, &r.HMACSig,
-			&r.AgentID, &r.SessionID, &r.ToolID, &r.InterceptAdapter, &r.PrincipalIDHash,
+			&r.AgentID, &r.SessionID, &r.ToolID, &r.InterceptAdapter, &r.ExecutionTimeoutMS, &r.PrincipalIDHash,
 			&r.Effect, &r.MatchedRuleID, &r.ReasonCode, &r.Reason, &r.DenialToken,
 			&r.IncidentCategory, &r.IncidentSeverity,
 			&r.PolicyVersion, &r.PolicySourceType, &r.PolicySourceID,

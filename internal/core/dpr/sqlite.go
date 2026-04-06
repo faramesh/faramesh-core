@@ -48,7 +48,7 @@ func (s *Store) Save(rec *Record) error {
 		INSERT OR IGNORE INTO dpr_records (
 			schema_version, fpl_version, car_version,
 			record_id, prev_record_hash, record_hash, hmac_signature,
-			agent_id, session_id, tool_id, intercept_adapter, principal_id_hash,
+			agent_id, session_id, tool_id, intercept_adapter, execution_timeout_ms, principal_id_hash,
 			effect, matched_rule_id, reason_code, reason, denial_token,
 			incident_category, incident_severity,
 			policy_version, policy_source_type, policy_source_id,
@@ -62,10 +62,10 @@ func (s *Store) Save(rec *Record) error {
 			degraded_mode,
 			batch_approval, batch_size, batch_dpr_ids, resolved_by_batch, batch_approval_id,
 			created_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		rec.SchemaVersion, rec.FPLVersion, rec.CARVersion,
 		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig,
-		rec.AgentID, rec.SessionID, rec.ToolID, rec.InterceptAdapter, rec.PrincipalIDHash,
+		rec.AgentID, rec.SessionID, rec.ToolID, rec.InterceptAdapter, rec.ExecutionTimeoutMS, rec.PrincipalIDHash,
 		rec.Effect, rec.MatchedRuleID, rec.ReasonCode, rec.Reason, rec.DenialToken,
 		rec.IncidentCategory, rec.IncidentSeverity,
 		rec.PolicyVersion, rec.PolicySourceType, rec.PolicySourceID,
@@ -105,7 +105,7 @@ func (s *Store) ByID(recordID string) (*Record, error) {
 // dprSelectCols is the full column list for DPR v1.0 SELECTs.
 const dprSelectCols = `schema_version, fpl_version, car_version,
 	record_id, prev_record_hash, record_hash, hmac_signature,
-	agent_id, session_id, tool_id, intercept_adapter, principal_id_hash,
+	agent_id, session_id, tool_id, intercept_adapter, execution_timeout_ms, principal_id_hash,
 	effect, matched_rule_id, reason_code, reason, denial_token,
 	incident_category, incident_severity,
 	policy_version, policy_source_type, policy_source_id,
@@ -235,6 +235,7 @@ func migrate(db *sql.DB) error {
 		session_id                 TEXT,
 		tool_id                    TEXT NOT NULL,
 		intercept_adapter          TEXT,
+		execution_timeout_ms       INTEGER DEFAULT 0,
 		principal_id_hash          TEXT DEFAULT '',
 		effect                     TEXT NOT NULL,
 		matched_rule_id            TEXT,
@@ -281,6 +282,8 @@ func migrate(db *sql.DB) error {
 	}
 
 	// Run incremental migrations for pre-v1.0 databases.
+	_, _ = db.Exec(`ALTER TABLE dpr_records ADD COLUMN execution_timeout_ms INTEGER DEFAULT 0`)
+
 	v1Cols := []string{
 		"fpl_version", "car_version", "hmac_signature", "principal_id_hash",
 		"denial_token", "incident_category", "incident_severity",
@@ -317,7 +320,7 @@ func scanRecords(rows *sql.Rows) ([]*Record, error) {
 		if err := rows.Scan(
 			&r.SchemaVersion, &r.FPLVersion, &r.CARVersion,
 			&r.RecordID, &r.PrevRecordHash, &r.RecordHash, &r.HMACSig,
-			&r.AgentID, &r.SessionID, &r.ToolID, &r.InterceptAdapter, &r.PrincipalIDHash,
+			&r.AgentID, &r.SessionID, &r.ToolID, &r.InterceptAdapter, &r.ExecutionTimeoutMS, &r.PrincipalIDHash,
 			&r.Effect, &r.MatchedRuleID, &r.ReasonCode, &r.Reason, &r.DenialToken,
 			&r.IncidentCategory, &r.IncidentSeverity,
 			&r.PolicyVersion, &r.PolicySourceType, &r.PolicySourceID,

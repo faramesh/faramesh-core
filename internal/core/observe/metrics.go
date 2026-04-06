@@ -189,34 +189,44 @@ func (m *Metrics) RecordPostScan(outcome string) {
 	}
 }
 
-// RecordPermitAccess emits cross-session access telemetry asynchronously.
-// Fail-open semantics: tracker errors and panics are intentionally ignored.
-func (m *Metrics) RecordPermitAccess(evt AccessEvent) {
+// RecordPermitAccess emits cross-session access telemetry synchronously.
+// Any tracker error or panic is surfaced to the caller.
+func (m *Metrics) RecordPermitAccess(evt AccessEvent) (err error) {
 	m.hooksMu.RLock()
 	t := m.crossSessionTracker
 	m.hooksMu.RUnlock()
 	if t == nil {
-		return
+		return nil
 	}
-	go func() {
-		defer func() { _ = recover() }()
-		_ = t.RecordAccess(evt)
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("cross-session tracker panic: %v", r)
+		}
 	}()
+	if err := t.RecordAccess(evt); err != nil {
+		return err
+	}
+	return nil
 }
 
-// ObserveRule emits per-rule observations asynchronously.
-// Fail-open semantics: observer errors and panics are intentionally ignored.
-func (m *Metrics) ObserveRule(obs RuleObservation) {
+// ObserveRule emits per-rule observations synchronously.
+// Any observer error or panic is surfaced to the caller.
+func (m *Metrics) ObserveRule(obs RuleObservation) (err error) {
 	m.hooksMu.RLock()
 	p := m.pieAnalyzer
 	m.hooksMu.RUnlock()
 	if p == nil {
-		return
+		return nil
 	}
-	go func() {
-		defer func() { _ = recover() }()
-		_ = p.ObserveRule(obs)
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("rule observer panic: %v", r)
+		}
 	}()
+	if err := p.ObserveRule(obs); err != nil {
+		return err
+	}
+	return nil
 }
 
 // SetActiveSessions sets the active sessions gauge.

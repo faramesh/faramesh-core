@@ -127,7 +127,7 @@ func (f failingHooks) ObserveRule(observe.RuleObservation) error {
 	return fmt.Errorf("boom-rule")
 }
 
-func TestP5HooksFailOpenDoNotBreakDecisions(t *testing.T) {
+func TestP5HookFailuresDenyPermitPath(t *testing.T) {
 	p := buildP5HookPipeline(t)
 	observe.Default.SetCrossSessionTracker(failingHooks{})
 	observe.Default.SetPIEAnalyzer(failingHooks{})
@@ -144,9 +144,15 @@ func TestP5HooksFailOpenDoNotBreakDecisions(t *testing.T) {
 		Args:      map[string]any{},
 		Timestamp: time.Now(),
 	})
-	if permit.Effect != EffectPermit {
-		t.Fatalf("permit decision should remain unchanged, got %s (%s)", permit.Effect, permit.Reason)
+	if permit.Effect != EffectDeny {
+		t.Fatalf("permit decision must fail-closed on telemetry hook error, got %s (%s)", permit.Effect, permit.Reason)
 	}
+	if permit.ReasonCode != "TELEMETRY_HOOK_ERROR" {
+		t.Fatalf("expected reason code TELEMETRY_HOOK_ERROR, got %q", permit.ReasonCode)
+	}
+
+	// Existing DENY outcomes remain DENY; strict lifecycle hooks are only gating
+	// execution-allowing outcomes.
 
 	deny := p.Evaluate(CanonicalActionRequest{
 		CallID:    "p5-fail-open-deny",

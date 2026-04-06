@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"sync"
@@ -48,6 +50,7 @@ type CallbackRegistration struct {
 // OnDecisionPayload is emitted from pipeline decision lifecycle.
 type OnDecisionPayload struct {
 	AgentID    string `json:"agent_id"`
+	SessionID  string `json:"session_id,omitempty"`
 	ToolID     string `json:"tool_id"`
 	Effect     string `json:"effect"`
 	RuleID     string `json:"rule_id,omitempty"`
@@ -57,7 +60,7 @@ type OnDecisionPayload struct {
 
 // Dispatcher defines callback dispatch points used by runtime pipeline code.
 type Dispatcher interface {
-	FireOnDecision(OnDecisionPayload)
+	FireOnDecision(OnDecisionPayload) error
 }
 
 type endpointConfig struct {
@@ -176,19 +179,18 @@ func (cm *CallbackManager) Stop() {
 	// Workers will exit when queue is closed.
 }
 
-// Fire dispatches an event to all registered callbacks (async via worker pool).
-func (cm *CallbackManager) Fire(event DecisionContext) {
+// Fire dispatches an event to all registered callbacks synchronously.
+func (cm *CallbackManager) Fire(event DecisionContext) error {
 	cm.mu.RLock()
-	regs := cm.callbacks[event.EventType]
+	regs := append([]CallbackRegistration(nil), cm.callbacks[event.EventType]...)
 	cm.mu.RUnlock()
 
 	for _, reg := range regs {
-		select {
-		case cm.queue <- callbackJob{reg: reg, event: event}:
-		default:
-			// Queue full, drop event. In production, would record dropped callbacks.
+		if err := runCallbackWithTimeout(reg, event, 5*time.Second); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
 func (cm *CallbackManager) worker() {
@@ -226,32 +228,73 @@ func (cm *CallbackManager) httpWorker() {
 	}
 }
 
-// FireOnDecision dispatches decision lifecycle callbacks asynchronously.
-func (cm *CallbackManager) FireOnDecision(payload OnDecisionPayload) {
+// FireOnDecision dispatches decision lifecycle callbacks synchronously.
+// Any dispatch failure is returned so callers can fail-closed.
+func (cm *CallbackManager) FireOnDecision(payload OnDecisionPayload) error {
 	if cm == nil {
-		return
+		return nil
 	}
 	event := DecisionContext{
 		EventType:   EventDecision,
 		Timestamp:   time.Now().UTC(),
 		AgentID:     payload.AgentID,
+		SessionID:   payload.SessionID,
 		ToolID:      payload.ToolID,
 		Effect:      payload.Effect,
 		ReasonCode:  payload.ReasonCode,
 		DPRRecordID: payload.RecordID,
 	}
-	cm.Fire(event)
-	if cm.onDecision.URL == "" {
-		return
+	if err := cm.Fire(event); err != nil {
+		return err
 	}
+	if cm.onDecision.URL == "" {
+		return nil
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal on_decision payload: %w", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, cm.onDecision.URL, bytes.NewReader(b))
+	if err != nil {
+		return fmt.Errorf("build on_decision callback request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := cm.client
+	if cm.onDecision.TimeoutMS > 0 {
+		client = &http.Client{Timeout: time.Duration(cm.onDecision.TimeoutMS) * time.Millisecond}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("dispatch on_decision callback: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("on_decision callback returned status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+func runCallbackWithTimeout(reg CallbackRegistration, event DecisionContext, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errCh <- fmt.Errorf("callback %q panicked: %v", reg.ID, r)
+			}
+		}()
+		reg.Callback(ctx, event)
+		errCh <- nil
+	}()
+
 	select {
-	case cm.httpJobs <- httpJob{
-		url:       cm.onDecision.URL,
-		timeoutMS: cm.onDecision.TimeoutMS,
-		payload:   payload,
-	}:
-	default:
-		// Queue full is fail-open by design.
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		return fmt.Errorf("callback %q timed out", reg.ID)
 	}
 }
 

@@ -151,7 +151,7 @@ func (r *Record) CanonicalBytes() []byte {
 		WorkflowPhase:      r.WorkflowPhase,
 		CredentialBrokered: r.CredentialBrokered,
 		DegradedMode:       r.DegradedMode,
-		CreatedAt:          r.CreatedAt,
+		CreatedAt:          r.CreatedAt.UTC(),
 	})
 	return b
 }
