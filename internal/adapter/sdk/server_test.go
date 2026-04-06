@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/principal"
+	"github.com/faramesh/faramesh-core/internal/core/reasons"
 )
 
 func TestCallbackSubscribeDecisionEventFires(t *testing.T) {
@@ -508,6 +510,72 @@ func TestGovernJSONRPCCompatibility(t *testing.T) {
 	}
 	if got := asString(result["effect"]); got == "" {
 		t.Fatalf("missing result.effect: %#v", result)
+	}
+}
+
+func TestGovernBurstRateLimitedByAgentID(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	limited := 0
+	governed := 0
+
+	for i := 0; i < 160; i++ {
+		writeLine(t, client.conn, fmt.Sprintf(`{"type":"govern","call_id":"c-burst-%d","agent_id":"burst-agent","session_id":"s-burst","tool_id":"tool.echo","args":{"n":%d}}`, i, i))
+		resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+
+		if got := asString(resp["error"]); got == "rate_limited" {
+			limited++
+			if rc := asString(resp["reason_code"]); rc != reasons.SessionRollingLimit {
+				t.Fatalf("rate_limited reason_code=%q want %q", rc, reasons.SessionRollingLimit)
+			}
+			continue
+		}
+
+		if effect := asString(resp["effect"]); effect == "" {
+			t.Fatalf("expected govern response effect or rate_limited error, got %#v", resp)
+		}
+		governed++
+	}
+
+	if governed == 0 {
+		t.Fatalf("expected at least one governed decision before saturation")
+	}
+	if limited == 0 {
+		t.Fatalf("expected burst saturation to trigger rate_limited responses")
+	}
+}
+
+func TestGovernRateLimitIsolatedByAgentID(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	limited := false
+	for i := 0; i < 180; i++ {
+		writeLine(t, client.conn, fmt.Sprintf(`{"type":"govern","call_id":"c-agent-a-%d","agent_id":"agent-a","session_id":"s-rate","tool_id":"tool.echo","args":{"n":%d}}`, i, i))
+		resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+		if got := asString(resp["error"]); got == "rate_limited" {
+			limited = true
+			if rc := asString(resp["reason_code"]); rc != reasons.SessionRollingLimit {
+				t.Fatalf("agent-a rate_limited reason_code=%q want %q", rc, reasons.SessionRollingLimit)
+			}
+			break
+		}
+	}
+	if !limited {
+		t.Fatalf("expected agent-a burst to reach rate limit")
+	}
+
+	// A different agent ID must use an independent limiter bucket.
+	writeLine(t, client.conn, `{"type":"govern","call_id":"c-agent-b","agent_id":"agent-b","session_id":"s-rate","tool_id":"tool.echo","args":{"q":"fresh bucket"}}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["error"]); got == "rate_limited" {
+		t.Fatalf("unexpected cross-agent throttling: %#v", resp)
+	}
+	if effect := asString(resp["effect"]); effect == "" {
+		t.Fatalf("expected govern decision for agent-b, got %#v", resp)
 	}
 }
 

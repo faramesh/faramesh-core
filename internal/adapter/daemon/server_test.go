@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -393,6 +394,102 @@ func TestPushPolicyNoDowntimeDuringConcurrentGovern(t *testing.T) {
 	<-done
 	if failed.Load() != 0 {
 		t.Fatalf("govern path failed while policy push happened")
+	}
+}
+
+func TestWaitForApprovalTimeoutAllowsLateApprovalResolution(t *testing.T) {
+	wf := deferwork.NewWorkflow("")
+	pipeline := core.NewPipeline(core.Config{Defers: wf})
+	srv := NewServer(Config{Pipeline: pipeline})
+
+	const token = "tok-timeout-approve"
+	if _, err := wf.DeferWithToken(token, "agent-approve", "tool-approve", "needs review"); err != nil {
+		t.Fatalf("DeferWithToken() error = %v", err)
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	approved, err := srv.waitForApproval(timeoutCtx, token)
+	if err == nil {
+		t.Fatalf("expected timeout error while defer is pending")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v, want context deadline exceeded", err)
+	}
+	if approved {
+		t.Fatalf("approved = true, want false on timeout")
+	}
+
+	st, pending := wf.Status(token)
+	if st != deferwork.StatusPending || !pending {
+		t.Fatalf("status after timeout = (%q, %v), want (%q, true)", st, pending, deferwork.StatusPending)
+	}
+
+	if err := wf.Resolve(token, true, "late approval"); err != nil {
+		t.Fatalf("late Resolve() error = %v", err)
+	}
+
+	resumeCtx, resumeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer resumeCancel()
+	approved, err = srv.waitForApproval(resumeCtx, token)
+	if err != nil {
+		t.Fatalf("waitForApproval() after late approval error = %v", err)
+	}
+	if !approved {
+		t.Fatalf("approved = false, want true after late approval")
+	}
+
+	st, pending = wf.Status(token)
+	if st != deferwork.StatusApproved || pending {
+		t.Fatalf("final status = (%q, %v), want (%q, false)", st, pending, deferwork.StatusApproved)
+	}
+}
+
+func TestWaitForApprovalTimeoutAllowsLateDenialResolution(t *testing.T) {
+	wf := deferwork.NewWorkflow("")
+	pipeline := core.NewPipeline(core.Config{Defers: wf})
+	srv := NewServer(Config{Pipeline: pipeline})
+
+	const token = "tok-timeout-deny"
+	if _, err := wf.DeferWithToken(token, "agent-deny", "tool-deny", "needs review"); err != nil {
+		t.Fatalf("DeferWithToken() error = %v", err)
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	approved, err := srv.waitForApproval(timeoutCtx, token)
+	if err == nil {
+		t.Fatalf("expected timeout error while defer is pending")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v, want context deadline exceeded", err)
+	}
+	if approved {
+		t.Fatalf("approved = true, want false on timeout")
+	}
+
+	st, pending := wf.Status(token)
+	if st != deferwork.StatusPending || !pending {
+		t.Fatalf("status after timeout = (%q, %v), want (%q, true)", st, pending, deferwork.StatusPending)
+	}
+
+	if err := wf.Resolve(token, false, "late denial"); err != nil {
+		t.Fatalf("late Resolve() error = %v", err)
+	}
+
+	resumeCtx, resumeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer resumeCancel()
+	approved, err = srv.waitForApproval(resumeCtx, token)
+	if err != nil {
+		t.Fatalf("waitForApproval() after late denial error = %v", err)
+	}
+	if approved {
+		t.Fatalf("approved = true, want false after late denial")
+	}
+
+	st, pending = wf.Status(token)
+	if st != deferwork.StatusDenied || pending {
+		t.Fatalf("final status = (%q, %v), want (%q, false)", st, pending, deferwork.StatusDenied)
 	}
 }
 

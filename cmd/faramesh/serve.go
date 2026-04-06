@@ -26,7 +26,7 @@ and SQLite DPR store, and starts accepting connections.
 To stream DPR records to Faramesh Horizon, authenticate first:
 
   faramesh auth login
-  faramesh serve --policy policy.yaml --sync-horizon`,
+  faramesh serve --policy policy.fpl --sync-horizon`,
 	RunE: runServe,
 }
 
@@ -78,7 +78,7 @@ var (
 )
 
 func init() {
-	serveCmd.Flags().StringVar(&servePolicy, "policy", "policy.yaml", "path to the policy YAML file")
+	serveCmd.Flags().StringVar(&servePolicy, "policy", "policy.fpl", "path to policy file (.fpl or .yaml)")
 	serveCmd.Flags().StringVar(&servePolicyURL, "policy-url", "", "HTTP/HTTPS URL for policy YAML (mutually exclusive with --policy)")
 	serveCmd.Flags().DurationVar(&servePolicyPollInterval, "policy-poll-interval", 30*time.Second, "poll interval for --policy-url hot reload checks")
 	serveCmd.MarkFlagsMutuallyExclusive("policy", "policy-url")
@@ -118,7 +118,7 @@ func init() {
 	serveCmd.Flags().StringVar(&serveAzureClientID, "azure-client-id", "", "Azure AD client ID for Key Vault auth")
 	serveCmd.Flags().StringVar(&serveAzureClientSecret, "azure-client-secret", "", "Azure AD client secret for Key Vault auth")
 	serveCmd.Flags().BoolVar(&serveStrictPreflight, "strict-preflight", false, "enforce mandatory startup preflight gates (identity, provenance, credential sequestration, defer/idp requirements, integrity manifest/buildinfo, sbom generation)")
-	serveCmd.Flags().StringVar(&serveIDPProvider, "idp-provider", "", "identity provider used for principal verification preflight (default|local|okta|azure_ad|auth0|google|ldap)")
+	serveCmd.Flags().StringVar(&serveIDPProvider, "idp-provider", "", "identity provider used for principal verification preflight (default=ephemeral|local|okta|azure_ad|auth0|google|ldap)")
 	serveCmd.Flags().StringVar(&serveIntegrityManifest, "integrity-manifest", "", "artifact manifest JSON required for strict preflight integrity checks")
 	serveCmd.Flags().StringVar(&serveIntegrityBaseDir, "integrity-base-dir", ".", "base directory used to verify paths in --integrity-manifest")
 	serveCmd.Flags().StringVar(&serveBuildinfoExpected, "buildinfo-expected", "", "expected buildinfo JSON fingerprint required for strict preflight integrity checks")

@@ -11,6 +11,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
+	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 	"github.com/faramesh/faramesh-core/internal/core/runtimeenv"
 	"github.com/faramesh/faramesh-core/internal/core/sandbox"
 )
@@ -33,21 +34,22 @@ Enforcement layers activated automatically when available:
 Usage:
   faramesh run --json                       # print detection only
   faramesh run -- python agent.py           # govern + exec
-  faramesh run --policy p.yaml -- python a.py  # with explicit policy
+	faramesh run --policy p.fpl -- python a.py   # with explicit policy
   faramesh run --enforce full -- python a.py   # all layers`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runRunE,
 }
 
 var (
-	runJSON     bool
-	runPolicy   string
-	runEnforce  string
-	runBrokerOn bool
-	runNoSeccomp bool
+	runJSON       bool
+	runPolicy     string
+	runEnforce    string
+	runBrokerOn   bool
+	runAgentID    string
+	runNoSeccomp  bool
 	runNoLandlock bool
-	runNoNetns   bool
-	runWorkspace string
+	runNoNetns    bool
+	runWorkspace  string
 )
 
 func init() {
@@ -55,6 +57,7 @@ func init() {
 	runCmd.Flags().StringVar(&runPolicy, "policy", "", "policy path (set FARAMESH_POLICY_PATH)")
 	runCmd.Flags().StringVar(&runEnforce, "enforce", "auto", "enforcement level: auto|full|minimal|none")
 	runCmd.Flags().BoolVar(&runBrokerOn, "broker", false, "enable credential broker (strip ambient API keys)")
+	runCmd.Flags().StringVar(&runAgentID, "agent-id", "", "agent identity injected as FARAMESH_AGENT_ID (default: inferred from command)")
 	runCmd.Flags().BoolVar(&runNoSeccomp, "no-seccomp", false, "skip seccomp-BPF installation")
 	runCmd.Flags().BoolVar(&runNoLandlock, "no-landlock", false, "skip Landlock filesystem restrictions")
 	runCmd.Flags().BoolVar(&runNoNetns, "no-netns", false, "skip network namespace isolation")
@@ -103,6 +106,7 @@ func runRunE(_ *cobra.Command, args []string) error {
 	env := buildRunEnv(det, policyPath)
 
 	report := &enforcementReport{}
+	env = applyRunRuntimeWiring(env, det, cwd, args, report)
 
 	if shouldEnforce(runEnforce) {
 		env = applyEnforcementStack(det, env, cwd, args, report)
@@ -114,19 +118,142 @@ func runRunE(_ *cobra.Command, args []string) error {
 }
 
 type enforcementReport struct {
-	autoload       bool
+	autoload                bool
+	childSocket             string
+	childAgentID            string
 	pythonAutoloadAttempted bool
-	pythonAutoloadPath string
-	credentialStrip []string
-	seccomp        bool
-	seccompErr     error
-	landlock       bool
-	landlockErr    error
-	netns          bool
-	netnsErr       error
-	proxyEnv       bool
-	proxyEnvMethod string
-	trustLevel     string
+	pythonAutoloadPath      string
+	credentialStrip         []string
+	seccomp                 bool
+	seccompErr              error
+	landlock                bool
+	landlockErr             error
+	netns                   bool
+	netnsErr                error
+	proxyEnv                bool
+	proxyEnvMethod          string
+	trustLevel              string
+}
+
+func applyRunRuntimeWiring(env []string, det *runtimeenv.DetectedEnvironment, cwd string, childArgs []string, r *enforcementReport) []string {
+	socketPath := resolveChildSocket(env)
+	if socketPath != "" {
+		env = mergeEnv(env, []string{"FARAMESH_SOCKET=" + socketPath})
+		r.childSocket = socketPath
+	}
+
+	agentID := resolveChildAgentID(env, runAgentID, det, cwd, childArgs)
+	if agentID != "" {
+		env = mergeEnv(env, []string{"FARAMESH_AGENT_ID=" + agentID})
+		r.childAgentID = agentID
+	}
+
+	return env
+}
+
+func resolveChildSocket(env []string) string {
+	envSocket := strings.TrimSpace(envValue(env, "FARAMESH_SOCKET"))
+	if envSocket != "" {
+		if f := rootCmd.PersistentFlags().Lookup("daemon-socket"); f == nil || !f.Changed {
+			return envSocket
+		}
+	}
+
+	if socket := strings.TrimSpace(daemonSocket); socket != "" {
+		return socket
+	}
+	if envSocket != "" {
+		return envSocket
+	}
+	return sdk.SocketPath
+}
+
+func resolveChildAgentID(env []string, explicit string, det *runtimeenv.DetectedEnvironment, cwd string, childArgs []string) string {
+	if id := sanitizeAgentID(explicit); id != "" {
+		return id
+	}
+	if id := strings.TrimSpace(envValue(env, "FARAMESH_AGENT_ID")); id != "" {
+		return id
+	}
+	id := inferAgentID(det, cwd, childArgs)
+	if id == "" {
+		return "agent"
+	}
+	return id
+}
+
+func inferAgentID(det *runtimeenv.DetectedEnvironment, cwd string, childArgs []string) string {
+	candidates := make([]string, 0, 6)
+	if det != nil {
+		candidates = append(candidates, det.AgentHarness)
+	}
+
+	for i, arg := range childArgs {
+		trimmed := strings.TrimSpace(arg)
+		if trimmed == "" {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		if trimmed == "-m" && i+1 < len(childArgs) {
+			candidates = append(candidates, childArgs[i+1])
+			continue
+		}
+		if strings.HasSuffix(lower, ".py") {
+			base := filepath.Base(trimmed)
+			candidates = append(candidates, strings.TrimSuffix(base, filepath.Ext(base)))
+		}
+	}
+
+	if len(childArgs) > 0 {
+		exe := strings.TrimSpace(filepath.Base(childArgs[0]))
+		if exe != "" && !strings.Contains(strings.ToLower(exe), "python") {
+			candidates = append(candidates, strings.TrimSuffix(exe, filepath.Ext(exe)))
+		}
+	}
+
+	candidates = append(candidates, filepath.Base(cwd))
+	for _, candidate := range candidates {
+		if id := sanitizeAgentID(candidate); id != "" {
+			return id
+		}
+	}
+
+	return "agent"
+}
+
+func sanitizeAgentID(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.Grow(len(raw))
+	lastDash := false
+	for _, r := range raw {
+		keep := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
+		if keep {
+			if r == '-' {
+				if lastDash {
+					continue
+				}
+				lastDash = true
+			} else {
+				lastDash = false
+			}
+			b.WriteRune(r)
+			continue
+		}
+		if !lastDash {
+			b.WriteRune('-')
+			lastDash = true
+		}
+	}
+	clean := strings.Trim(b.String(), "-._")
+	if clean == "" {
+		return ""
+	}
+	return clean
 }
 
 func shouldEnforce(level string) bool {
@@ -238,10 +365,14 @@ func applyEnforcementStack(det *runtimeenv.DetectedEnvironment, env []string, cw
 func stripAmbientCredentials(env []string) ([]string, []string) {
 	ambientKeys := []string{
 		"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY",
+		"OPENROUTER_API_KEY", "MISTRAL_API_KEY", "COHERE_API_KEY", "PERPLEXITY_API_KEY",
+		"LANGSMITH_API_KEY", "HUGGINGFACEHUB_API_TOKEN", "HF_TOKEN",
 		"STRIPE_API_KEY", "STRIPE_SECRET_KEY",
+		"FARAMESH_STRIPE_SECRET_KEY",
 		"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
 		"GITHUB_TOKEN", "GH_TOKEN",
 		"SLACK_TOKEN", "SLACK_BOT_TOKEN",
+		"TWILIO_ACCOUNT_SID",
 		"TWILIO_AUTH_TOKEN", "SENDGRID_API_KEY",
 		"DATABASE_URL", "REDIS_URL",
 		"OPENCLAW_OPENAI_KEY", "OPENCLAW_ANTHROPIC_KEY",
@@ -294,6 +425,13 @@ func printEnforcementReport(det *runtimeenv.DetectedEnvironment, r *enforcementR
 		} else {
 			red.Fprintf(os.Stderr, "  ✗ %s (skipped)\n", name)
 		}
+	}
+
+	if r.childSocket != "" {
+		green.Fprintf(os.Stderr, "  ✓ Daemon socket wiring (FARAMESH_SOCKET=%s)\n", r.childSocket)
+	}
+	if r.childAgentID != "" {
+		green.Fprintf(os.Stderr, "  ✓ Agent identity wiring (FARAMESH_AGENT_ID=%s)\n", r.childAgentID)
 	}
 
 	check("Framework auto-patch (FARAMESH_AUTOLOAD)", r.autoload, nil)
