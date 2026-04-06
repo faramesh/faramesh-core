@@ -6,7 +6,8 @@ patches the single dispatch choke point in detected AI frameworks
 so every tool call flows through Faramesh governance.
 
 Supported frameworks and their patch points:
-  - LangChain/LangGraph:      BaseTool.run / BaseTool.arun
+    - LangChain/LangGraph:      BaseTool.run/arun/invoke/ainvoke +
+                                ToolNode._execute_tool_sync/_execute_tool_async
   - CrewAI:                   BaseTool._run
   - AutoGen/AG2:              ConversableAgent._execute_tool_call
   - OpenAI Agents SDK:        FunctionTool.on_invoke_tool
@@ -38,6 +39,21 @@ logger = logging.getLogger("faramesh.autopatch")
 
 _installed = False
 _patched_frameworks: list[str] = []
+
+
+def _normalize_effect(effect: Any) -> str:
+    """Normalize governance effect strings to PERMIT|DENY|DEFER.
+
+    Unknown or malformed effects are treated as fail-closed errors.
+    """
+    value = str(effect or "").strip().upper()
+    if value in ("PERMIT", "ALLOW", "EXECUTE"):
+        return "PERMIT"
+    if value in ("DENY", "HALT", "BLOCK"):
+        return "DENY"
+    if value in ("DEFER", "ABSTAIN", "PENDING"):
+        return "DEFER"
+    raise RuntimeError(f"Faramesh governance returned unknown effect: {effect!r}")
 
 
 def install() -> list[str]:
@@ -81,17 +97,16 @@ def _govern_call(tool_id: str, args: dict[str, Any]) -> dict[str, Any]:
         operation = parts[1] if len(parts) > 1 else "invoke"
 
         decision = gate_decide(agent_id, tool, operation, args)
-        outcome = (decision.outcome or "").upper()
-        if outcome in ("EXECUTE", "PERMIT"):
-            return {"effect": "PERMIT"}
-        if outcome in ("HALT", "DENY"):
-            return {"effect": "DENY", "reason_code": decision.reason_code}
-        if outcome in ("ABSTAIN", "DEFER", "PENDING"):
-            return {"effect": "DEFER", "defer_token": getattr(decision, "provenance_id", "")}
-        return {"effect": "PERMIT"}
-    except ImportError:
-        logger.warning("faramesh SDK not available; auto-patch pass-through")
-        return {"effect": "PERMIT"}
+        effect = _normalize_effect(getattr(decision, "outcome", ""))
+        out: dict[str, Any] = {"effect": effect}
+        if effect == "DENY":
+            out["reason_code"] = getattr(decision, "reason_code", "")
+        if effect == "DEFER":
+            out["defer_token"] = getattr(decision, "provenance_id", "")
+        return out
+    except ImportError as exc:
+        logger.error("faramesh SDK not available; fail-closed: %s", exc)
+        raise RuntimeError("Faramesh governance denied: SDK unavailable") from exc
     except Exception as exc:
         logger.error("faramesh govern error (fail-closed): %s", exc)
         raise RuntimeError(f"Faramesh governance denied: {exc}") from exc
@@ -135,9 +150,26 @@ def _govern_via_socket(socket_path: str, tool_id: str, args: dict[str, Any]) -> 
                 break
         sock.close()
 
+        if not resp_data.strip():
+            raise RuntimeError("empty response from Faramesh daemon")
+
         resp = json.loads(resp_data.strip())
-        result = resp.get("result", {})
-        effect = result.get("effect", "PERMIT").upper()
+        if not isinstance(resp, dict):
+            raise RuntimeError("invalid JSON-RPC response shape")
+
+        rpc_err = resp.get("error")
+        if rpc_err:
+            if isinstance(rpc_err, dict):
+                code = rpc_err.get("code")
+                msg = rpc_err.get("message", "unknown daemon error")
+                raise RuntimeError(f"daemon error code={code}: {msg}")
+            raise RuntimeError(f"daemon error: {rpc_err}")
+
+        result = resp.get("result")
+        if not isinstance(result, dict):
+            raise RuntimeError("missing JSON-RPC result")
+
+        effect = _normalize_effect(result.get("effect", ""))
         return {
             "effect": effect,
             "reason_code": result.get("reason_code", ""),
@@ -161,7 +193,7 @@ def _wrap_method(cls: type, method_name: str, framework: str, tool_id_fn: Callab
         tid = tool_id_fn(self, args, kwargs)
         call_args = _json_safe(_extract_args(args, kwargs))
         result = _govern_call(tid, call_args)
-        effect = result.get("effect", "PERMIT")
+        effect = _normalize_effect(result.get("effect", ""))
         if effect == "DENY":
             reason = result.get("reason_code", "POLICY_DENY")
             raise RuntimeError(f"Faramesh DENY: {reason} (tool={tid})")
@@ -221,17 +253,15 @@ def _json_safe(value: Any) -> Any:
 # --- Framework-specific patchers ---
 
 def _patch_langchain() -> bool:
-    """Patch LangChain BaseTool.run and arun."""
-    try:
-        mod = importlib.import_module("langchain_core.tools")
-    except ImportError:
-        mod = importlib.import_module("langchain.tools")
+    """Patch LangChain/LangGraph dispatch using the dedicated adapter.
 
-    cls = getattr(mod, "BaseTool")
-    tool_id = lambda self, a, kw: getattr(self, "name", type(self).__name__)
-    ok1 = _wrap_method(cls, "run", "langchain", tool_id)
-    ok2 = _wrap_method(cls, "arun", "langchain", tool_id)
-    return ok1 or ok2
+    This keeps auto-patch behavior aligned with the explicit adapter path,
+    including LangGraph execute-layer interception and idempotency guards.
+    """
+    from faramesh.adapters.langchain import install_langchain_interceptor
+
+    patched = install_langchain_interceptor(include_langgraph=True, fail_open=False)
+    return bool(patched.get("langchain") or patched.get("langgraph"))
 
 
 def _patch_crewai() -> bool:

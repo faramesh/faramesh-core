@@ -144,10 +144,10 @@ def govern_agentcore_tool(
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        from faramesh.autopatch import _govern_call
+        from faramesh.autopatch import _govern_call, _normalize_effect
 
         result = _govern_call(tool_id, dict(kwargs))
-        effect = result.get("effect", "PERMIT")
+        effect = _normalize_effect(result.get("effect", ""))
         if effect == "DENY":
             reason = result.get("reason_code", "POLICY_DENY")
             raise RuntimeError(f"Faramesh DENY: {reason} (tool={tool_id})")
