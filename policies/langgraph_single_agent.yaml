@@ -1,13 +1,8 @@
 faramesh-version: "1.0"
-agent-id: "langchain-single"
+agent-id: "langgraph-single"
 default_effect: deny
 
 tools:
-  vault/probe:
-    tags:
-      - "credential:required"
-      - "credential:broker"
-      - "credential:scope:payments"
   vault/probe/_execute_tool_sync:
     tags:
       - "credential:required"
@@ -28,9 +23,6 @@ tools:
       - "credential:required"
       - "credential:broker"
       - "credential:scope:payments"
-  payment/refund:
-    tags:
-      - "risk:high"
   payment/refund/_execute_tool_sync:
     tags:
       - "risk:high"
@@ -45,38 +37,38 @@ tools:
       - "risk:high"
 
 rules:
-  - id: permit-http
+  - id: permit-http-base
     match:
       tool: "http/get"
       when: "true"
     effect: permit
 
-  - id: permit-http-suffixed
+  - id: permit-http
     match:
       tool: "http/get/*"
       when: "true"
     effect: permit
 
-  - id: permit-vault-probe
+  - id: permit-vault-probe-base
     match:
       tool: "vault/probe"
       when: "true"
     effect: permit
 
-  - id: permit-vault-probe-suffixed
+  - id: permit-vault-probe
     match:
       tool: "vault/probe/*"
       when: "true"
     effect: permit
 
-  - id: defer-payment-refund
+  - id: defer-payment-refund-base
     match:
       tool: "payment/refund"
       when: "true"
     effect: defer
     reason: "refund requires operator approval"
 
-  - id: defer-payment-refund-suffixed
+  - id: defer-payment-refund
     match:
       tool: "payment/refund/*"
       when: "true"
@@ -84,12 +76,6 @@ rules:
     reason: "refund requires operator approval"
 
   - id: idp-principal-probe
-    match:
-      tool: "idp/probe"
-      when: "principal.verified == true"
-    effect: permit
-
-  - id: idp-principal-probe-suffixed
     match:
       tool: "idp/probe/*"
       when: "principal.verified == true"

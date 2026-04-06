@@ -1,0 +1,69 @@
+agent stripe-interactive {
+  default deny
+
+  # Stripe tool calls require brokered secrets from Vault.
+  credential stripe_secret {
+    scope stripe_create_customer stripe_create_customer/* stripe_search_customer stripe_search_customer/* stripe_create_payment_intent stripe_create_payment_intent/* stripe_get_object stripe_get_object/* stripe_refund stripe_refund/* stripe_list_recent_events stripe_list_recent_events/* stripe_connect_create_account stripe_connect_create_account/* stripe_allowlist_destination stripe_allowlist_destination/* stripe_create_invoice stripe_create_invoice/* stripe_transfer_test stripe_transfer_test/* stripe_list_transfers stripe_list_transfers/* stripe_list_refunds stripe_list_refunds/* stripe_get_balance stripe_get_balance/*
+    backend vault
+    max_scope stripe
+  }
+
+  # Optional outbound API tool credential routing (for penrouter and similar HTTP calls).
+  credential penrouter_secret {
+    scope make_web_request make_web_request/*
+    backend vault
+    max_scope penrouter
+  }
+
+  rules {
+    # Read and low-risk Stripe operations.
+    permit stripe_get_object
+    permit stripe_get_object/*
+    permit stripe_list_recent_events
+    permit stripe_list_recent_events/*
+    permit stripe_search_customer
+    permit stripe_search_customer/*
+    permit stripe_list_transfers
+    permit stripe_list_transfers/*
+    permit stripe_list_refunds
+    permit stripe_list_refunds/*
+    permit stripe_get_balance
+    permit stripe_get_balance/*
+
+    # Medium-risk operations requiring human approval.
+    defer stripe_create_customer reason: "customer creation requires operator approval"
+    defer stripe_create_customer/* reason: "customer creation requires operator approval"
+    defer stripe_create_payment_intent reason: "payment intent requires operator approval"
+    defer stripe_create_payment_intent/* reason: "payment intent requires operator approval"
+    defer stripe_connect_create_account reason: "connect account creation requires operator approval"
+    defer stripe_connect_create_account/* reason: "connect account creation requires operator approval"
+    defer stripe_allowlist_destination reason: "destination allowlist requires operator approval"
+    defer stripe_allowlist_destination/* reason: "destination allowlist requires operator approval"
+    defer stripe_create_invoice reason: "invoice creation requires operator approval"
+    defer stripe_create_invoice/* reason: "invoice creation requires operator approval"
+
+    # Money movement is always defer-gated.
+    defer stripe_refund reason: "refund requires explicit operator approval"
+    defer stripe_refund/* reason: "refund requires explicit operator approval"
+    defer stripe_transfer_test reason: "transfer requires explicit operator approval"
+    defer stripe_transfer_test/* reason: "transfer requires explicit operator approval"
+
+    # Non-stripe helper operations.
+    permit web_fetch
+    permit web_fetch/*
+    permit query_database
+    permit query_database/*
+    permit make_web_request
+    permit make_web_request/*
+
+    # Explicitly blocked actions.
+    deny run_shell_command reason: "shell execution is blocked in production"
+    deny run_shell_command/* reason: "shell execution is blocked in production"
+    deny install_package reason: "package installation is blocked in production"
+    deny install_package/* reason: "package installation is blocked in production"
+    deny create_files reason: "filesystem mutation tool is blocked in production"
+    deny create_files/* reason: "filesystem mutation tool is blocked in production"
+    deny search_google reason: "browser automation is blocked in production"
+    deny search_google/* reason: "browser automation is blocked in production"
+  }
+}

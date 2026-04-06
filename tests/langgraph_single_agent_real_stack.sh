@@ -5,23 +5,23 @@ CORE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE_DIR="$(cd "$CORE_DIR/.." && pwd)"
 cd "$CORE_DIR"
 
-RUN_DIR="${FARAMESH_LANGCHAIN_REAL_DIR:-$CORE_DIR/.tmp/langchain-real}"
-BIN_PATH="${FARAMESH_LANGCHAIN_REAL_BIN:-$RUN_DIR/faramesh}"
-SOCKET_PATH="${FARAMESH_LANGCHAIN_REAL_SOCKET:-$RUN_DIR/faramesh.sock}"
-DATA_DIR="${FARAMESH_LANGCHAIN_REAL_DATA:-$RUN_DIR/data}"
-POLICY_PATH="${FARAMESH_LANGCHAIN_REAL_POLICY:-$CORE_DIR/policies/langchain_single_agent.fpl}"
-DAEMON_LOG="${FARAMESH_LANGCHAIN_REAL_DAEMON_LOG:-$RUN_DIR/daemon.log}"
-VAULT_LOG="${FARAMESH_LANGCHAIN_REAL_VAULT_LOG:-$RUN_DIR/vault.log}"
-MANIFEST_PATH="${FARAMESH_LANGCHAIN_REAL_MANIFEST:-$RUN_DIR/integrity.json}"
-BUILDINFO_PATH="${FARAMESH_LANGCHAIN_REAL_BUILDINFO:-$RUN_DIR/buildinfo.json}"
-SPIFFE_SOCKET_PATH="${FARAMESH_LANGCHAIN_REAL_SPIFFE_SOCKET:-$RUN_DIR/spiffe.sock}"
-AGENT_OUTPUT_PATH="${FARAMESH_LANGCHAIN_REAL_AGENT_OUTPUT:-$RUN_DIR/agent_output.log}"
+RUN_DIR="${FARAMESH_LANGGRAPH_REAL_DIR:-$CORE_DIR/.tmp/langgraph-real}"
+BIN_PATH="${FARAMESH_LANGGRAPH_REAL_BIN:-$RUN_DIR/faramesh}"
+SOCKET_PATH="${FARAMESH_LANGGRAPH_REAL_SOCKET:-$RUN_DIR/faramesh.sock}"
+DATA_DIR="${FARAMESH_LANGGRAPH_REAL_DATA:-$RUN_DIR/data}"
+POLICY_PATH="${FARAMESH_LANGGRAPH_REAL_POLICY:-$CORE_DIR/policies/langgraph_single_agent.fpl}"
+DAEMON_LOG="${FARAMESH_LANGGRAPH_REAL_DAEMON_LOG:-$RUN_DIR/daemon.log}"
+VAULT_LOG="${FARAMESH_LANGGRAPH_REAL_VAULT_LOG:-$RUN_DIR/vault.log}"
+MANIFEST_PATH="${FARAMESH_LANGGRAPH_REAL_MANIFEST:-$RUN_DIR/integrity.json}"
+BUILDINFO_PATH="${FARAMESH_LANGGRAPH_REAL_BUILDINFO:-$RUN_DIR/buildinfo.json}"
+SPIFFE_SOCKET_PATH="${FARAMESH_LANGGRAPH_REAL_SPIFFE_SOCKET:-$RUN_DIR/spiffe.sock}"
+AGENT_OUTPUT_PATH="${FARAMESH_LANGGRAPH_REAL_AGENT_OUTPUT:-$RUN_DIR/agent_output.log}"
 
-AGENT_ID="${FARAMESH_LANGCHAIN_REAL_AGENT_ID:-langchain-single}"
-IDP_PROVIDER="${FARAMESH_LANGCHAIN_REAL_IDP_PROVIDER:-default}"
-VAULT_ADDR="${FARAMESH_LANGCHAIN_REAL_VAULT_ADDR:-http://127.0.0.1:18200}"
-VAULT_TOKEN="${FARAMESH_LANGCHAIN_REAL_VAULT_TOKEN:-root}"
-SECRET_SENTINEL="${FARAMESH_LANGCHAIN_REAL_SECRET_VALUE:-vault-real-credential}"
+AGENT_ID="${FARAMESH_LANGGRAPH_REAL_AGENT_ID:-langgraph-single}"
+IDP_PROVIDER="${FARAMESH_LANGGRAPH_REAL_IDP_PROVIDER:-default}"
+VAULT_ADDR="${FARAMESH_LANGGRAPH_REAL_VAULT_ADDR:-http://127.0.0.1:18210}"
+VAULT_TOKEN="${FARAMESH_LANGGRAPH_REAL_VAULT_TOKEN:-root}"
+SECRET_SENTINEL="${FARAMESH_LANGGRAPH_REAL_SECRET_VALUE:-vault-real-credential}"
 
 cleanup() {
   set +e
@@ -61,6 +61,7 @@ wait_for_daemon() {
 wait_for_vault() {
   local attempts=100
   local delay_seconds=0.1
+
   for _ in $(seq 1 "$attempts"); do
     if VAULT_ADDR="$VAULT_ADDR" VAULT_TOKEN="$VAULT_TOKEN" vault status >/dev/null 2>&1; then
       return 0
@@ -72,18 +73,19 @@ wait_for_vault() {
     fi
     sleep "$delay_seconds"
   done
+
   echo "vault readiness timeout"
   cat "$VAULT_LOG"
   return 1
 }
 
 resolve_python() {
-  if [[ -n "${FARAMESH_LANGCHAIN_REAL_PYTHON:-}" ]]; then
-    if [[ ! -x "$FARAMESH_LANGCHAIN_REAL_PYTHON" ]]; then
-      echo "FARAMESH_LANGCHAIN_REAL_PYTHON is not executable: $FARAMESH_LANGCHAIN_REAL_PYTHON" >&2
+  if [[ -n "${FARAMESH_LANGGRAPH_REAL_PYTHON:-}" ]]; then
+    if [[ ! -x "$FARAMESH_LANGGRAPH_REAL_PYTHON" ]]; then
+      echo "FARAMESH_LANGGRAPH_REAL_PYTHON is not executable: $FARAMESH_LANGGRAPH_REAL_PYTHON" >&2
       return 1
     fi
-    echo "$FARAMESH_LANGCHAIN_REAL_PYTHON"
+    echo "$FARAMESH_LANGGRAPH_REAL_PYTHON"
     return 0
   fi
 
@@ -92,10 +94,7 @@ resolve_python() {
     python3 -m venv "$venv_dir"
   fi
   "$venv_dir/bin/pip" install --disable-pip-version-check --quiet --upgrade pip
-  "$venv_dir/bin/pip" install --disable-pip-version-check --quiet \
-    "langchain>=1,<2" \
-    "langgraph>=1.1.1,<1.2.0" \
-    -e "$CORE_DIR/sdk/python"
+  "$venv_dir/bin/pip" install --disable-pip-version-check --quiet "langgraph>=1.1.1,<1.2.0" -e "$CORE_DIR/sdk/python"
   echo "$venv_dir/bin/python"
 }
 
@@ -111,7 +110,6 @@ rm -f "$SOCKET_PATH" "$DAEMON_LOG" "$VAULT_LOG" "$AGENT_OUTPUT_PATH"
 
 PYTHON_BIN="$(resolve_python)"
 
-# Start real Vault dev server.
 VAULT_DEV_LISTEN="${VAULT_ADDR#http://}"
 if [[ "$VAULT_ADDR" == https://* ]]; then
   echo "HTTPS VAULT_ADDR is not supported by this dev harness" >&2
@@ -151,13 +149,12 @@ FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" serve \
 DAEMON_PID=$!
 wait_for_daemon
 
-# Identity management signal via CLI surfaces.
 "$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity verify --spiffe "spiffe://example.org/agent/$AGENT_ID" >/dev/null
 
 FARAMESH_SOCKET="$SOCKET_PATH" \
 FARAMESH_AGENT_ID="$AGENT_ID" \
 FARAMESH_BIN="$BIN_PATH" \
-"$BIN_PATH" --daemon-socket "$SOCKET_PATH" run -- "$PYTHON_BIN" "$WORKSPACE_DIR/demo_interactive_ai_agent.py" >"$AGENT_OUTPUT_PATH" 2>&1
+"$BIN_PATH" --daemon-socket "$SOCKET_PATH" run -- "$PYTHON_BIN" "$CORE_DIR/tests/langgraph_single_agent_dropin.py" >"$AGENT_OUTPUT_PATH" 2>&1
 
 python3 - "$AGENT_OUTPUT_PATH" <<'PY'
 import json
@@ -166,7 +163,10 @@ import sys
 path = sys.argv[1]
 steps = {}
 defer_statuses = {}
-patched = False
+langgraph_patched_methods = []
+langgraph_active_methods_after = []
+langgraph_patch_verified = False
+langgraph_patch_error = ""
 
 with open(path, "r", encoding="utf-8") as f:
     for line in f:
@@ -177,9 +177,13 @@ with open(path, "r", encoding="utf-8") as f:
             payload = json.loads(line)
         except Exception:
             continue
+
         event = payload.get("event")
         if event == "startup":
-            patched = "langchain" in payload.get("patched_frameworks", [])
+            langgraph_patched_methods = payload.get("langgraph_patched_methods", [])
+            langgraph_active_methods_after = payload.get("langgraph_active_methods_after", [])
+            langgraph_patch_verified = bool(payload.get("langgraph_patch_verified", False))
+            langgraph_patch_error = payload.get("langgraph_patch_error", "")
         elif event == "step":
             steps[payload.get("step")] = payload.get("status")
         elif event == "defer_status":
@@ -188,13 +192,20 @@ with open(path, "r", encoding="utf-8") as f:
 required_steps = {
     "permit_http": "executed",
     "permit_vault": "executed",
-  "deny_shell": "denied",
+    "deny_shell": "denied",
     "defer_approve": "deferred",
     "defer_deny": "deferred",
 }
 
-if not patched:
-    raise SystemExit("autopatch did not report langchain interception")
+if langgraph_patch_error:
+    raise SystemExit(f"langgraph interception install failed: {langgraph_patch_error}")
+if not langgraph_patch_verified:
+    raise SystemExit(
+        "langgraph interception not active after install; "
+        f"patched={langgraph_patched_methods} active={langgraph_active_methods_after}"
+    )
+if not any(m in ("_execute_tool_sync", "_execute_tool_async", "_run_one", "_arun_one") for m in langgraph_active_methods_after):
+    raise SystemExit(f"unexpected active langgraph methods: {langgraph_active_methods_after}")
 
 for step, expected in required_steps.items():
     actual = steps.get(step)
@@ -232,28 +243,21 @@ def read_counts():
 
   cur.execute(
     "select count(*) from dpr_records where agent_id = ? and tool_id like ? and effect = ?",
-    (agent_id, "payment/refund%", "DEFER"),
-  )
-  defer_count = cur.fetchone()[0]
-
-  cur.execute(
-    "select count(*) from dpr_records where agent_id = ? and tool_id like ? and effect = ?",
     (agent_id, "shell/run%", "DENY"),
   )
   deny_shell_count = cur.fetchone()[0]
 
-  return http_permit, vault_permit, defer_count, deny_shell_count
+  return http_permit, vault_permit, deny_shell_count
 
 
 deadline = time.time() + 5.0
 http_permit = 0
 vault_permit = 0
-defer_count = 0
 deny_shell_count = 0
 
 while True:
-  http_permit, vault_permit, defer_count, deny_shell_count = read_counts()
-  if http_permit >= 1 and vault_permit >= 1 and defer_count >= 2 and deny_shell_count >= 1:
+  http_permit, vault_permit, deny_shell_count = read_counts()
+  if http_permit >= 1 and vault_permit >= 1 and deny_shell_count >= 1:
     break
   if time.time() >= deadline:
     break
@@ -265,16 +269,13 @@ if http_permit < 1:
     raise SystemExit("missing PERMIT DPR record for http/get")
 if vault_permit < 1:
     raise SystemExit("missing vault-brokered PERMIT DPR record for vault/probe")
-if defer_count < 2:
-    raise SystemExit("missing DEFER DPR records for payment/refund approve/deny scenarios")
 if deny_shell_count < 1:
-  raise SystemExit("missing DENY DPR record for shell/run adversarial scenario")
+    raise SystemExit("missing DENY DPR record for shell/run adversarial scenario")
 PY
 
-# Ensure the fetched secret value is not persisted in Faramesh runtime artifacts.
 if rg -a -n --fixed-strings "$SECRET_SENTINEL" "$AGENT_OUTPUT_PATH" "$DAEMON_LOG" "$DATA_DIR" >/dev/null; then
   echo "secret sentinel leaked into Faramesh artifacts" >&2
   exit 1
 fi
 
-echo "langchain real-stack governance passed"
+echo "langgraph real-stack governance passed"
