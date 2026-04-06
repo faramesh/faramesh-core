@@ -202,4 +202,5 @@ func init() {
 	credentialCmd.AddCommand(credentialHealthCmd)
 	credentialCmd.AddCommand(credentialRevokeCmd)
 	credentialCmd.AddCommand(credentialAuditCmd)
+	credentialCmd.AddCommand(credentialVaultCmd)
 }

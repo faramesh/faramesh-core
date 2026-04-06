@@ -30,6 +30,58 @@ faramesh serve \
   --dpr-dsn "postgres://user:pass@host:5432/faramesh?sslmode=disable"
 ```
 
+## Hard Secret Boundary Setup (Vault + Broker)
+
+Use this flow when you want keys outside agent process memory by default.
+
+### Local Vault provisioned by Faramesh
+
+```bash
+# Start local dev Vault managed by Faramesh
+faramesh credential vault up
+
+# Prompt for secret and store at broker lookup path for a tool
+faramesh credential vault put stripe/refund
+
+# Load generated Vault env exports
+source ~/.faramesh/local-vault/vault.env
+
+# Start daemon with Vault broker backend
+faramesh serve \
+  --policy /etc/faramesh/policy.fpl \
+  --data-dir /var/lib/faramesh \
+  --vault-addr "$FARAMESH_CREDENTIAL_VAULT_ADDR" \
+  --vault-token "$FARAMESH_CREDENTIAL_VAULT_TOKEN" \
+  --vault-mount secret
+
+# Run agent with ambient key stripping
+faramesh run --broker --agent-id payments-prod -- python your_agent.py
+```
+
+### External Vault
+
+```bash
+faramesh credential vault put stripe/refund \
+  --external \
+  --vault-addr https://vault.company.internal:8200 \
+  --vault-token "$VAULT_TOKEN" \
+  --vault-mount secret
+
+faramesh serve \
+  --policy /etc/faramesh/policy.fpl \
+  --data-dir /var/lib/faramesh \
+  --vault-addr https://vault.company.internal:8200 \
+  --vault-token "$VAULT_TOKEN" \
+  --vault-mount secret
+```
+
+Operational helpers:
+
+```bash
+faramesh credential vault status
+faramesh credential vault down
+```
+
 ## Health and audit checks
 
 ```bash

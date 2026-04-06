@@ -265,6 +265,44 @@ Faramesh strips API keys from the agent's environment. Credentials are only issu
 | 1Password Connect | `FARAMESH_CREDENTIAL_1PASSWORD_HOST` |
 | Infisical | `FARAMESH_CREDENTIAL_INFISICAL_HOST` |
 
+### Local Vault Provisioning + Interactive Key Intake
+
+For hard boundary local development, Faramesh can provision a local Vault dev
+instance and securely prompt for a key so it is written directly to brokered
+Vault storage.
+
+```bash
+# 1) Provision local Vault (writes state under ~/.faramesh/local-vault)
+faramesh credential vault up
+
+# 2) Prompt for key and store it at secret/data/faramesh/stripe/refund
+faramesh credential vault put stripe/refund
+
+# 3) Start daemon with Vault broker backend
+source ~/.faramesh/local-vault/vault.env
+faramesh serve \
+  --policy policies/payment-bot.fpl \
+  --vault-addr "$FARAMESH_CREDENTIAL_VAULT_ADDR" \
+  --vault-token "$FARAMESH_CREDENTIAL_VAULT_TOKEN" \
+  --vault-mount secret
+
+# 4) Run agent with ambient secret stripping
+faramesh run --broker --agent-id payment-bot -- python your_agent.py
+```
+
+### External Vault Integration
+
+```bash
+faramesh credential vault put stripe/refund \
+  --external \
+  --vault-addr https://vault.company.internal:8200 \
+  --vault-token "$VAULT_TOKEN" \
+  --vault-mount secret
+```
+
+Use `faramesh credential vault status` to verify health and
+`faramesh credential vault down` to stop locally provisioned dev Vault.
+
 ## Workload Identity (SPIFFE/SPIRE)
 
 Faramesh can consume SPIFFE workload identity at runtime and expose identity controls in the CLI.
@@ -337,7 +375,12 @@ See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for all 30
 | `faramesh agent approve <token>` | Approve a deferred action |
 | `faramesh agent kill <id>` | Emergency kill switch |
 | `faramesh credential register <name>` | Register a credential with the broker |
+| `faramesh credential vault up` | Provision local dev Vault for brokered secrets |
+| `faramesh credential vault put <tool-id>` | Prompt for key and store at broker Vault path |
+| `faramesh credential vault status` | Check Vault health and local provisioning state |
+| `faramesh credential vault down` | Stop local dev Vault provisioned by Faramesh |
 | `faramesh session open` | Open a governance session |
+| `faramesh offboard --path <dir>` | Automatically remove Faramesh runtime wiring from agent code (dry-run by default) |
 | `faramesh incident declare <desc>` | Declare a governance incident |
 | `faramesh mcp wrap <server>` | Wrap an MCP server with governance |
 
