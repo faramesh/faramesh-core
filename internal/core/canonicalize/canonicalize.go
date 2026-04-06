@@ -19,6 +19,7 @@ package canonicalize
 
 import (
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -30,12 +31,45 @@ func Args(args map[string]any) map[string]any {
 	if args == nil {
 		return map[string]any{}
 	}
-	out := make(map[string]any, len(args))
-	for k, v := range args {
-		cv := Value(v)
-		if cv != nil {
-			out[k] = cv
+	// Process source keys in stable order so collision handling remains deterministic.
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	type entry struct {
+		value           any
+		fromCanonicalID bool
+	}
+	bucket := make(map[string]entry, len(args))
+
+	for _, srcKey := range keys {
+		canonKey := normalizeMapKey(srcKey)
+		if canonKey == "" {
+			continue
 		}
+		cv := Value(args[srcKey])
+		if cv == nil {
+			continue
+		}
+
+		incoming := entry{value: cv, fromCanonicalID: srcKey == canonKey}
+		if existing, ok := bucket[canonKey]; ok {
+			if existing.fromCanonicalID {
+				continue
+			}
+			if incoming.fromCanonicalID {
+				bucket[canonKey] = incoming
+			}
+			continue
+		}
+		bucket[canonKey] = incoming
+	}
+
+	out := make(map[string]any, len(bucket))
+	for k, e := range bucket {
+		out[k] = e.value
 	}
 	return out
 }
@@ -51,15 +85,8 @@ func ToolID(id string) string {
 	id = norm.NFKC.String(id)
 	// Map confusable characters.
 	id = mapConfusables(id)
-	// Strip zero-width and invisible characters.
-	var b strings.Builder
-	for _, r := range id {
-		if isInvisible(r) {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	id = b.String()
+	// Strip null bytes and invisible characters.
+	id = stripUnsafeRunes(id)
 	// Collapse repeated slashes: "admin//delete" → "admin/delete".
 	for strings.Contains(id, "//") {
 		id = strings.ReplaceAll(id, "//", "/")
@@ -71,7 +98,7 @@ func ToolID(id string) string {
 	for strings.HasPrefix(id, "../") {
 		id = id[3:]
 	}
-	return id
+	return strings.TrimSpace(id)
 }
 
 // isInvisible returns true for Unicode characters that are invisible but may
@@ -124,7 +151,35 @@ func Value(v any) any {
 		}
 		return out
 	default:
-		return v
+		rv := reflect.ValueOf(v)
+		switch rv.Kind() {
+		case reflect.Map:
+			if rv.Type().Key().Kind() != reflect.String {
+				return v
+			}
+			m := make(map[string]any, rv.Len())
+			iter := rv.MapRange()
+			for iter.Next() {
+				m[iter.Key().String()] = iter.Value().Interface()
+			}
+			return Args(m)
+		case reflect.Slice, reflect.Array:
+			out := make([]any, 0, rv.Len())
+			for i := 0; i < rv.Len(); i++ {
+				cv := Value(rv.Index(i).Interface())
+				if cv != nil {
+					out = append(out, cv)
+				}
+			}
+			return out
+		case reflect.Pointer:
+			if rv.IsNil() {
+				return nil
+			}
+			return Value(rv.Elem().Interface())
+		default:
+			return v
+		}
 	}
 }
 
@@ -138,7 +193,32 @@ func normalizeString(s string) string {
 	s = norm.NFKC.String(s)
 	// Map known confusable characters to their Latin equivalents.
 	s = mapConfusables(s)
-	return s
+	// Drop null bytes (truncate at first null) and strip invisible runes.
+	s = stripUnsafeRunes(s)
+	return strings.TrimSpace(s)
+}
+
+func normalizeMapKey(k string) string {
+	return normalizeString(k)
+}
+
+// stripUnsafeRunes removes invisible runes and truncates at the first null byte.
+// Truncation hardens policy matching against C-style string termination bypasses.
+func stripUnsafeRunes(s string) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if r == '\x00' {
+			break
+		}
+		if isInvisible(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // normalizeFloat rounds to 6 significant figures and handles special values.

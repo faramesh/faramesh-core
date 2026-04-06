@@ -1,6 +1,7 @@
 // Package idp provides identity provider integration for principal verification.
 //
 // Supports multiple IDP backends:
+//   - Default: built-in ephemeral Ed25519 keypair verifier for local bootstrap
 //   - Okta: OIDC tokens / SCIM user sync
 //   - Azure AD: Microsoft Identity Platform
 //   - Auth0: Universal Login / M2M tokens
@@ -13,9 +14,12 @@ package idp
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
@@ -628,6 +632,284 @@ func (v *LocalVerifier) verifySharedToken(raw string) (*VerifiedIdentity, error)
 	}, nil
 }
 
+const ephemeralTokenPrefix = "epk"
+
+// EphemeralConfig configures the built-in default verifier.
+// The default provider generates an in-memory Ed25519 keypair at startup and
+// verifies signed short-lived tokens without external IdP dependencies.
+type EphemeralConfig struct {
+	Subject           string
+	Email             string
+	Name              string
+	Tier              string
+	Role              string
+	Org               string
+	Groups            []string
+	Roles             []string
+	TTL               time.Duration
+	LegacySharedToken string
+}
+
+// EphemeralVerifier validates signed tokens against an in-memory Ed25519 keypair.
+// It is intentionally process-local and resets on daemon restart.
+type EphemeralVerifier struct {
+	config     EphemeralConfig
+	publicKey  ed25519.PublicKey
+	privateKey ed25519.PrivateKey
+	keyID      string
+}
+
+type ephemeralSignedClaims struct {
+	Subject string   `json:"sub,omitempty"`
+	Email   string   `json:"email,omitempty"`
+	Name    string   `json:"name,omitempty"`
+	Tier    string   `json:"tier,omitempty"`
+	Role    string   `json:"role,omitempty"`
+	Org     string   `json:"org,omitempty"`
+	Groups  []string `json:"groups,omitempty"`
+	Roles   []string `json:"roles,omitempty"`
+	ExpUnix int64    `json:"exp,omitempty"`
+	KeyID   string   `json:"kid,omitempty"`
+}
+
+// NewEphemeralVerifier creates a default verifier backed by an ephemeral keypair.
+func NewEphemeralVerifier(cfg EphemeralConfig) (*EphemeralVerifier, error) {
+	if strings.TrimSpace(cfg.Subject) == "" {
+		cfg.Subject = "local-ephemeral-user"
+	}
+	if strings.TrimSpace(cfg.Email) == "" {
+		cfg.Email = cfg.Subject + "@local"
+	}
+	if strings.TrimSpace(cfg.Name) == "" {
+		cfg.Name = "Faramesh Ephemeral User"
+	}
+	if strings.TrimSpace(cfg.Tier) == "" {
+		cfg.Tier = "default"
+	}
+	if strings.TrimSpace(cfg.Role) == "" {
+		cfg.Role = "developer"
+	}
+	if strings.TrimSpace(cfg.Org) == "" {
+		cfg.Org = "local"
+	}
+	if cfg.TTL <= 0 {
+		cfg.TTL = 30 * time.Minute
+	}
+	if strings.TrimSpace(cfg.LegacySharedToken) == "" {
+		cfg.LegacySharedToken = envFirst("FARAMESH_IDP_LOCAL_TOKEN", "FARAMESH_IDP_TOKEN")
+	}
+
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		return nil, fmt.Errorf("default idp: generate ephemeral keypair: %w", err)
+	}
+	kid := fmt.Sprintf("%x", sha256.Sum256(pub))[:16]
+
+	return &EphemeralVerifier{
+		config:     cfg,
+		publicKey:  pub,
+		privateKey: priv,
+		keyID:      kid,
+	}, nil
+}
+
+func (v *EphemeralVerifier) Name() string { return "default" }
+
+func (v *EphemeralVerifier) VerifyToken(_ context.Context, token string) (*VerifiedIdentity, error) {
+	return v.verify(token)
+}
+
+func (v *EphemeralVerifier) VerifyAPIKey(_ context.Context, apiKey string) (*VerifiedIdentity, error) {
+	return v.verify(apiKey)
+}
+
+func (v *EphemeralVerifier) verify(raw string) (*VerifiedIdentity, error) {
+	presented := normalizeBearerToken(raw)
+	if strings.TrimSpace(presented) == "" {
+		return nil, fmt.Errorf("default idp: token is empty")
+	}
+	if strings.HasPrefix(presented, ephemeralTokenPrefix+".") {
+		return v.verifySignedToken(presented)
+	}
+	legacy := strings.TrimSpace(v.config.LegacySharedToken)
+	if legacy != "" && subtle.ConstantTimeCompare([]byte(presented), []byte(legacy)) == 1 {
+		return v.fallbackIdentity(time.Now().UTC()), nil
+	}
+	return nil, fmt.Errorf("default idp: token verification failed")
+}
+
+func (v *EphemeralVerifier) verifySignedToken(token string) (*VerifiedIdentity, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 || parts[0] != ephemeralTokenPrefix {
+		return nil, fmt.Errorf("default idp: invalid token format")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("default idp: invalid token payload encoding")
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return nil, fmt.Errorf("default idp: invalid token signature encoding")
+	}
+	if !ed25519.Verify(v.publicKey, payload, sig) {
+		return nil, fmt.Errorf("default idp: signature verification failed")
+	}
+
+	var claims ephemeralSignedClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, fmt.Errorf("default idp: invalid token claims")
+	}
+	if strings.TrimSpace(claims.KeyID) != "" && strings.TrimSpace(claims.KeyID) != v.keyID {
+		return nil, fmt.Errorf("default idp: token key id mismatch")
+	}
+	now := time.Now().UTC()
+	if claims.ExpUnix <= 0 || now.Unix() >= claims.ExpUnix {
+		return nil, fmt.Errorf("default idp: token expired")
+	}
+
+	subject := strings.TrimSpace(claims.Subject)
+	if subject == "" {
+		subject = v.config.Subject
+	}
+	email := strings.TrimSpace(claims.Email)
+	if email == "" {
+		email = v.config.Email
+	}
+	name := strings.TrimSpace(claims.Name)
+	if name == "" {
+		name = v.config.Name
+	}
+	if subject == "" && email == "" && name == "" {
+		return nil, fmt.Errorf("default idp: missing subject/email/name")
+	}
+
+	roles := append([]string(nil), claims.Roles...)
+	if len(roles) == 0 && strings.TrimSpace(claims.Role) != "" {
+		roles = []string{strings.TrimSpace(claims.Role)}
+	}
+	if len(roles) == 0 {
+		roles = append([]string(nil), v.config.Roles...)
+		if len(roles) == 0 && strings.TrimSpace(v.config.Role) != "" {
+			roles = []string{strings.TrimSpace(v.config.Role)}
+		}
+	}
+
+	groups := append([]string(nil), claims.Groups...)
+	if len(groups) == 0 {
+		groups = append([]string(nil), v.config.Groups...)
+	}
+
+	org := strings.TrimSpace(claims.Org)
+	if org == "" {
+		org = strings.TrimSpace(v.config.Org)
+	}
+	tier := strings.TrimSpace(claims.Tier)
+	if tier == "" {
+		tier = strings.TrimSpace(v.config.Tier)
+	}
+	role := strings.TrimSpace(claims.Role)
+	if role == "" && len(roles) > 0 {
+		role = strings.TrimSpace(roles[0])
+	}
+
+	claimsMap := map[string]any{
+		"kid":    v.keyID,
+		"tier":   tier,
+		"role":   role,
+		"org":    org,
+		"groups": groups,
+		"roles":  roles,
+	}
+
+	return &VerifiedIdentity{
+		Subject:    subject,
+		Email:      email,
+		Name:       name,
+		Groups:     groups,
+		Roles:      roles,
+		Org:        org,
+		Provider:   "default",
+		VerifiedAt: now,
+		ExpiresAt:  time.Unix(claims.ExpUnix, 0).UTC(),
+		RawClaims:  claimsMap,
+	}, nil
+}
+
+func (v *EphemeralVerifier) fallbackIdentity(now time.Time) *VerifiedIdentity {
+	roles := append([]string(nil), v.config.Roles...)
+	if len(roles) == 0 && strings.TrimSpace(v.config.Role) != "" {
+		roles = []string{strings.TrimSpace(v.config.Role)}
+	}
+	claims := map[string]any{
+		"kid":    v.keyID,
+		"tier":   v.config.Tier,
+		"role":   v.config.Role,
+		"org":    v.config.Org,
+		"groups": append([]string(nil), v.config.Groups...),
+		"roles":  append([]string(nil), roles...),
+	}
+	return &VerifiedIdentity{
+		Subject:    v.config.Subject,
+		Email:      v.config.Email,
+		Name:       v.config.Name,
+		Groups:     append([]string(nil), v.config.Groups...),
+		Roles:      roles,
+		Org:        v.config.Org,
+		Provider:   "default",
+		VerifiedAt: now,
+		ExpiresAt:  now.Add(v.config.TTL),
+		RawClaims:  claims,
+	}
+}
+
+// mintToken is intentionally package-private and used by unit tests to verify
+// default verifier behavior.
+func (v *EphemeralVerifier) mintToken(claims ephemeralSignedClaims, ttl time.Duration) (string, error) {
+	if ttl <= 0 {
+		ttl = v.config.TTL
+	}
+	now := time.Now().UTC()
+	if claims.ExpUnix <= 0 {
+		claims.ExpUnix = now.Add(ttl).Unix()
+	}
+	if strings.TrimSpace(claims.Subject) == "" {
+		claims.Subject = v.config.Subject
+	}
+	if strings.TrimSpace(claims.Email) == "" {
+		claims.Email = v.config.Email
+	}
+	if strings.TrimSpace(claims.Name) == "" {
+		claims.Name = v.config.Name
+	}
+	if strings.TrimSpace(claims.Tier) == "" {
+		claims.Tier = v.config.Tier
+	}
+	if strings.TrimSpace(claims.Role) == "" {
+		claims.Role = v.config.Role
+	}
+	if strings.TrimSpace(claims.Org) == "" {
+		claims.Org = v.config.Org
+	}
+	if len(claims.Groups) == 0 {
+		claims.Groups = append([]string(nil), v.config.Groups...)
+	}
+	if len(claims.Roles) == 0 {
+		claims.Roles = append([]string(nil), v.config.Roles...)
+	}
+	claims.KeyID = v.keyID
+
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	sig := ed25519.Sign(v.privateKey, payload)
+	return fmt.Sprintf("%s.%s.%s",
+		ephemeralTokenPrefix,
+		base64.RawURLEncoding.EncodeToString(payload),
+		base64.RawURLEncoding.EncodeToString(sig),
+	), nil
+}
+
 // ValidateProviderConfigFromEnv validates required runtime configuration for a provider.
 func ValidateProviderConfigFromEnv(provider string) error {
 	provider = strings.ToLower(strings.TrimSpace(provider))
@@ -846,7 +1128,20 @@ func NewVerifierFromEnv(provider string) (Verifier, error) {
 	orgClaim := envFirst("FARAMESH_IDP_ORG_CLAIM")
 
 	switch provider {
-	case "default", "local":
+	case "default":
+		return NewEphemeralVerifier(EphemeralConfig{
+			Subject:           envFirst("FARAMESH_IDP_DEFAULT_SUBJECT", "FARAMESH_IDP_LOCAL_SUBJECT"),
+			Email:             envFirst("FARAMESH_IDP_DEFAULT_EMAIL", "FARAMESH_IDP_LOCAL_EMAIL"),
+			Name:              envFirst("FARAMESH_IDP_DEFAULT_NAME", "FARAMESH_IDP_LOCAL_NAME"),
+			Tier:              envFirst("FARAMESH_IDP_DEFAULT_TIER", "FARAMESH_IDP_LOCAL_TIER"),
+			Role:              envFirst("FARAMESH_IDP_DEFAULT_ROLE", "FARAMESH_IDP_LOCAL_ROLE"),
+			Org:               envFirst("FARAMESH_IDP_DEFAULT_ORG", "FARAMESH_IDP_LOCAL_ORG"),
+			Groups:            envCSVFirst("FARAMESH_IDP_DEFAULT_GROUPS", "FARAMESH_IDP_LOCAL_GROUPS"),
+			Roles:             envCSVFirst("FARAMESH_IDP_DEFAULT_ROLES", "FARAMESH_IDP_LOCAL_ROLES"),
+			TTL:               parseDurationDefault(envFirst("FARAMESH_IDP_DEFAULT_TTL", "FARAMESH_IDP_LOCAL_TTL"), 30*time.Minute),
+			LegacySharedToken: envFirst("FARAMESH_IDP_LOCAL_TOKEN", "FARAMESH_IDP_TOKEN"),
+		})
+	case "local":
 		return NewLocalVerifier(LocalConfig{
 			SharedToken: envFirst("FARAMESH_IDP_LOCAL_TOKEN", "FARAMESH_IDP_TOKEN"),
 			Subject:     envFirst("FARAMESH_IDP_LOCAL_SUBJECT"),
