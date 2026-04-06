@@ -50,12 +50,12 @@ var (
 )
 
 func init() {
-	onboardCmd.Flags().StringVar(&onboardPolicyPath, "policy", "", "policy path (default probe order: faramesh/policy.yaml, policy.yaml, policies/default.fpl)")
+	onboardCmd.Flags().StringVar(&onboardPolicyPath, "policy", "", "policy path (default probe order: faramesh/policy.fpl, policies/default.fpl, faramesh/policy.yaml, policy.yaml)")
 	onboardCmd.Flags().BoolVar(&onboardStrict, "strict", true, "fail with non-zero exit if blocking checks fail")
 	onboardCmd.Flags().BoolVar(&onboardJSON, "json", false, "emit machine-readable JSON report")
 	onboardCmd.Flags().StringVar(&onboardSlackWebhook, "slack-webhook", "", "Slack webhook URL for HITL routing checks")
 	onboardCmd.Flags().StringVar(&onboardPagerDutyRoutingKey, "pagerduty-routing-key", "", "PagerDuty routing key for HITL routing checks")
-	onboardCmd.Flags().StringVar(&onboardIDPProvider, "idp-provider", "", "IdP provider for principal-aware policy checks (default|local|okta|azure_ad|auth0|google|ldap)")
+	onboardCmd.Flags().StringVar(&onboardIDPProvider, "idp-provider", "", "IdP provider for principal-aware policy checks (default=ephemeral|local|okta|azure_ad|auth0|google|ldap)")
 	onboardCmd.Flags().StringVar(&onboardSPIFFESocket, "spiffe-socket", "", "SPIFFE Workload API socket path for workload identity checks")
 	onboardCmd.Flags().StringVar(&onboardVaultAddr, "vault-addr", "", "Vault address for credential sequestration checks")
 	onboardCmd.Flags().StringVar(&onboardAWSRegion, "aws-secrets-region", "", "AWS Secrets Manager region for credential sequestration checks")
@@ -456,8 +456,10 @@ func evaluateIDPReadiness(doc *policy.Doc, strict bool, idpProvider string) onbo
 		}
 	}
 	details := fmt.Sprintf("Principal-aware policy checks enabled with IdP provider %q.", provider)
-	if provider == "default" || provider == "local" {
-		details = "Principal-aware policy checks enabled with built-in local IdP (no external dependency)."
+	if provider == "default" {
+		details = "Principal-aware policy checks enabled with built-in ephemeral keypair IdP (no external dependency)."
+	} else if provider == "local" {
+		details = "Principal-aware policy checks enabled with built-in local shared-token IdP (no external dependency)."
 	}
 	return onboardCheck{
 		ID:      "idp",
@@ -524,7 +526,7 @@ func resolveOnboardPolicyPath(rawPath, cwd string) (string, error) {
 	if p := strings.TrimSpace(rawPath); p != "" {
 		return absolutize(cwd, p), nil
 	}
-	candidates := []string{"faramesh/policy.yaml", "policy.yaml", "policies/default.fpl"}
+	candidates := []string{"faramesh/policy.fpl", "policies/default.fpl", "faramesh/policy.yaml", "policy.yaml"}
 	for _, c := range candidates {
 		candidate := absolutize(cwd, c)
 		if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
