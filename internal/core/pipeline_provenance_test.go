@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -103,5 +104,61 @@ func TestArgProvenanceUnknownStableWhenNoSource(t *testing.T) {
 	}
 	if got := wal.last.ArgProvenance["memo"]; got != "unknown" {
 		t.Fatalf("expected memo provenance unknown, got %q", got)
+	}
+}
+
+type failingInferProvenanceTracker struct{}
+
+func (failingInferProvenanceTracker) InferArgProvenance(string, string, map[string]any) (map[string]string, error) {
+	return nil, fmt.Errorf("boom-infer")
+}
+
+func (failingInferProvenanceTracker) RecordToolOutput(string, string, string, string, any) error {
+	return nil
+}
+
+type failingRecordProvenanceTracker struct{}
+
+func (failingRecordProvenanceTracker) InferArgProvenance(string, string, map[string]any) (map[string]string, error) {
+	return map[string]string{"output": "unknown"}, nil
+}
+
+func (failingRecordProvenanceTracker) RecordToolOutput(string, string, string, string, any) error {
+	return fmt.Errorf("boom-record")
+}
+
+func TestArgProvenanceInferenceFailureDenies(t *testing.T) {
+	p := buildProvenancePipeline(t, &provenanceCaptureWAL{}, failingInferProvenanceTracker{})
+	d := p.Evaluate(CanonicalActionRequest{
+		CallID:    "prov-infer-fail",
+		AgentID:   "agent-prov",
+		SessionID: "sess-prov",
+		ToolID:    "tool/use",
+		Args:      map[string]any{"memo": "abc"},
+		Timestamp: time.Now(),
+	})
+	if d.Effect != EffectDeny {
+		t.Fatalf("expected deny when arg provenance inference fails, got %s", d.Effect)
+	}
+	if d.ReasonCode != "TELEMETRY_HOOK_ERROR" {
+		t.Fatalf("expected reason code TELEMETRY_HOOK_ERROR, got %q", d.ReasonCode)
+	}
+}
+
+func TestToolOutputTelemetryFailureDeniesPermitPath(t *testing.T) {
+	p := buildProvenancePipeline(t, &provenanceCaptureWAL{}, failingRecordProvenanceTracker{})
+	d := p.Evaluate(CanonicalActionRequest{
+		CallID:    "prov-record-fail",
+		AgentID:   "agent-prov",
+		SessionID: "sess-prov",
+		ToolID:    "tool/use",
+		Args:      map[string]any{"output": "materialized"},
+		Timestamp: time.Now(),
+	})
+	if d.Effect != EffectDeny {
+		t.Fatalf("expected deny when output telemetry fails, got %s", d.Effect)
+	}
+	if d.ReasonCode != "TELEMETRY_HOOK_ERROR" {
+		t.Fatalf("expected reason code TELEMETRY_HOOK_ERROR, got %q", d.ReasonCode)
 	}
 }

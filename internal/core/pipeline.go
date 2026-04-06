@@ -363,11 +363,20 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 		defer p.leaveCallChain(req.CallID)
 	}
 
-	// [0] Canonicalize args (CAR v1.0): NFKC normalization, confusable mapping,
+	// [0] Fail-closed on null-byte payloads to block string-termination bypasses.
+	if containsNullByteString(req.ToolID) || containsNullByteValue(req.Args) {
+		return p.decide(req, Decision{
+			Effect:     EffectDeny,
+			ReasonCode: reasons.ScannerDeny,
+			Reason:     "scanner detected null byte in tool request payload",
+		}, p.sessions.Get(req.AgentID), start, nil)
+	}
+
+	// [0.1] Canonicalize args (CAR v1.0): NFKC normalization, confusable mapping,
 	// null stripping, float 6-significant-figure rounding, string trimming.
 	req.Args = canonicalize.Args(req.Args)
 
-	// [0.1] Canonicalize tool ID: apply the same NFKC + confusable mapping
+	// [0.2] Canonicalize tool ID: apply the same NFKC + confusable mapping
 	// to prevent Unicode spoofing attacks on tool identifiers.
 	req.ToolID = canonicalize.ToolID(req.ToolID)
 
@@ -432,7 +441,15 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	if p.sessionGovernor != nil {
 		p.sessionGovernor.RegisterAgentNamespace(req.AgentID)
 	}
-	argProvenance := p.inferArgProvenance(req.AgentID, req.SessionID, req.Args)
+	argProvenance, argProvErr := p.inferArgProvenance(req.AgentID, req.SessionID, req.Args)
+	if argProvErr != nil {
+		return p.decide(req, Decision{
+			Effect:        EffectDeny,
+			ReasonCode:    reasons.TelemetryHookError,
+			Reason:        fmt.Sprintf("arg provenance inference failed: %v", argProvErr),
+			PolicyVersion: engine.Version(),
+		}, sess, start, nil)
+	}
 	if sess.IsKilled() {
 		return p.decide(req, Decision{
 			Effect:     EffectDeny,
@@ -1004,6 +1021,27 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 	d.SessionID = req.SessionID
 	d.Timestamp = req.Timestamp
 	d.ReasonCode = reasons.Normalize(d.ReasonCode)
+	plannedRecordID := ""
+
+	// Strict lifecycle hooks close callback/telemetry fail-open gaps for all
+	// governance outcomes so observability and callback pipelines are never
+	// silently bypassed.
+	if shouldEnforceLifecycleHooks(d.Effect) {
+		plannedRecordID = uuid.New().String()
+		if code, err := p.enforceLifecycleHooks(req, d, plannedRecordID); err != nil {
+			d = Decision{
+				Effect:           EffectDeny,
+				ReasonCode:       code,
+				Reason:           fmt.Sprintf("governance lifecycle hook failure: %v", err),
+				RetryPermitted:   true,
+				PolicyVersion:    d.PolicyVersion,
+				IncidentCategory: "governance_observability",
+				IncidentSeverity: "high",
+			}
+			plannedRecordID = ""
+		}
+	}
+	d.Latency = time.Since(start)
 
 	// Record metrics.
 	observe.Default.RecordDecision(string(d.Effect), d.ReasonCode, d.Latency)
@@ -1016,7 +1054,7 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 	}
 
 	// [9] WAL write — fsync before returning.
-	rec := p.buildRecord(req, d, argProvenance)
+	rec := p.buildRecordWithID(req, d, argProvenance, plannedRecordID)
 	d.DPRRecordID = rec.RecordID
 	if err := p.wal.Write(rec); err != nil {
 		observe.Default.RecordWALWrite(false)
@@ -1030,51 +1068,11 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 		}
 	}
 	observe.Default.RecordWALWrite(true)
-	p.recordToolOutputs(req.AgentID, req.SessionID, req.ToolID, rec.RecordID, req.Args)
 
 	if p.routingGovernor != nil && d.Effect == EffectPermit && topologyInvokeTool(req.ToolID) && p.routingGovernor.HasManifest(req.AgentID) {
 		if target := extractTargetAgentID(req.Args); target != "" {
 			p.routingGovernor.RecordInvocation(req.AgentID, target, req.SessionID)
 		}
-	}
-
-	// Lifecycle callback: async + fail-open, must not alter governance decisions.
-	if p.callbacks != nil {
-		p.callbacks.FireOnDecision(callbacks.OnDecisionPayload{
-			AgentID:    req.AgentID,
-			ToolID:     req.ToolID,
-			Effect:     string(d.Effect),
-			RuleID:     d.RuleID,
-			ReasonCode: d.ReasonCode,
-			RecordID:   d.DPRRecordID,
-		})
-	}
-
-	// Fail-open telemetry hooks (P5): never block or alter decisions.
-	if d.Effect == EffectPermit {
-		principalID := ""
-		if req.Principal != nil {
-			principalID = req.Principal.ID
-		}
-		observe.Default.RecordPermitAccess(observe.AccessEvent{
-			AgentID:     req.AgentID,
-			SessionID:   req.SessionID,
-			ToolID:      req.ToolID,
-			RuleID:      d.RuleID,
-			Timestamp:   req.Timestamp,
-			PrincipalID: principalID,
-			DPRID:       d.DPRRecordID,
-		})
-	}
-	if d.RuleID != "" {
-		observe.Default.ObserveRule(observe.RuleObservation{
-			AgentID:   req.AgentID,
-			SessionID: req.SessionID,
-			ToolID:    req.ToolID,
-			RuleID:    d.RuleID,
-			Effect:    string(d.Effect),
-			Timestamp: req.Timestamp,
-		})
 	}
 
 	// [10] Async: replicate to SQLite, update session history, sync to Horizon.
@@ -1132,17 +1130,25 @@ func (p *Pipeline) accountCost(agentID, toolID string, sess *session.State) {
 
 // buildRecord constructs the DPR record for this decision.
 func (p *Pipeline) buildRecord(req CanonicalActionRequest, d Decision, argProvenance map[string]string) *dpr.Record {
+	return p.buildRecordWithID(req, d, argProvenance, "")
+}
+
+// buildRecordWithID constructs the DPR record and uses recordID when provided.
+func (p *Pipeline) buildRecordWithID(req CanonicalActionRequest, d Decision, argProvenance map[string]string, recordID string) *dpr.Record {
 	p.chainLock.Lock()
 	prevHash := p.chainMu[req.AgentID]
 	if prevHash == "" {
 		// Genesis record: deterministic chain-start marker per agent.
 		prevHash = dpr.GenesisPrevHash(req.AgentID)
 	}
+	if strings.TrimSpace(recordID) == "" {
+		recordID = uuid.New().String()
+	}
 
 	rec := &dpr.Record{
 		SchemaVersion:      dpr.SchemaVersion,
 		CARVersion:         CARVersion,
-		RecordID:           uuid.New().String(),
+		RecordID:           recordID,
 		PrevRecordHash:     prevHash,
 		AgentID:            req.AgentID,
 		SessionID:          req.SessionID,
@@ -1161,7 +1167,7 @@ func (p *Pipeline) buildRecord(req CanonicalActionRequest, d Decision, argProven
 		PolicySourceID:     p.policySourceID,
 		ArgsStructuralSig:  dpr.ArgsSignature(req.Args),
 		ArgProvenance:      argProvenance,
-		CreatedAt:          req.Timestamp,
+		CreatedAt:          req.Timestamp.UTC(),
 	}
 	if p.degraded != nil {
 		rec.DegradedMode = p.degraded.Current().String()
@@ -1882,7 +1888,14 @@ func (p *Pipeline) emitWebhook(req CanonicalActionRequest, d Decision) {
 // the output to the agent's context. Returns the scan result which may
 // contain redacted output or a denial.
 func (p *Pipeline) ScanOutput(toolID, output string) postcondition.ScanResult {
-	p.recordToolOutputs("", "", toolID, "", map[string]any{"output": output})
+	if err := p.recordToolOutputs("", "", toolID, "", map[string]any{"output": output}); err != nil {
+		return postcondition.ScanResult{
+			Outcome:    postcondition.OutcomeDenied,
+			Output:     "",
+			ReasonCode: reasons.TelemetryHookError,
+			Reason:     fmt.Sprintf("tool output telemetry recording failed: %v", err),
+		}
+	}
 	scanner := p.currentArtifacts().postScanner
 	if scanner == nil {
 		return postcondition.ScanResult{Outcome: postcondition.OutcomePass, Output: output}
@@ -1899,40 +1912,111 @@ func (p *Pipeline) ScanOutput(toolID, output string) postcondition.ScanResult {
 	return res
 }
 
-func (p *Pipeline) inferArgProvenance(agentID, sessionID string, args map[string]any) map[string]string {
-	if p.provenance == nil {
-		return nil
+func (p *Pipeline) enforceLifecycleHooks(req CanonicalActionRequest, d Decision, recordID string) (string, error) {
+	if err := p.recordToolOutputs(req.AgentID, req.SessionID, req.ToolID, recordID, req.Args); err != nil {
+		return reasons.TelemetryHookError, err
 	}
-	defer func() { _ = recover() }()
-	out, err := p.provenance.InferArgProvenance(agentID, sessionID, args)
-	if err != nil {
-		return nil
+
+	if d.Effect == EffectPermit || d.Effect == EffectShadow {
+		principalID := ""
+		if req.Principal != nil {
+			principalID = req.Principal.ID
+		}
+		if err := observe.Default.RecordPermitAccess(observe.AccessEvent{
+			AgentID:     req.AgentID,
+			SessionID:   req.SessionID,
+			ToolID:      req.ToolID,
+			RuleID:      d.RuleID,
+			Timestamp:   req.Timestamp,
+			PrincipalID: principalID,
+			DPRID:       recordID,
+		}); err != nil {
+			return reasons.TelemetryHookError, err
+		}
 	}
-	return out
+
+	if d.RuleID != "" {
+		if err := observe.Default.ObserveRule(observe.RuleObservation{
+			AgentID:   req.AgentID,
+			SessionID: req.SessionID,
+			ToolID:    req.ToolID,
+			RuleID:    d.RuleID,
+			Effect:    string(d.Effect),
+			Timestamp: req.Timestamp,
+		}); err != nil {
+			return reasons.TelemetryHookError, err
+		}
+	}
+
+	if p.callbacks != nil {
+		if err := p.callbacks.FireOnDecision(callbacks.OnDecisionPayload{
+			AgentID:    req.AgentID,
+			SessionID:  req.SessionID,
+			ToolID:     req.ToolID,
+			Effect:     string(d.Effect),
+			RuleID:     d.RuleID,
+			ReasonCode: d.ReasonCode,
+			RecordID:   recordID,
+		}); err != nil {
+			return reasons.CallbackError, err
+		}
+	}
+
+	return "", nil
 }
 
-func (p *Pipeline) recordToolOutputs(agentID, sessionID, toolID, recordID string, args map[string]any) {
-	if p.provenance == nil || len(args) == 0 {
-		return
+func shouldEnforceLifecycleHooks(effect Effect) bool {
+	switch effect {
+	case EffectPermit, EffectDeny, EffectDefer, EffectShadow, EffectShadowPermit:
+		return true
+	default:
+		return false
 	}
-	// Best-effort, fail-open telemetry hook.
-	go func() {
-		defer func() { _ = recover() }()
-		const maxOutputs = 6
-		emitted := 0
-		for _, key := range []string{"output", "result", "response", "body", "stdout", "stderr"} {
-			v, ok := args[key]
-			if !ok {
-				continue
-			}
-			if err := p.provenance.RecordToolOutput(agentID, sessionID, toolID, recordID, v); err == nil {
-				emitted++
-			}
-			if emitted >= maxOutputs {
-				return
-			}
+}
+
+func (p *Pipeline) inferArgProvenance(agentID, sessionID string, args map[string]any) (out map[string]string, err error) {
+	if p.provenance == nil {
+		return nil, nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("arg provenance tracker panic: %v", r)
 		}
 	}()
+	out, err = p.provenance.InferArgProvenance(agentID, sessionID, args)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (p *Pipeline) recordToolOutputs(agentID, sessionID, toolID, recordID string, args map[string]any) (err error) {
+	if p.provenance == nil || len(args) == 0 {
+		return nil
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("tool output tracker panic: %v", r)
+		}
+	}()
+
+	const maxOutputs = 6
+	emitted := 0
+	for _, key := range []string{"output", "result", "response", "body", "stdout", "stderr"} {
+		v, ok := args[key]
+		if !ok {
+			continue
+		}
+		if err := p.provenance.RecordToolOutput(agentID, sessionID, toolID, recordID, v); err != nil {
+			return fmt.Errorf("record tool output %q: %w", key, err)
+		}
+		emitted++
+		if emitted >= maxOutputs {
+			return nil
+		}
+	}
+
+	return nil
 }
 
 // scanner patterns for pre-execution safety checks.
@@ -2125,6 +2209,64 @@ func meetsIsolationRequirement(current, required sandbox.Environment) bool {
 		}
 	}
 	return rank(current) >= rank(required)
+}
+
+func containsNullByteString(s string) bool {
+	return strings.IndexByte(s, 0) >= 0
+}
+
+func containsNullByteValue(v any) bool {
+	if v == nil {
+		return false
+	}
+	switch val := v.(type) {
+	case string:
+		return containsNullByteString(val)
+	case map[string]any:
+		for k, child := range val {
+			if containsNullByteString(k) || containsNullByteValue(child) {
+				return true
+			}
+		}
+		return false
+	case []any:
+		for _, child := range val {
+			if containsNullByteValue(child) {
+				return true
+			}
+		}
+		return false
+	}
+
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Pointer:
+		if rv.IsNil() {
+			return false
+		}
+		return containsNullByteValue(rv.Elem().Interface())
+	case reflect.Map:
+		iter := rv.MapRange()
+		for iter.Next() {
+			k := iter.Key()
+			if k.Kind() == reflect.String && containsNullByteString(k.String()) {
+				return true
+			}
+			if containsNullByteValue(iter.Value().Interface()) {
+				return true
+			}
+		}
+		return false
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < rv.Len(); i++ {
+			if containsNullByteValue(rv.Index(i).Interface()) {
+				return true
+			}
+		}
+		return false
+	default:
+		return false
+	}
 }
 
 func riskWeight(toolID string, meta policy.ToolCtx) int {
