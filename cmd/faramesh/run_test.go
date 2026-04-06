@@ -56,25 +56,27 @@ func TestStripAmbientCredentials(t *testing.T) {
 		"PATH=/usr/bin",
 		"HOME=/home/test",
 		"OPENAI_API_KEY=sk-abc123",
+		"OPENROUTER_API_KEY=or-key",
 		"STRIPE_API_KEY=sk_live_456",
+		"FARAMESH_STRIPE_SECRET_KEY=sk_faramesh",
 		"FARAMESH_SOCKET=/tmp/faramesh.sock",
 		"DATABASE_URL=postgres://localhost:5432/db",
 		"MY_CUSTOM_VAR=keep",
 	}
 	out, stripped := stripAmbientCredentials(env)
 
-	if len(stripped) != 3 {
-		t.Fatalf("expected 3 stripped, got %d: %v", len(stripped), stripped)
+	if len(stripped) != 5 {
+		t.Fatalf("expected 5 stripped, got %d: %v", len(stripped), stripped)
 	}
 	for _, s := range stripped {
-		if s != "OPENAI_API_KEY" && s != "STRIPE_API_KEY" && s != "DATABASE_URL" {
+		if s != "OPENAI_API_KEY" && s != "OPENROUTER_API_KEY" && s != "STRIPE_API_KEY" && s != "FARAMESH_STRIPE_SECRET_KEY" && s != "DATABASE_URL" {
 			t.Fatalf("unexpected strip: %s", s)
 		}
 	}
 
 	for _, e := range out {
 		k, _, _ := strings.Cut(e, "=")
-		if k == "OPENAI_API_KEY" || k == "STRIPE_API_KEY" || k == "DATABASE_URL" {
+		if k == "OPENAI_API_KEY" || k == "OPENROUTER_API_KEY" || k == "STRIPE_API_KEY" || k == "FARAMESH_STRIPE_SECRET_KEY" || k == "DATABASE_URL" {
 			t.Fatalf("should have been stripped: %s", e)
 		}
 	}
@@ -90,9 +92,76 @@ func TestStripAmbientCredentials(t *testing.T) {
 	}
 }
 
+func TestResolveChildAgentID_ExplicitOverridesAndSanitizes(t *testing.T) {
+	got := resolveChildAgentID(nil, "Stripe Agent 01", nil, "/tmp/repo", []string{"python", "agent.py"})
+	if got != "stripe-agent-01" {
+		t.Fatalf("resolveChildAgentID explicit = %q", got)
+	}
+}
+
+func TestResolveChildAgentID_UsesEnvWhenPresent(t *testing.T) {
+	env := []string{"FARAMESH_AGENT_ID=from-env"}
+	got := resolveChildAgentID(env, "", nil, "/tmp/repo", []string{"python", "agent.py"})
+	if got != "from-env" {
+		t.Fatalf("resolveChildAgentID env = %q", got)
+	}
+}
+
+func TestInferAgentID_FromPythonScript(t *testing.T) {
+	got := inferAgentID(nil, "/tmp/repo", []string{"python3", "./agents/payments_agent.py"})
+	if got != "payments_agent" {
+		t.Fatalf("inferAgentID script = %q", got)
+	}
+}
+
+func TestInferAgentID_FromPythonModule(t *testing.T) {
+	got := inferAgentID(nil, "/tmp/repo", []string{"python", "-m", "company.agent.runner"})
+	if got != "company.agent.runner" {
+		t.Fatalf("inferAgentID module = %q", got)
+	}
+}
+
+func TestResolveChildSocket_PrefersEnvWhenFlagUnchanged(t *testing.T) {
+	oldDaemonSocket := daemonSocket
+	defer func() { daemonSocket = oldDaemonSocket }()
+
+	f := rootCmd.PersistentFlags().Lookup("daemon-socket")
+	if f == nil {
+		t.Fatal("daemon-socket flag missing")
+	}
+	oldChanged := f.Changed
+	defer func() { f.Changed = oldChanged }()
+
+	f.Changed = false
+	daemonSocket = "/tmp/default.sock"
+	got := resolveChildSocket([]string{"FARAMESH_SOCKET=/tmp/from-env.sock"})
+	if got != "/tmp/from-env.sock" {
+		t.Fatalf("resolveChildSocket env-preferred = %q", got)
+	}
+}
+
+func TestResolveChildSocket_UsesFlagWhenProvided(t *testing.T) {
+	oldDaemonSocket := daemonSocket
+	defer func() { daemonSocket = oldDaemonSocket }()
+
+	f := rootCmd.PersistentFlags().Lookup("daemon-socket")
+	if f == nil {
+		t.Fatal("daemon-socket flag missing")
+	}
+	oldChanged := f.Changed
+	defer func() { f.Changed = oldChanged }()
+
+	f.Changed = true
+	daemonSocket = "/tmp/from-flag.sock"
+	got := resolveChildSocket([]string{"FARAMESH_SOCKET=/tmp/from-env.sock"})
+	if got != "/tmp/from-flag.sock" {
+		t.Fatalf("resolveChildSocket flag-preferred = %q", got)
+	}
+}
+
 func TestEnforcementReport_trustLevel(t *testing.T) {
 	r := &enforcementReport{
-		autoload:       true,
+		autoload:        true,
 		credentialStrip: []string{"OPENAI_API_KEY"},
 	}
 	// Without OS layers, trust level stays as whatever was passed
