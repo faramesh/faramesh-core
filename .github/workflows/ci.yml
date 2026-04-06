@@ -10,6 +10,30 @@ permissions:
   contents: read
 
 jobs:
+  burst-rate-harness:
+    name: Burst Rate Harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run burst rate-limit harness
+        run: make burst-rate-harness
+
+  defer-timeout-resume-harness:
+    name: Defer Timeout Resume Harness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run defer timeout/resume stress harness
+        run: make defer-timeout-resume-harness
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

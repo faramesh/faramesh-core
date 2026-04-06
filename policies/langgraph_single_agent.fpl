@@ -1,8 +1,8 @@
-agent langchain-single {
+agent langgraph-single {
   default deny
 
   credential vault_probe {
-    scope vault/probe vault/probe/_execute_tool_sync vault/probe/_execute_tool_async vault/probe/_run_one vault/probe/_arun_one
+    scope vault/probe/_execute_tool_sync vault/probe/_execute_tool_async vault/probe/_run_one vault/probe/_arun_one
     backend vault
     max_scope payments
   }

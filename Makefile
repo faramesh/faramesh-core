@@ -1,5 +1,5 @@
 # Faramesh Core — local developer entrypoints (CI: monorepo `.github/workflows/faramesh-core-release-gate.yml`).
-.PHONY: all build build-release compile clean test test-race vet sbom docker verify-reproducible release install setup setup-status setup-stop langchain-single langchain-real langchain-real-fpl langchain-wizard govern-wizard
+.PHONY: all build build-release compile clean test test-race vet sbom docker verify-reproducible release install setup setup-status setup-stop langchain-single langchain-real langchain-real-fpl langgraph-real langgraph-real-fpl burst-rate-harness defer-timeout-resume-harness langchain-wizard govern-wizard
 
 all: vet compile test build
 
@@ -85,13 +85,29 @@ setup-stop:
 langchain-single:
 	bash tests/langchain_single_agent_governed.sh
 
-# Real-stack strict governance test for a single LangChain agent with Vault + identity gates.
+# Real-stack strict governance test for a single LangChain agent with Vault + identity gates (FPL-first by default).
 langchain-real:
 	bash tests/langchain_single_agent_real_stack.sh
 
-# Real-stack strict governance test using the FPL policy variant.
+# Compatibility alias for explicit FPL naming.
 langchain-real-fpl:
 	bash tests/langchain_single_agent_real_stack_fpl.sh
+
+# Real-stack strict governance test for a single LangGraph ToolNode flow (FPL-first by default).
+langgraph-real:
+	bash tests/langgraph_single_agent_real_stack.sh
+
+# Compatibility alias for explicit FPL naming.
+langgraph-real-fpl:
+	bash tests/langgraph_single_agent_real_stack_fpl.sh
+
+# Deterministic burst rate-limit harness for SDK socket + proxy adapters.
+burst-rate-harness:
+	bash tests/burst_rate_limit_harness.sh
+
+# Defer timeout/resume stress harness for late resolve and conflict stability.
+defer-timeout-resume-harness:
+	bash tests/defer_timeout_resume_stress_harness.sh
 
 # Minimal-interaction installer/wizard for governed LangChain agent runs.
 langchain-wizard:
