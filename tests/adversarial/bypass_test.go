@@ -58,8 +58,10 @@ func TestBypass_NullByteInjection(t *testing.T) {
 
 	for i, args := range attacks {
 		d := p.Evaluate(testCAR("shell/exec", args))
-		// After null stripping in canonicalize, these should be caught.
-		t.Logf("null-byte attack %d: effect=%s reason=%s", i, d.Effect, d.ReasonCode)
+		// Canonicalization truncates at first null byte, so all variants must deny.
+		if d.Effect != core.EffectDeny {
+			t.Errorf("null-byte bypass succeeded for attack %d: got %s (%s)", i, d.Effect, d.ReasonCode)
+		}
 	}
 }
 
@@ -79,8 +81,8 @@ func TestBypass_ArgumentSmuggling(t *testing.T) {
 	smuggledArgs := []map[string]any{
 		{"amount": 500, "__proto__": map[string]any{"amount": 50}},
 		{"amount": 500, "constructor": map[string]any{"amount": 50}},
-		{"amount": 2000, "amount ": 50},     // trailing space key
-		{"amount": 2000, "amount\t": 50},    // tab in key
+		{"amount": 2000, "amount ": 50},  // trailing space key
+		{"amount": 2000, "amount\t": 50}, // tab in key
 	}
 
 	for i, args := range smuggledArgs {

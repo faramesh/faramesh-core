@@ -62,8 +62,8 @@ func (a *AtomicEngine) HotReload(doc *Doc, version string) error {
 const EvalTimeout = 50 * time.Millisecond
 
 // EvaluateWithTimeout runs the first-match-wins evaluation with per-rule
-// timeouts. If any rule exceeds EvalTimeout, it's skipped (fail-open for
-// that rule, but the overall default is fail-closed via default_effect: deny).
+// timeouts. If any rule exceeds EvalTimeout, evaluation returns DENY with
+// reason code GOVERNANCE_TIMEOUT (fail-closed).
 func (e *Engine) EvaluateWithTimeout(ctx context.Context, toolID string, evalCtx EvalContext) EvalResult {
 	if evalCtx.Vars == nil {
 		evalCtx.Vars = e.doc.Vars

@@ -5,17 +5,80 @@ import (
 	"encoding/base64"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewVerifierFromEnvDefaultProvider(t *testing.T) {
-	t.Setenv("FARAMESH_IDP_LOCAL_TOKEN", "dev-token")
-
 	verifier, err := NewVerifierFromEnv("default")
 	if err != nil {
 		t.Fatalf("new verifier: %v", err)
 	}
-	if verifier.Name() != "local" {
-		t.Fatalf("provider name=%q, want local", verifier.Name())
+	if verifier.Name() != "default" {
+		t.Fatalf("provider name=%q, want default", verifier.Name())
+	}
+	if _, ok := verifier.(*EphemeralVerifier); !ok {
+		t.Fatalf("expected EphemeralVerifier for default provider, got %T", verifier)
+	}
+}
+
+func TestEphemeralVerifierVerifySignedToken(t *testing.T) {
+	verifier, err := NewEphemeralVerifier(EphemeralConfig{
+		Subject: "user-ephemeral",
+		Email:   "user-ephemeral@example.com",
+		Name:    "Ephemeral User",
+		Org:     "acme",
+		Role:    "operator",
+		Tier:    "pro",
+	})
+	if err != nil {
+		t.Fatalf("new ephemeral verifier: %v", err)
+	}
+
+	token, err := verifier.mintToken(ephemeralSignedClaims{}, 2*time.Minute)
+	if err != nil {
+		t.Fatalf("mint token: %v", err)
+	}
+
+	identity, err := verifier.VerifyToken(context.Background(), "Bearer "+token)
+	if err != nil {
+		t.Fatalf("verify token: %v", err)
+	}
+	if identity.Subject != "user-ephemeral" {
+		t.Fatalf("subject=%q, want user-ephemeral", identity.Subject)
+	}
+	if identity.Provider != "default" {
+		t.Fatalf("provider=%q, want default", identity.Provider)
+	}
+	if identity.Org != "acme" {
+		t.Fatalf("org=%q, want acme", identity.Org)
+	}
+	if !identity.Valid() {
+		t.Fatalf("expected ephemeral identity to be valid")
+	}
+}
+
+func TestEphemeralVerifierRejectsTamperedToken(t *testing.T) {
+	verifier, err := NewEphemeralVerifier(EphemeralConfig{})
+	if err != nil {
+		t.Fatalf("new ephemeral verifier: %v", err)
+	}
+
+	token, err := verifier.mintToken(ephemeralSignedClaims{}, time.Minute)
+	if err != nil {
+		t.Fatalf("mint token: %v", err)
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatalf("unexpected token format")
+	}
+	if len(parts[1]) < 2 {
+		t.Fatalf("unexpected payload length")
+	}
+	parts[1] = parts[1][:len(parts[1])-1] + "A"
+	tampered := strings.Join(parts, ".")
+
+	if _, err := verifier.VerifyToken(context.Background(), tampered); err == nil {
+		t.Fatalf("expected tampered token verification error")
 	}
 }
 

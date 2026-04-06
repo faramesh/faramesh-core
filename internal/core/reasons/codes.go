@@ -175,6 +175,7 @@ const (
 	// Callback codes
 	CallbackError            = "CALLBACK_ERROR"
 	CallbackUnsafeArgsAccess = "CALLBACK_UNSAFE_ARGS_ACCESS"
+	TelemetryHookError       = "TELEMETRY_HOOK_ERROR"
 
 	// Policy source codes
 	PolicyValidationFailed = "POLICY_VALIDATION_FAILED"
@@ -322,6 +323,7 @@ var canonical = map[string]struct{}{
 
 	CallbackError:            {},
 	CallbackUnsafeArgsAccess: {},
+	TelemetryHookError:       {},
 
 	PolicyValidationFailed: {},
 	PolicySourceDegraded:   {},
