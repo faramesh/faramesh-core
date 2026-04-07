@@ -418,6 +418,12 @@ faramesh-core/
 ## Documentation Hub
 
 - [Docs Index](docs/README.md)
+- [30-Second Real Agent Guide](docs/guides/REAL_AGENT_TEST_GUIDE.md)
+- [Network Hardening Canary Runbook](docs/guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
+- [Network Hardening Progressive Enforce Runbook](docs/guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
+- [Simple Docs Track (Start Here)](docs/simple/00_START_HERE.md)
+- [FPL Docs in Repo](docs/fpl/README.md)
+- [Deployment References](deploy/README.md)
 - [FPL Language Repo](https://github.com/faramesh/fpl-lang)
 
 ## CLI Reference
@@ -507,6 +513,13 @@ Full documentation at [faramesh.dev/docs](https://faramesh.dev/docs).
 Repository docs for crawlers and contributors:
 
 - [Docs Index](docs/README.md)
+- [30-Second Real Agent Guide](docs/guides/REAL_AGENT_TEST_GUIDE.md)
+- [Simple Docs Track](docs/simple/README.md)
+- [Simple Docs Start Here](docs/simple/00_START_HERE.md)
+- [Network Hardening Canary Runbook](docs/guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
+- [Network Hardening Progressive Enforce Runbook](docs/guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
+- [FPL Docs in Repo](docs/fpl/README.md)
+- [Deployment References](deploy/README.md)
 - [FPL Getting Started](https://github.com/faramesh/fpl-lang/blob/main/docs/GETTING_STARTED.md)
 - [FPL Language Reference](https://github.com/faramesh/fpl-lang/blob/main/docs/LANGUAGE_REFERENCE.md)
 - [FPL Comparison](https://github.com/faramesh/fpl-lang/blob/main/docs/COMPARISON.md)
