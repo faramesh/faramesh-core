@@ -51,6 +51,16 @@ export function configure(options: ClientConfig = {}): void {
     onRequestEnd: options.onRequestEnd || existingConfig?.onRequestEnd,
     onError: options.onError || existingConfig?.onError,
   };
+
+  try {
+    const u = new URL(globalConfig.baseUrl!);
+    if (u.protocol === "http:" && u.hostname !== "127.0.0.1" && u.hostname !== "localhost" && u.hostname !== "::1") {
+      console.warn(
+        `[faramesh] WARNING: base URL uses plain HTTP with non-localhost host (${u.hostname}). ` +
+        "Use https:// in production to protect governance decisions and credentials in transit."
+      );
+    }
+  } catch { /* ignore parse errors — will fail later at request time */ }
 }
 
 function getConfig(): ClientConfig {

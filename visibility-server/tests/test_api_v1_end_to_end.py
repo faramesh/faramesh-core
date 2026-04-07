@@ -77,7 +77,7 @@ class VisibilityV1ApiE2ETests(unittest.TestCase):
         self.assertEqual(action["status"], "pending_approval")
         self.assertEqual(action["tool"], "payment")
         self.assertEqual(action["operation"], "refund")
-        self.assertEqual(action["approval_token"], "tok-v1-list")
+        self.assertIsNone(action["approval_token"])
         self.assertEqual(action["params"]["amount"], 1200)
 
     def test_v1_actions_state_matrix_uses_domain_tool_names(self) -> None:
@@ -213,6 +213,73 @@ class VisibilityV1ApiE2ETests(unittest.TestCase):
         self.assertEqual(sent_payload["type"], "approve_defer")
         self.assertEqual(sent_payload["defer_token"], "tok-v1-approval")
         self.assertTrue(sent_payload["approved"])
+
+    # -- Security regression tests --------------------------------------------------
+
+    def _ingest_deferred_action(self, call_id: str = "call-sec", token: str = "tok-sec") -> None:
+        self.store.ingest_callback_event(
+            {
+                "event_type": "decision",
+                "call_id": call_id,
+                "agent_id": "agent-sec",
+                "session_id": "sess-sec",
+                "tool_id": "payment/refund",
+                "effect": "DEFER",
+                "reason_code": "RULE_DEFER",
+                "reason": "Approval required",
+                "defer_token": token,
+                "timestamp": "2026-04-06T14:00:00Z",
+                "args": {"amount": 500},
+            }
+        )
+
+    def test_v1_approval_rejected_without_token(self) -> None:
+        self._ingest_deferred_action()
+        res = self.client.post(
+            "/v1/actions/call-sec/approval",
+            json={"approve": True},
+        )
+        self.assertEqual(res.status_code, 422)
+
+    def test_v1_approval_rejected_with_wrong_token(self) -> None:
+        self._ingest_deferred_action()
+        res = self.client.post(
+            "/v1/actions/call-sec/approval",
+            json={"token": "wrong-token", "approve": True},
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_legacy_approve_rejected_without_token(self) -> None:
+        self._ingest_deferred_action()
+        res = self.client.post(
+            "/actions/call-sec/approve",
+            json={"reason": "test"},
+        )
+        self.assertEqual(res.status_code, 422)
+
+    def test_legacy_approve_rejected_with_wrong_token(self) -> None:
+        self._ingest_deferred_action()
+        res = self.client.post(
+            "/actions/call-sec/approve",
+            json={"token": "wrong-token", "reason": "test"},
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_approval_token_redacted_in_list(self) -> None:
+        self._ingest_deferred_action()
+        res = self.client.get("/v1/actions?limit=10")
+        self.assertEqual(res.status_code, 200)
+        items = res.json()
+        self.assertEqual(len(items), 1)
+        self.assertIsNone(items[0]["approval_token"])
+        self.assertEqual(items[0]["context"]["defer_token"], "")
+
+    def test_approval_token_present_in_detail(self) -> None:
+        self._ingest_deferred_action()
+        res = self.client.get("/v1/actions/call-sec")
+        self.assertEqual(res.status_code, 200)
+        action = res.json()
+        self.assertEqual(action["approval_token"], "tok-sec")
 
 
 if __name__ == "__main__":
