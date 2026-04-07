@@ -8,4 +8,4 @@ docker build -t faramesh:local -f faramesh-core/Dockerfile faramesh-core
 
 For HTTP-only attachment, drop the socket volume and point the SDK at **`http://faramesh:PORT`** instead.
 
-See **`docs/dev/ENFORCEMENT_STACK_AND_TRUST.md`** — Compose gives container isolation, not full egress control unless you add **network policies** / **proxy** sidecars.
+Compose gives container isolation, but not full egress control by itself. For stronger network control, pair Compose with explicit network policy/proxy controls and follow the public enforcement guidance in the repository **`README.md`**.
