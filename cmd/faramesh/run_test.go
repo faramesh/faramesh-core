@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -121,6 +122,27 @@ func TestInferAgentID_FromPythonModule(t *testing.T) {
 	}
 }
 
+func TestInferFrameworkFromCommand_DeepAgentsScript(t *testing.T) {
+	got := inferFrameworkFromCommand([]string{"python", "sdk/python/examples/deepagents_openrouter_qwen_production.py"})
+	if got != "deepagents" {
+		t.Fatalf("inferFrameworkFromCommand deepagents = %q", got)
+	}
+}
+
+func TestInferFrameworkFromCommand_Module(t *testing.T) {
+	got := inferFrameworkFromCommand([]string{"python", "-m", "langgraph.cli"})
+	if got != "langgraph" {
+		t.Fatalf("inferFrameworkFromCommand module = %q", got)
+	}
+}
+
+func TestInferHarnessFromCommand_UsesFrameworkHint(t *testing.T) {
+	got := inferHarnessFromCommand([]string{"python", "-m", "deepagents.cli"})
+	if got != "deepagents" {
+		t.Fatalf("inferHarnessFromCommand = %q", got)
+	}
+}
+
 func TestResolveChildSocket_PrefersEnvWhenFlagUnchanged(t *testing.T) {
 	oldDaemonSocket := daemonSocket
 	defer func() { daemonSocket = oldDaemonSocket }()
@@ -235,5 +257,21 @@ func TestResolvePythonSDKPathFromEnv(t *testing.T) {
 	}
 	if got != abs {
 		t.Fatalf("resolvePythonSDKPath = %q, want %q", got, abs)
+	}
+}
+
+func TestProxyReady(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	if !proxyReady(port) {
+		t.Fatalf("proxyReady(%d) = false, want true", port)
+	}
+	if proxyReady(port + 1) {
+		t.Fatalf("proxyReady(%d) = true, want false", port+1)
 	}
 }

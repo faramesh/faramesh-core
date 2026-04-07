@@ -42,6 +42,10 @@ var (
 	serveProxyPort            int
 	serveProxyConnect         bool
 	serveProxyForward         bool
+	serveNetworkHardeningMode string
+	serveInferenceRoutesFile  string
+	serveAllowPrivateCIDRs    string
+	serveAllowPrivateHosts    string
 	serveGRPCPort             int
 	serveMCPProxyPort         int
 	serveMCPTarget            string
@@ -59,6 +63,7 @@ var (
 	serveEBPFObjectPath       string
 	serveEBPFAttachTP         bool
 	serveSPIFFESocketPath     string
+	serveSPIFFEID             string
 	serveVaultAddr            string
 	serveVaultToken           string
 	serveVaultMount           string
@@ -74,6 +79,7 @@ var (
 	serveIntegrityManifest    string
 	serveIntegrityBaseDir     string
 	serveBuildinfoExpected    string
+	serveAllowEnvCredFallback bool
 	serveSkipOnboardPreflight bool
 )
 
@@ -90,6 +96,10 @@ func init() {
 	serveCmd.Flags().IntVar(&serveProxyPort, "proxy-port", 0, "start HTTP proxy adapter on this port (0 disables)")
 	serveCmd.Flags().BoolVar(&serveProxyConnect, "proxy-connect", false, "with --proxy-port, enable governed HTTP CONNECT only (tool proxy/connect)")
 	serveCmd.Flags().BoolVar(&serveProxyForward, "proxy-forward", false, "with --proxy-port, enable full governed forward proxy: CONNECT + HTTP absolute-form (tools proxy/connect and proxy/http)")
+	serveCmd.Flags().StringVar(&serveNetworkHardeningMode, "network-hardening-mode", "off", "proxy network hardening mode: off|audit|enforce")
+	serveCmd.Flags().StringVar(&serveInferenceRoutesFile, "inference-routes-file", "", "path to JSON file defining inference route auth/header/model rewrite controls")
+	serveCmd.Flags().StringVar(&serveAllowPrivateCIDRs, "allow-private-cidrs", "", "comma-separated CIDRs exempt from private-range SSRF blocking (hardening mode only)")
+	serveCmd.Flags().StringVar(&serveAllowPrivateHosts, "allow-private-hosts", "", "comma-separated host glob patterns exempt from private-range SSRF blocking (hardening mode only)")
 	serveCmd.Flags().IntVar(&serveGRPCPort, "grpc-port", 0, "start gRPC daemon adapter on this port (0 disables)")
 	serveCmd.Flags().IntVar(&serveMCPProxyPort, "mcp-proxy-port", 0, "start MCP HTTP gateway on this port (0 disables)")
 	serveCmd.Flags().StringVar(&serveMCPTarget, "mcp-target", "", "upstream MCP HTTP server base URL (required when --mcp-proxy-port is set)")
@@ -107,6 +117,7 @@ func init() {
 	serveCmd.Flags().StringVar(&serveEBPFObjectPath, "ebpf-object", "", "path to compiled eBPF ELF object (.o), required when eBPF is enabled")
 	serveCmd.Flags().BoolVar(&serveEBPFAttachTP, "ebpf-attach-tracepoints", false, "attempt best-effort tracepoint attach for tracepoint programs in the loaded object")
 	serveCmd.Flags().StringVar(&serveSPIFFESocketPath, "spiffe-socket", "", "SPIFFE Workload API Unix socket path for workload identity resolution")
+	serveCmd.Flags().StringVar(&serveSPIFFEID, "spiffe-id", "", "explicit SPIFFE workload ID override for strict preflight/runtime identity checks")
 	serveCmd.Flags().StringVar(&serveVaultAddr, "vault-addr", "", "HashiCorp Vault address for credential broker (also: VAULT_ADDR)")
 	serveCmd.Flags().StringVar(&serveVaultToken, "vault-token", "", "Vault token for credential broker (also: VAULT_TOKEN)")
 	serveCmd.Flags().StringVar(&serveVaultMount, "vault-mount", "secret", "Vault mount path (e.g. secret, aws, database)")
@@ -122,6 +133,7 @@ func init() {
 	serveCmd.Flags().StringVar(&serveIntegrityManifest, "integrity-manifest", "", "artifact manifest JSON required for strict preflight integrity checks")
 	serveCmd.Flags().StringVar(&serveIntegrityBaseDir, "integrity-base-dir", ".", "base directory used to verify paths in --integrity-manifest")
 	serveCmd.Flags().StringVar(&serveBuildinfoExpected, "buildinfo-expected", "", "expected buildinfo JSON fingerprint required for strict preflight integrity checks")
+	serveCmd.Flags().BoolVar(&serveAllowEnvCredFallback, "allow-env-credential-fallback", false, "allow env-based credential broker fallback (development-only escape hatch; keep disabled in production)")
 	serveCmd.Flags().BoolVar(&serveSkipOnboardPreflight, "skip-onboard-preflight", false, "skip pre-daemon onboarding readiness checks before strict startup")
 }
 
@@ -132,6 +144,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 	defer log.Sync()
 
+	if spiffeID := resolveSPIFFEID(); spiffeID != "" {
+		_ = os.Setenv("FARAMESH_SPIFFE_ID", spiffeID)
+	}
+
 	strictPreflight := resolveStrictPreflight()
 	if strictPreflight && !serveSkipOnboardPreflight {
 		if err := runServeOnboardPreflight(); err != nil {
@@ -140,48 +156,53 @@ func runServe(cmd *cobra.Command, args []string) error {
 	}
 
 	cfg := daemon.Config{
-		PolicyPath:            servePolicy,
-		PolicyURL:             servePolicyURL,
-		PolicyPollInterval:    servePolicyPollInterval,
-		DataDir:               serveDataDir,
-		SocketPath:            serveSocket,
-		SlackWebhook:          serveSlack,
-		Log:                   log,
-		ProxyPort:             serveProxyPort,
-		ProxyConnect:          serveProxyConnect,
-		ProxyForward:          serveProxyForward,
-		GRPCPort:              serveGRPCPort,
-		MCPProxyPort:          serveMCPProxyPort,
-		MCPTarget:             serveMCPTarget,
-		MetricsPort:           serveMetricsPort,
-		DPRDSN:                serveDPRDSN,
-		RedisURL:              serveRedisURL,
-		DPRHMACKey:            serveDPRHMACKey,
-		TLSCertFile:           serveTLSCert,
-		TLSKeyFile:            serveTLSKey,
-		ClientCAFile:          serveClientCA,
-		TLSAuto:               resolveTLSAuto(),
-		PagerDutyRoutingKey:   servePagerDutyRoutingKey,
-		PolicyAdminToken:      resolvePolicyAdminToken(),
-		EnableEBPF:            resolveServeEBPFEnabled(),
-		EBPFObjectPath:        resolveServeEBPFObjectPath(),
-		EBPFAttachTracepoints: resolveServeEBPFAttachTracepoints(),
-		SPIFFESocketPath:      strings.TrimSpace(serveSPIFFESocketPath),
-		VaultAddr:             resolveVaultAddr(),
-		VaultToken:            resolveVaultToken(),
-		VaultMount:            serveVaultMount,
-		VaultNamespace:        serveVaultNamespace,
-		AWSSecretsRegion:      serveAWSSecretsRegion,
-		GCPSecretsProject:     serveGCPSecretsProject,
-		AzureKeyVaultURL:      serveAzureKeyVaultURL,
-		AzureTenantID:         serveAzureTenantID,
-		AzureClientID:         serveAzureClientID,
-		AzureClientSecret:     serveAzureClientSecret,
-		StrictPreflight:       strictPreflight,
-		IDPProvider:           resolveIDPProvider(),
-		IntegrityManifestPath: resolveIntegrityManifestPath(),
-		IntegrityBaseDir:      resolveIntegrityBaseDir(),
-		BuildInfoExpectedPath: resolveBuildinfoExpectedPath(),
+		PolicyPath:                 servePolicy,
+		PolicyURL:                  servePolicyURL,
+		PolicyPollInterval:         servePolicyPollInterval,
+		DataDir:                    serveDataDir,
+		SocketPath:                 serveSocket,
+		SlackWebhook:               serveSlack,
+		Log:                        log,
+		ProxyPort:                  serveProxyPort,
+		ProxyConnect:               serveProxyConnect,
+		ProxyForward:               serveProxyForward,
+		NetworkHardeningMode:       strings.ToLower(strings.TrimSpace(serveNetworkHardeningMode)),
+		InferenceRoutesFile:        strings.TrimSpace(serveInferenceRoutesFile),
+		AllowedPrivateCIDRs:        splitCSVList(serveAllowPrivateCIDRs),
+		AllowedPrivateHosts:        splitCSVList(serveAllowPrivateHosts),
+		GRPCPort:                   serveGRPCPort,
+		MCPProxyPort:               serveMCPProxyPort,
+		MCPTarget:                  serveMCPTarget,
+		MetricsPort:                serveMetricsPort,
+		DPRDSN:                     serveDPRDSN,
+		RedisURL:                   serveRedisURL,
+		DPRHMACKey:                 serveDPRHMACKey,
+		TLSCertFile:                serveTLSCert,
+		TLSKeyFile:                 serveTLSKey,
+		ClientCAFile:               serveClientCA,
+		TLSAuto:                    resolveTLSAuto(),
+		PagerDutyRoutingKey:        servePagerDutyRoutingKey,
+		PolicyAdminToken:           resolvePolicyAdminToken(),
+		EnableEBPF:                 resolveServeEBPFEnabled(),
+		EBPFObjectPath:             resolveServeEBPFObjectPath(),
+		EBPFAttachTracepoints:      resolveServeEBPFAttachTracepoints(),
+		SPIFFESocketPath:           strings.TrimSpace(serveSPIFFESocketPath),
+		VaultAddr:                  resolveVaultAddr(),
+		VaultToken:                 resolveVaultToken(),
+		VaultMount:                 serveVaultMount,
+		VaultNamespace:             serveVaultNamespace,
+		AWSSecretsRegion:           serveAWSSecretsRegion,
+		GCPSecretsProject:          serveGCPSecretsProject,
+		AzureKeyVaultURL:           serveAzureKeyVaultURL,
+		AzureTenantID:              serveAzureTenantID,
+		AzureClientID:              serveAzureClientID,
+		AzureClientSecret:          serveAzureClientSecret,
+		StrictPreflight:            strictPreflight,
+		IDPProvider:                resolveIDPProvider(),
+		IntegrityManifestPath:      resolveIntegrityManifestPath(),
+		IntegrityBaseDir:           resolveIntegrityBaseDir(),
+		BuildInfoExpectedPath:      resolveBuildinfoExpectedPath(),
+		AllowEnvCredentialFallback: serveAllowEnvCredFallback,
 	}
 
 	if serveSyncHorizon {
@@ -226,10 +247,16 @@ func runServeOnboardPreflight() error {
 	prevPagerDuty := onboardPagerDutyRoutingKey
 	prevIDP := onboardIDPProvider
 	prevSPIFFE := onboardSPIFFESocket
+	prevSPIFFEID := onboardSPIFFEID
 	prevVault := onboardVaultAddr
 	prevAWS := onboardAWSRegion
 	prevGCP := onboardGCPProject
 	prevAzure := onboardAzureVaultURL
+	prevInteractive := onboardInteractive
+	prevCredentialProfile := onboardCredentialProfile
+	prevCredentialBackend := onboardCredentialBackend
+	prevAllowEnvFallbackRaw, prevAllowEnvFallbackSet := os.LookupEnv("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK")
+	prevSPIFFEIDRaw, prevSPIFFEIDSet := os.LookupEnv("FARAMESH_SPIFFE_ID")
 	defer func() {
 		onboardPolicyPath = prevPolicyPath
 		onboardStrict = prevStrict
@@ -238,10 +265,24 @@ func runServeOnboardPreflight() error {
 		onboardPagerDutyRoutingKey = prevPagerDuty
 		onboardIDPProvider = prevIDP
 		onboardSPIFFESocket = prevSPIFFE
+		onboardSPIFFEID = prevSPIFFEID
 		onboardVaultAddr = prevVault
 		onboardAWSRegion = prevAWS
 		onboardGCPProject = prevGCP
 		onboardAzureVaultURL = prevAzure
+		onboardInteractive = prevInteractive
+		onboardCredentialProfile = prevCredentialProfile
+		onboardCredentialBackend = prevCredentialBackend
+		if prevAllowEnvFallbackSet {
+			_ = os.Setenv("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK", prevAllowEnvFallbackRaw)
+		} else {
+			_ = os.Unsetenv("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK")
+		}
+		if prevSPIFFEIDSet {
+			_ = os.Setenv("FARAMESH_SPIFFE_ID", prevSPIFFEIDRaw)
+		} else {
+			_ = os.Unsetenv("FARAMESH_SPIFFE_ID")
+		}
 	}()
 
 	onboardPolicyPath = strings.TrimSpace(servePolicy)
@@ -251,10 +292,20 @@ func runServeOnboardPreflight() error {
 	onboardPagerDutyRoutingKey = strings.TrimSpace(servePagerDutyRoutingKey)
 	onboardIDPProvider = resolveIDPProvider()
 	onboardSPIFFESocket = strings.TrimSpace(serveSPIFFESocketPath)
+	onboardSPIFFEID = resolveSPIFFEID()
 	onboardVaultAddr = resolveVaultAddr()
 	onboardAWSRegion = strings.TrimSpace(serveAWSSecretsRegion)
 	onboardGCPProject = strings.TrimSpace(serveGCPSecretsProject)
 	onboardAzureVaultURL = strings.TrimSpace(serveAzureKeyVaultURL)
+	onboardInteractive = false
+	onboardCredentialProfile = "production"
+	onboardCredentialBackend = "auto"
+	if onboardSPIFFEID != "" {
+		_ = os.Setenv("FARAMESH_SPIFFE_ID", onboardSPIFFEID)
+	}
+	if serveAllowEnvCredFallback {
+		_ = os.Setenv("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK", "true")
+	}
 
 	return runOnboard(nil, nil)
 }
@@ -318,6 +369,13 @@ func resolveIDPProvider() string {
 	return "default"
 }
 
+func resolveSPIFFEID() string {
+	if strings.TrimSpace(serveSPIFFEID) != "" {
+		return strings.TrimSpace(serveSPIFFEID)
+	}
+	return strings.TrimSpace(os.Getenv("FARAMESH_SPIFFE_ID"))
+}
+
 func resolveTLSAuto() bool {
 	if serveTLSAuto {
 		return true
@@ -347,6 +405,26 @@ func resolveBuildinfoExpectedPath() string {
 		return strings.TrimSpace(serveBuildinfoExpected)
 	}
 	return strings.TrimSpace(os.Getenv("FARAMESH_BUILDINFO_EXPECTED"))
+}
+
+func splitCSVList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func buildLogger(level string) (*zap.Logger, error) {
