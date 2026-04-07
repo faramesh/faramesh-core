@@ -309,9 +309,14 @@ fi
 
 step "Next steps"
 
-printf "  ${BOLD}1.${RESET} Create a policy:          ${CYAN}faramesh init${RESET}\n"
-printf "  ${BOLD}2.${RESET} Run a governed command:    ${CYAN}faramesh run -- python agent.py${RESET}\n"
-printf "  ${BOLD}3.${RESET} View the dashboard:        ${CYAN}faramesh serve${RESET}\n"
+printf "  ${BOLD}Source checkout lifecycle (recommended for existing projects):${RESET}\n"
+printf "     ${CYAN}bash scripts/faramesh_setup.sh install${RESET}\n"
+printf "     ${CYAN}bash scripts/faramesh_setup.sh start${RESET}\n"
+printf "\n"
+printf "  ${BOLD}Binary-only quick start:${RESET}\n"
+printf "     ${CYAN}faramesh init${RESET}\n"
+printf "     ${CYAN}faramesh run -- python agent.py${RESET}\n"
+printf "     ${CYAN}faramesh serve${RESET}\n"
 printf "\n"
 printf "  ${DIM}Documentation:${RESET}  ${BLUE}https://docs.faramesh.dev${RESET}\n"
 printf "  ${DIM}GitHub:${RESET}         ${BLUE}https://github.com/${REPO}${RESET}\n"
