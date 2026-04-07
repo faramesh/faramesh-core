@@ -3,6 +3,8 @@ package policy
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"path"
 	"reflect"
 	"regexp"
@@ -217,7 +219,7 @@ func (e *Engine) Evaluate(toolID string, ctx EvalContext) EvalResult {
 	}
 
 	for i, rule := range e.doc.Rules {
-		if !matchTool(rule.Match.Tool, toolID) {
+		if !matchRule(rule.Match, toolID, ctx.Args) {
 			continue
 		}
 		if e.programs[i] != nil {
@@ -335,6 +337,284 @@ func matchTool(pattern, toolID string) bool {
 		return strings.HasPrefix(toolID, strings.TrimSuffix(pattern, "*"))
 	}
 	return matched
+}
+
+func matchRule(m Match, toolID string, args map[string]any) bool {
+	if !matchTool(m.Tool, toolID) {
+		return false
+	}
+	return matchNetworkPrimitives(m, args)
+}
+
+func matchNetworkPrimitives(m Match, args map[string]any) bool {
+	if strings.TrimSpace(m.Host) == "" &&
+		strings.TrimSpace(m.Port) == "" &&
+		strings.TrimSpace(m.Method) == "" &&
+		strings.TrimSpace(m.Path) == "" &&
+		len(m.Query) == 0 &&
+		len(m.Headers) == 0 {
+		return true
+	}
+
+	na := extractNetworkArgs(args)
+
+	if strings.TrimSpace(m.Host) != "" && !matchValuePattern(m.Host, na.Host, true) {
+		return false
+	}
+	if strings.TrimSpace(m.Port) != "" && !matchPortPattern(m.Port, na.Port) {
+		return false
+	}
+	if strings.TrimSpace(m.Method) != "" && !matchValuePattern(m.Method, na.Method, true) {
+		return false
+	}
+	if strings.TrimSpace(m.Path) != "" && !matchValuePattern(m.Path, na.Path, false) {
+		return false
+	}
+
+	for qk, qPattern := range m.Query {
+		values, ok := na.Query[qk]
+		if !ok || len(values) == 0 {
+			return false
+		}
+		if strings.TrimSpace(qPattern) == "" {
+			continue
+		}
+		matched := false
+		for _, v := range values {
+			if matchValuePattern(qPattern, v, false) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+
+	for hk, hPattern := range m.Headers {
+		actual, ok := na.Headers[strings.ToLower(strings.TrimSpace(hk))]
+		if !ok {
+			return false
+		}
+		if strings.TrimSpace(hPattern) == "" {
+			continue
+		}
+		if !matchValuePattern(hPattern, actual, false) {
+			return false
+		}
+	}
+
+	return true
+}
+
+type networkArgs struct {
+	Host    string
+	Port    int
+	Method  string
+	Path    string
+	Query   map[string][]string
+	Headers map[string]string
+}
+
+func extractNetworkArgs(args map[string]any) networkArgs {
+	na := networkArgs{
+		Host:    strings.TrimSpace(argsString(args, "host")),
+		Port:    int(argsNumber(args, "port")),
+		Method:  strings.ToUpper(strings.TrimSpace(argsString(args, "method"))),
+		Path:    strings.TrimSpace(argsString(args, "path")),
+		Query:   make(map[string][]string),
+		Headers: make(map[string]string),
+	}
+
+	if rawQ := strings.TrimSpace(argsString(args, "raw_query")); rawQ != "" {
+		for key, vals := range parseRawQuery(rawQ) {
+			na.Query[key] = append(na.Query[key], vals...)
+		}
+	}
+
+	if raw, ok := args["query"]; ok {
+		switch q := raw.(type) {
+		case map[string][]string:
+			for k, vals := range q {
+				if len(vals) == 0 {
+					continue
+				}
+				na.Query[k] = append(na.Query[k], vals...)
+			}
+		case map[string]string:
+			for k, v := range q {
+				na.Query[k] = append(na.Query[k], strings.TrimSpace(v))
+			}
+		case map[string]any:
+			for k, v := range q {
+				switch typed := v.(type) {
+				case []any:
+					for _, item := range typed {
+						na.Query[k] = append(na.Query[k], strings.TrimSpace(fmt.Sprint(item)))
+					}
+				case []string:
+					for _, item := range typed {
+						na.Query[k] = append(na.Query[k], strings.TrimSpace(item))
+					}
+				default:
+					na.Query[k] = append(na.Query[k], strings.TrimSpace(fmt.Sprint(v)))
+				}
+			}
+		}
+	}
+
+	if raw, ok := args["headers"]; ok {
+		switch h := raw.(type) {
+		case map[string]string:
+			for k, v := range h {
+				key := strings.ToLower(strings.TrimSpace(k))
+				if key == "" {
+					continue
+				}
+				na.Headers[key] = strings.TrimSpace(v)
+			}
+		case map[string]any:
+			for k, v := range h {
+				key := strings.ToLower(strings.TrimSpace(k))
+				if key == "" {
+					continue
+				}
+				na.Headers[key] = strings.TrimSpace(fmt.Sprint(v))
+			}
+		}
+	}
+
+	if rawURL := strings.TrimSpace(argsString(args, "url")); rawURL != "" {
+		if u, err := url.Parse(rawURL); err == nil {
+			if na.Host == "" {
+				na.Host = strings.TrimSpace(u.Hostname())
+			}
+			if na.Port <= 0 {
+				if p := u.Port(); p != "" {
+					if parsed, err := strconv.Atoi(p); err == nil {
+						na.Port = parsed
+					}
+				}
+			}
+			if na.Path == "" {
+				na.Path = strings.TrimSpace(u.EscapedPath())
+				if na.Path == "" {
+					na.Path = strings.TrimSpace(u.Path)
+				}
+			}
+			if len(na.Query) == 0 {
+				for key, vals := range u.Query() {
+					na.Query[key] = append(na.Query[key], vals...)
+				}
+			}
+		}
+	}
+
+	if na.Host != "" {
+		if host, port, err := net.SplitHostPort(na.Host); err == nil {
+			na.Host = strings.TrimSpace(host)
+			if na.Port <= 0 {
+				if parsed, err := strconv.Atoi(port); err == nil {
+					na.Port = parsed
+				}
+			}
+		}
+	}
+
+	if na.Host != "" {
+		na.Host = strings.ToLower(strings.Trim(na.Host, "[]"))
+	}
+
+	if na.Path == "" {
+		na.Path = "/"
+	}
+
+	return na
+}
+
+func parseRawQuery(raw string) map[string][]string {
+	out := make(map[string][]string)
+	if strings.TrimSpace(raw) == "" {
+		return out
+	}
+	vals, err := url.ParseQuery(raw)
+	if err != nil {
+		return out
+	}
+	for k, v := range vals {
+		if len(v) == 0 {
+			continue
+		}
+		out[k] = append(out[k], v...)
+	}
+	return out
+}
+
+func matchValuePattern(pattern, value string, caseInsensitive bool) bool {
+	pattern = strings.TrimSpace(pattern)
+	value = strings.TrimSpace(value)
+	if pattern == "" {
+		return true
+	}
+	if value == "" {
+		return false
+	}
+	if caseInsensitive {
+		pattern = strings.ToLower(pattern)
+		value = strings.ToLower(value)
+	}
+	if pattern == "*" {
+		return true
+	}
+	matched, err := path.Match(pattern, value)
+	if err != nil {
+		return value == pattern
+	}
+	return matched
+}
+
+func matchPortPattern(selector string, port int) bool {
+	if strings.TrimSpace(selector) == "" {
+		return true
+	}
+	if port <= 0 || port > 65535 {
+		return false
+	}
+	for _, token := range strings.Split(selector, ",") {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		if token == "*" {
+			return true
+		}
+		if strings.Contains(token, "-") {
+			parts := strings.SplitN(token, "-", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			start, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+			end, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+			if err1 != nil || err2 != nil {
+				continue
+			}
+			if start > end {
+				start, end = end, start
+			}
+			if port >= start && port <= end {
+				return true
+			}
+			continue
+		}
+		p, err := strconv.Atoi(token)
+		if err != nil {
+			continue
+		}
+		if p == port {
+			return true
+		}
+	}
+	return false
 }
 
 // evalEnv builds the expr-lang environment map for condition evaluation.

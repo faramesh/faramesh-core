@@ -73,7 +73,7 @@ func (e *Engine) EvaluateWithTimeout(ctx context.Context, toolID string, evalCtx
 	}
 
 	for i, rule := range e.doc.Rules {
-		if !matchTool(rule.Match.Tool, toolID) {
+		if !matchRule(rule.Match, toolID, evalCtx.Args) {
 			continue
 		}
 		if e.programs[i] != nil {

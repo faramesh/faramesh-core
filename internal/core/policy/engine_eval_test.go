@@ -186,3 +186,117 @@ func TestEvaluatePhaseTransitionMatchesCondition(t *testing.T) {
 		t.Fatal("expected no transition match when condition is false")
 	}
 }
+
+func TestEvaluateNetworkPrimitivesMatchAndMismatch(t *testing.T) {
+	doc := &Doc{
+		DefaultEffect: "deny",
+		Rules: []Rule{
+			{
+				ID: "allow-specific-network-request",
+				Match: Match{
+					Tool:   "proxy/http",
+					Host:   "api.openai.com",
+					Port:   "443",
+					Method: "POST",
+					Path:   "/v1/*/*",
+					Query: map[string]string{
+						"api-version": "2024-*",
+					},
+					Headers: map[string]string{
+						"x-api-key": "sk-*",
+					},
+				},
+				Effect: "permit",
+			},
+		},
+	}
+
+	e, err := NewEngine(doc, "v-test")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	permitted := e.Evaluate("proxy/http", EvalContext{
+		Args: map[string]any{
+			"host":   "api.openai.com",
+			"port":   443,
+			"method": "POST",
+			"path":   "/v1/chat/completions",
+			"query": map[string]any{
+				"api-version": "2024-10-01",
+			},
+			"headers": map[string]any{
+				"X-API-Key": "sk-live-123",
+			},
+		},
+	})
+	if permitted.Effect != "permit" {
+		t.Fatalf("expected permit for matching network primitives, got %q", permitted.Effect)
+	}
+
+	denied := e.Evaluate("proxy/http", EvalContext{
+		Args: map[string]any{
+			"host":   "api.openai.com",
+			"port":   443,
+			"method": "POST",
+			"path":   "/v1/chat/completions",
+			"query": map[string]any{
+				"api-version": "2024-10-01",
+			},
+			"headers": map[string]any{
+				"X-API-Key": "invalid-token",
+			},
+		},
+	})
+	if denied.Effect != "deny" {
+		t.Fatalf("expected deny when network primitive mismatch occurs, got %q", denied.Effect)
+	}
+	if denied.ReasonCode != "UNMATCHED_DENY" {
+		t.Fatalf("expected UNMATCHED_DENY when no rule matches, got %q", denied.ReasonCode)
+	}
+}
+
+func TestEvaluateNetworkPrimitivesDerivesFromURLAndRawQuery(t *testing.T) {
+	doc := &Doc{
+		DefaultEffect: "deny",
+		Rules: []Rule{
+			{
+				ID: "allow-openai-over-url-field",
+				Match: Match{
+					Tool:   "proxy/http",
+					Host:   "*.openai.com",
+					Port:   "443,8443,10000-11000",
+					Method: "POST",
+					Path:   "/v1/*/*",
+					Query: map[string]string{
+						"model": "gpt-*",
+					},
+					Headers: map[string]string{
+						"x-tenant": "prod",
+					},
+				},
+				Effect: "permit",
+			},
+		},
+	}
+
+	e, err := NewEngine(doc, "v-test")
+	if err != nil {
+		t.Fatalf("new engine: %v", err)
+	}
+
+	res := e.Evaluate("proxy/http", EvalContext{
+		Args: map[string]any{
+			"url":       "https://api.openai.com:443/v1/chat/completions?model=gpt-4o",
+			"raw_query": "model=gpt-4o&unused=1",
+			"method":    "POST",
+			"headers": map[string]any{
+				"X-Tenant": "prod",
+			},
+		},
+	})
+
+	if res.Effect != "permit" {
+		t.Fatalf("expected permit when URL/raw_query-derived fields match, got %q", res.Effect)
+	}
+}
