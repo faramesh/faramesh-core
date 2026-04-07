@@ -117,6 +117,30 @@ type Match struct {
 	// Examples: "stripe/*", "shell/run", "*"
 	Tool string `yaml:"tool"`
 
+	// Host is an optional glob pattern matched against args.host.
+	// Examples: "api.openai.com", "*.internal.example.com"
+	Host string `yaml:"host,omitempty"`
+
+	// Port is an optional port matcher evaluated against args.port.
+	// Supports single value ("443"), ranges ("1024-65535"), and comma lists.
+	Port string `yaml:"port,omitempty"`
+
+	// Method is an optional HTTP method matcher against args.method.
+	// Case-insensitive and supports glob matching.
+	Method string `yaml:"method,omitempty"`
+
+	// Path is an optional HTTP path matcher against args.path.
+	// Supports glob matching.
+	Path string `yaml:"path,omitempty"`
+
+	// Query defines required query param matchers by key.
+	// Each value supports glob matching against the actual query value.
+	Query map[string]string `yaml:"query,omitempty"`
+
+	// Headers defines required header matchers by header name.
+	// Header-name matching is case-insensitive; values support glob matching.
+	Headers map[string]string `yaml:"headers,omitempty"`
+
 	// When is an expr-lang expression evaluated against the call context.
 	// Available variables: args, vars, session, tool, principal, delegation, time,
 	// plus convenience aliases/functions: amount, cmd, purpose(...),
