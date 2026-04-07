@@ -69,3 +69,21 @@ dependencies = [
 		t.Fatalf("framework: got %q want langgraph", d.Framework)
 	}
 }
+
+func TestDetectAgentHarness_DeepAgentsMarkerPreferred(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, ".deepagents"), 0o755); err != nil {
+		t.Fatalf("mkdir .deepagents: %v", err)
+	}
+
+	if got := detectAgentHarness(dir); got != "deepagents-cli" {
+		t.Fatalf("detectAgentHarness() = %q, want deepagents-cli", got)
+	}
+}
+
+func TestDetectAgentHarness_NoMarkerDoesNotAssumeBinary(t *testing.T) {
+	dir := t.TempDir()
+	if got := detectAgentHarness(dir); got == "openclaw" || got == "deepagents-cli" {
+		t.Fatalf("detectAgentHarness() returned %q without marker directory", got)
+	}
+}

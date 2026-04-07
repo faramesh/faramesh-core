@@ -84,6 +84,10 @@ type Config struct {
 	ProxyPort             int
 	ProxyConnect          bool // HTTP CONNECT only (governed as proxy/connect)
 	ProxyForward          bool // CONNECT + RFC 7230 absolute-form HTTP (proxy/connect + proxy/http)
+	NetworkHardeningMode  string
+	InferenceRoutesFile   string
+	AllowedPrivateCIDRs   []string
+	AllowedPrivateHosts   []string
 	GRPCPort              int
 	MCPProxyPort          int
 	MCPTarget             string
@@ -106,6 +110,9 @@ type Config struct {
 	IntegrityManifestPath string
 	IntegrityBaseDir      string
 	BuildInfoExpectedPath string
+	// AllowEnvCredentialFallback permits env-based credential brokering as an explicit
+	// development escape hatch. Keep false in production strict mode.
+	AllowEnvCredentialFallback bool
 
 	// Credential broker backends.
 	VaultAddr         string
@@ -178,6 +185,24 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	if cfg.SocketPath == "" {
 		cfg.SocketPath = sdk.SocketPath
+	}
+	cfg.NetworkHardeningMode = strings.ToLower(strings.TrimSpace(cfg.NetworkHardeningMode))
+	if cfg.NetworkHardeningMode == "" {
+		cfg.NetworkHardeningMode = string(proxy.HardeningModeOff)
+	}
+	if cfg.ProxyForward {
+		cfg.ProxyConnect = true
+	}
+	if cfg.NetworkHardeningMode != string(proxy.HardeningModeOff) &&
+		cfg.NetworkHardeningMode != string(proxy.HardeningModeAudit) &&
+		cfg.NetworkHardeningMode != string(proxy.HardeningModeEnforce) {
+		return nil, fmt.Errorf("invalid network hardening mode %q (supported: off|audit|enforce)", cfg.NetworkHardeningMode)
+	}
+	if cfg.NetworkHardeningMode != string(proxy.HardeningModeOff) && cfg.ProxyPort <= 0 {
+		return nil, fmt.Errorf("network hardening mode %q requires --proxy-port", cfg.NetworkHardeningMode)
+	}
+	if strings.TrimSpace(cfg.InferenceRoutesFile) != "" && !cfg.ProxyForward {
+		return nil, fmt.Errorf("inference routes require --proxy-forward")
 	}
 	return &Daemon{cfg: cfg, log: cfg.Log}, nil
 }
@@ -611,6 +636,23 @@ func (d *Daemon) start() error {
 		if d.cfg.ProxyConnect {
 			pOpts = append(pOpts, proxy.WithConnectProxy(true))
 		}
+		if d.cfg.ProxyForward {
+			pOpts = append(pOpts, proxy.WithHTTPForwardProxy(true))
+		}
+		pOpts = append(pOpts, proxy.WithNetworkHardeningMode(d.cfg.NetworkHardeningMode))
+		if len(d.cfg.AllowedPrivateCIDRs) > 0 {
+			pOpts = append(pOpts, proxy.WithAllowedPrivateCIDRs(d.cfg.AllowedPrivateCIDRs))
+		}
+		if len(d.cfg.AllowedPrivateHosts) > 0 {
+			pOpts = append(pOpts, proxy.WithAllowedPrivateHosts(d.cfg.AllowedPrivateHosts))
+		}
+		if routeFile := strings.TrimSpace(d.cfg.InferenceRoutesFile); routeFile != "" {
+			routes, err := loadInferenceRoutesFromFile(routeFile)
+			if err != nil {
+				return fmt.Errorf("load inference routes from %q: %w", routeFile, err)
+			}
+			pOpts = append(pOpts, proxy.WithInferenceRoutes(routes))
+		}
 		d.proxy = proxy.NewServer(pipeline, d.log, pOpts...)
 		if tlsCfg != nil {
 			if err := d.proxy.ListenTLS(fmt.Sprintf(":%d", d.cfg.ProxyPort), d.cfg.TLSCertFile, d.cfg.TLSKeyFile, tlsCfg); err != nil {
@@ -687,6 +729,7 @@ func buildCredentialRouter(cfg Config) *credential.Router {
 	backends := []credential.Broker{
 		&credential.EnvBroker{},
 	}
+	externalDefaultBackend := ""
 
 	vaultAddr := cfg.VaultAddr
 	if vaultAddr == "" {
@@ -703,6 +746,9 @@ func buildCredentialRouter(cfg Config) *credential.Router {
 			MountPath: cfg.VaultMount,
 			Namespace: cfg.VaultNamespace,
 		}))
+		if externalDefaultBackend == "" {
+			externalDefaultBackend = "vault"
+		}
 	}
 
 	awsRegion := cfg.AWSSecretsRegion
@@ -713,6 +759,9 @@ func buildCredentialRouter(cfg Config) *credential.Router {
 		backends = append(backends, credential.NewAWSSecretsBroker(credential.AWSSecretsConfig{
 			Region: awsRegion,
 		}))
+		if externalDefaultBackend == "" {
+			externalDefaultBackend = "aws_secrets_manager"
+		}
 	}
 
 	gcpProject := cfg.GCPSecretsProject
@@ -723,6 +772,9 @@ func buildCredentialRouter(cfg Config) *credential.Router {
 		backends = append(backends, credential.NewGCPSecretsBroker(credential.GCPSecretsConfig{
 			Project: gcpProject,
 		}))
+		if externalDefaultBackend == "" {
+			externalDefaultBackend = "gcp_secret_manager"
+		}
 	}
 
 	azureURL := cfg.AzureKeyVaultURL
@@ -748,6 +800,9 @@ func buildCredentialRouter(cfg Config) *credential.Router {
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
 		}))
+		if externalDefaultBackend == "" {
+			externalDefaultBackend = "azure_key_vault"
+		}
 	}
 
 	opHost := strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_1PASSWORD_HOST"))
@@ -759,6 +814,9 @@ func buildCredentialRouter(cfg Config) *credential.Router {
 			ConnectToken: opToken,
 			VaultID:      opVault,
 		})
+		if externalDefaultBackend == "" {
+			externalDefaultBackend = "1password"
+		}
 	}
 
 	infHost := strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_INFISICAL_HOST"))
@@ -770,19 +828,24 @@ func buildCredentialRouter(cfg Config) *credential.Router {
 			Token:     infToken,
 			ProjectID: infProject,
 		})
+		if externalDefaultBackend == "" {
+			externalDefaultBackend = "infisical"
+		}
 	}
 
 	router := credential.NewRouter(backends, &credential.EnvBroker{})
 
 	defaultBackend := "env"
-	if vaultAddr != "" {
-		defaultBackend = "vault"
+	if externalDefaultBackend != "" {
+		defaultBackend = externalDefaultBackend
 	}
 	envDefault := strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_DEFAULT_BACKEND"))
 	if envDefault != "" {
 		defaultBackend = envDefault
 	}
-	_ = router.AddRoute("*", defaultBackend)
+	if err := router.AddRoute("*", defaultBackend); err != nil {
+		_ = router.AddRoute("*", "env")
+	}
 	return router
 }
 
@@ -926,6 +989,19 @@ func policyRequiresCredentialSequestration(doc *policy.Doc) bool {
 }
 
 func hasCredentialSequestrationBackend(cfg Config) bool {
+	if hasExternalCredentialSequestrationBackend(cfg) {
+		return true
+	}
+	if cfg.AllowEnvCredentialFallback {
+		return true
+	}
+	if parseBoolEnvDefault("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK", false) {
+		return true
+	}
+	return false
+}
+
+func hasExternalCredentialSequestrationBackend(cfg Config) bool {
 	if strings.TrimSpace(cfg.VaultAddr) != "" || strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_VAULT_ADDR")) != "" {
 		return true
 	}
@@ -942,9 +1018,6 @@ func hasCredentialSequestrationBackend(cfg Config) bool {
 		return true
 	}
 	if strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_INFISICAL_HOST")) != "" && strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_INFISICAL_TOKEN")) != "" {
-		return true
-	}
-	if parseBoolEnvDefault("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK", true) {
 		return true
 	}
 	return false
@@ -1776,6 +1849,44 @@ func generateSelfSignedAdapterCertificate() (tls.Certificate, error) {
 		return tls.Certificate{}, fmt.Errorf("build key pair: %w", err)
 	}
 	return generated, nil
+}
+
+func loadInferenceRoutesFromFile(path string) ([]proxy.InferenceRoute, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	routes := make([]proxy.InferenceRoute, 0)
+	if err := json.Unmarshal(raw, &routes); err != nil {
+		return nil, fmt.Errorf("parse JSON: %w", err)
+	}
+	for i := range routes {
+		routes[i].Name = strings.TrimSpace(routes[i].Name)
+		routes[i].HostPattern = strings.TrimSpace(routes[i].HostPattern)
+		routes[i].PathPattern = strings.TrimSpace(routes[i].PathPattern)
+		routes[i].Upstream = strings.TrimSpace(routes[i].Upstream)
+		routes[i].AuthType = strings.TrimSpace(routes[i].AuthType)
+		routes[i].AuthHeader = strings.TrimSpace(routes[i].AuthHeader)
+		routes[i].AuthToken = strings.TrimSpace(routes[i].AuthToken)
+		routes[i].AuthTokenEnv = strings.TrimSpace(routes[i].AuthTokenEnv)
+		routes[i].AuthBrokerToolID = strings.TrimSpace(routes[i].AuthBrokerToolID)
+		routes[i].AuthBrokerOperation = strings.TrimSpace(routes[i].AuthBrokerOperation)
+		routes[i].AuthBrokerScope = strings.TrimSpace(routes[i].AuthBrokerScope)
+		routes[i].ModelRewrite = strings.TrimSpace(routes[i].ModelRewrite)
+		if routes[i].HostPattern == "" {
+			routes[i].HostPattern = "*"
+		}
+		if routes[i].PathPattern == "" {
+			routes[i].PathPattern = "*"
+		}
+		if routes[i].Name == "" {
+			routes[i].Name = fmt.Sprintf("route-%d", i+1)
+		}
+		if routes[i].Upstream == "" {
+			return nil, fmt.Errorf("route %q has empty upstream", routes[i].Name)
+		}
+	}
+	return routes, nil
 }
 
 // horizonSyncAdapter adapts cloud.Syncer to core.DecisionSyncer without
