@@ -769,9 +769,17 @@ func TestListenReusesStaleSocketFile(t *testing.T) {
 	if err != nil {
 		t.Skipf("unable to allocate unix socket: %v", err)
 	}
+	unixListener, ok := staleListener.(*net.UnixListener)
+	if !ok {
+		_ = staleListener.Close()
+		t.Skip("expected unix listener implementation")
+	}
+	// Keep the socket inode on disk after Close() so we can exercise stale-socket recovery.
+	unixListener.SetUnlinkOnClose(false)
 	if err := staleListener.Close(); err != nil {
 		t.Fatalf("close stale listener: %v", err)
 	}
+	defer os.Remove(socketPath)
 	if _, err := os.Stat(socketPath); err != nil {
 		t.Fatalf("expected stale socket path to remain on disk: %v", err)
 	}

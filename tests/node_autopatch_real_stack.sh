@@ -17,16 +17,35 @@ NODE_FALLBACK_OUTPUT_PATH="${FARAMESH_NODE_REAL_FALLBACK_OUTPUT:-$RUN_DIR/node_f
 SPIFFE_SOCKET_PATH="${FARAMESH_NODE_REAL_SPIFFE_SOCKET:-$RUN_DIR/spiffe.sock}"
 INTEGRITY_MANIFEST_PATH="${FARAMESH_NODE_REAL_INTEGRITY_MANIFEST:-$RUN_DIR/integrity.json}"
 BUILDINFO_EXPECTED_PATH="${FARAMESH_NODE_REAL_BUILDINFO_EXPECTED:-$RUN_DIR/buildinfo.json}"
+BUILDINFO_STDERR_PATH="${FARAMESH_NODE_REAL_BUILDINFO_STDERR:-$RUN_DIR/buildinfo.stderr.log}"
+NODE_RUN_STDERR_PATH="${FARAMESH_NODE_REAL_RUN_STDERR:-$RUN_DIR/node_run.stderr.log}"
 
 AGENT_ID="${FARAMESH_NODE_REAL_AGENT_ID:-node-autopatch-e2e}"
 
+show_debug_file() {
+  local path="$1"
+  if [[ -f "$path" ]]; then
+    echo "--- $path ---"
+    tail -n 200 "$path"
+  fi
+}
+
 cleanup() {
+  local status=$?
   set +e
+  if [[ "$status" -ne 0 ]]; then
+    show_debug_file "$BUILDINFO_STDERR_PATH"
+    show_debug_file "$NODE_RUN_STDERR_PATH"
+    show_debug_file "$DAEMON_LOG"
+    show_debug_file "$NODE_OUTPUT_PATH"
+    show_debug_file "$NODE_FALLBACK_OUTPUT_PATH"
+  fi
   if [[ -n "${DAEMON_PID:-}" ]]; then
     kill "$DAEMON_PID" >/dev/null 2>&1 || true
     wait "$DAEMON_PID" >/dev/null 2>&1 || true
   fi
   rm -f "$SOCKET_PATH"
+  return "$status"
 }
 trap cleanup EXIT
 
@@ -56,15 +75,17 @@ wait_for_daemon() {
   return 1
 }
 
-if ! command -v node >/dev/null 2>&1; then
-  echo "node is required for the node autopatch harness" >&2
-  exit 1
-fi
+for required in node npm python3 go; do
+  if ! command -v "$required" >/dev/null 2>&1; then
+    echo "$required is required for the node autopatch harness" >&2
+    exit 1
+  fi
+done
 
 mkdir -p "$RUN_DIR"
 rm -rf "$DATA_DIR"
 mkdir -p "$DATA_DIR"
-rm -f "$SOCKET_PATH" "$DAEMON_LOG" "$NODE_OUTPUT_PATH" "$NODE_FALLBACK_OUTPUT_PATH" "$INTEGRITY_MANIFEST_PATH" "$BUILDINFO_EXPECTED_PATH"
+rm -f "$SOCKET_PATH" "$DAEMON_LOG" "$NODE_OUTPUT_PATH" "$NODE_FALLBACK_OUTPUT_PATH" "$INTEGRITY_MANIFEST_PATH" "$BUILDINFO_EXPECTED_PATH" "$BUILDINFO_STDERR_PATH" "$NODE_RUN_STDERR_PATH"
 
 cat >"$POLICY_PATH" <<'FPL'
 agent node-autopatch-e2e {
@@ -212,7 +233,8 @@ run_cmd npm --prefix "$ROOT_DIR/sdk/node" run build
 
 run_cmd go build -o "$BIN_PATH" ./cmd/faramesh
 run_cmd "$BIN_PATH" verify manifest-generate --base-dir "$ROOT_DIR" --output "$INTEGRITY_MANIFEST_PATH" "$POLICY_PATH"
-"$BIN_PATH" verify buildinfo --emit >"$BUILDINFO_EXPECTED_PATH"
+echo "+ $BIN_PATH verify buildinfo --emit > $BUILDINFO_EXPECTED_PATH"
+"$BIN_PATH" verify buildinfo --emit >"$BUILDINFO_EXPECTED_PATH" 2>"$BUILDINFO_STDERR_PATH"
 
 FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" serve \
   --policy "$POLICY_PATH" \
@@ -228,10 +250,11 @@ DAEMON_PID=$!
 
 wait_for_daemon
 
+echo "+ $BIN_PATH --daemon-socket $SOCKET_PATH run --enforce minimal -- node $NODE_SCRIPT_PATH"
 FARAMESH_SOCKET="$SOCKET_PATH" \
 FARAMESH_AGENT_ID="$AGENT_ID" \
 FARAMESH_NODE_AUTOPATCH_PATH="$ROOT_DIR/sdk/node/dist/autopatch.js" \
-"$BIN_PATH" --daemon-socket "$SOCKET_PATH" run -- node "$NODE_SCRIPT_PATH" >"$NODE_OUTPUT_PATH" 2>&1
+"$BIN_PATH" --daemon-socket "$SOCKET_PATH" run --enforce minimal -- node "$NODE_SCRIPT_PATH" >"$NODE_OUTPUT_PATH" 2>"$NODE_RUN_STDERR_PATH"
 
 TOKENS="$(python3 - "$NODE_OUTPUT_PATH" <<'PY'
 import json

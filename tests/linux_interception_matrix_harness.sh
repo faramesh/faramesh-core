@@ -14,6 +14,27 @@ RUN_DIR="${FARAMESH_LINUX_INTERCEPT_RUN_DIR:-$ROOT_DIR/.tmp/linux-interception}"
 BIN_PATH="${FARAMESH_LINUX_INTERCEPT_BIN:-$RUN_DIR/faramesh}"
 REPORT_PATH="$RUN_DIR/report-${PROFILE}.log"
 ENV_PATH="$RUN_DIR/env-${PROFILE}.txt"
+ENV_DUMP_SRC="$RUN_DIR/env_dump.go"
+ENV_DUMP_BIN="$RUN_DIR/env_dump"
+
+show_debug_file() {
+  local path="$1"
+  if [[ -f "$path" ]]; then
+    echo "--- $path ---"
+    cat "$path"
+  fi
+}
+
+on_exit() {
+  local status=$?
+  if [[ "$status" -ne 0 ]]; then
+    show_debug_file "$REPORT_PATH"
+    show_debug_file "$ENV_PATH"
+  fi
+  return "$status"
+}
+
+trap on_exit EXIT
 
 run_cmd() {
   echo "+ $*"
@@ -43,13 +64,30 @@ assert_not_contains() {
 }
 
 mkdir -p "$RUN_DIR"
-rm -f "$BIN_PATH" "$REPORT_PATH" "$ENV_PATH"
+rm -f "$BIN_PATH" "$REPORT_PATH" "$ENV_PATH" "$ENV_DUMP_SRC" "$ENV_DUMP_BIN"
 
 run_cmd go build -o "$BIN_PATH" ./cmd/faramesh
 
+cat >"$ENV_DUMP_SRC" <<'GO'
+package main
+
+import (
+  "fmt"
+  "os"
+)
+
+func main() {
+  for _, entry := range os.Environ() {
+    fmt.Println(entry)
+  }
+}
+GO
+
+run_cmd env CGO_ENABLED=0 go build -o "$ENV_DUMP_BIN" "$ENV_DUMP_SRC"
+
 OPENAI_API_KEY="should-never-leak" \
 FARAMESH_SOCKET="/tmp/faramesh-linux-matrix.sock" \
-"$BIN_PATH" run --enforce "$PROFILE" --broker -- /usr/bin/env >"$ENV_PATH" 2>"$REPORT_PATH"
+"$BIN_PATH" run --enforce "$PROFILE" --broker -- "$ENV_DUMP_BIN" >"$ENV_PATH" 2>"$REPORT_PATH"
 
 assert_contains "Faramesh Enforcement Report" "$REPORT_PATH"
 assert_contains "Framework auto-patch (FARAMESH_AUTOLOAD)" "$REPORT_PATH"
