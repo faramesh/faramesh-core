@@ -23,21 +23,35 @@ usage() {
   cat <<'EOF'
 Usage:
   bash scripts/faramesh_govern_wizard.sh [options]
-  bash scripts/faramesh_govern_wizard.sh stop
   bash scripts/faramesh_govern_wizard.sh status
+  bash scripts/faramesh_govern_wizard.sh stop
+
+This wizard is framework-first and production-oriented:
+1) choose framework and policy,
+2) choose security profile/options,
+3) start governed runtime,
+4) run your agent command.
 
 Options:
-  --yes                 Use defaults with no prompts
-  --agent-cmd <cmd>     Command string to run under governance
-  --policy <path>       Policy file path (.yaml or .fpl)
-  --idp <provider>      IdP provider (default: default)
-  --with-vault <mode>   auto|on|off (default: auto)
-  --run-now <yes|no>    Run agent command immediately (default: yes)
-  --agent-id <id>       Agent ID override
-  -h, --help            Show this help
+  --yes                                   Use defaults with no prompts
+  --framework <name>                      langchain|langgraph|deepagents|mcp|custom
+  --agent-cmd <cmd>                       Agent command to run under governance
+  --policy <path>                         Policy file path (.fpl or .yaml)
+  --agent-id <id>                         Agent ID override
+  --idp <provider>                        IdP provider (default: default)
+  --strict <yes|no>                       Enable strict startup gates (default: yes)
+  --credential-profile <mode>             production|development|auto (default: production)
+  --credential-backend <backend>          auto|local-vault|vault|aws|gcp|azure|1password|infisical|env
+  --allow-env-credential-fallback <bool>  yes|no (default: development=yes, production=no)
+  --with-vault <mode>                     auto|on|off (default: auto)
+  --run-now <yes|no>                      Run agent command immediately (default: yes)
+  -h, --help                              Show this help
 
-Default command (LangChain-first test profile):
-  python ../demo_interactive_ai_agent.py
+Examples:
+  bash scripts/faramesh_govern_wizard.sh
+  bash scripts/faramesh_govern_wizard.sh --framework langgraph --agent-cmd "python my_agent.py"
+  bash scripts/faramesh_govern_wizard.sh --framework mcp --agent-cmd "node mcp_server.js" --run-now no
+  bash scripts/faramesh_govern_wizard.sh stop
 EOF
 }
 
@@ -127,6 +141,115 @@ normalize_yes_no() {
   esac
 }
 
+normalize_framework() {
+  local raw
+  raw="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$raw" in
+    langchain|langgraph|deepagents|mcp|custom)
+      echo "$raw"
+      ;;
+    lc)
+      echo "langchain"
+      ;;
+    lg)
+      echo "langgraph"
+      ;;
+    da)
+      echo "deepagents"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+normalize_credential_profile() {
+  local raw
+  raw="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$raw" in
+    production|development|auto)
+      echo "$raw"
+      ;;
+    prod)
+      echo "production"
+      ;;
+    dev)
+      echo "development"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+normalize_credential_backend() {
+  local raw
+  raw="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$raw" in
+    auto|local-vault|vault|aws|gcp|azure|1password|infisical|env)
+      echo "$raw"
+      ;;
+    local)
+      echo "local-vault"
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
+framework_default_policy() {
+  local framework="$1"
+  case "$framework" in
+    langchain)
+      echo "$CORE_DIR/policies/langchain_single_agent.fpl"
+      ;;
+    langgraph)
+      echo "$CORE_DIR/policies/langgraph_single_agent.fpl"
+      ;;
+    deepagents)
+      if [[ -f "$CORE_DIR/sdk/python/examples/policies/deepagents_openrouter_qwen_production.fpl" ]]; then
+        echo "$CORE_DIR/sdk/python/examples/policies/deepagents_openrouter_qwen_production.fpl"
+      else
+        echo "$CORE_DIR/policies/langgraph_single_agent.fpl"
+      fi
+      ;;
+    mcp)
+      echo "$CORE_DIR/examples/mcp-server.fpl"
+      ;;
+    custom)
+      echo "$CORE_DIR/policies/default.fpl"
+      ;;
+    *)
+      echo "$CORE_DIR/policies/default.fpl"
+      ;;
+  esac
+}
+
+framework_default_agent_cmd() {
+  local framework="$1"
+  case "$framework" in
+    langchain)
+      echo "python demo_interactive_ai_agent.py"
+      ;;
+    langgraph)
+      echo "python faramesh-core/tests/langgraph_single_agent_dropin.py"
+      ;;
+    deepagents)
+      echo "python faramesh-core/sdk/python/examples/deepagents_openrouter_qwen_production.py"
+      ;;
+    mcp)
+      echo "node your-mcp-server.js"
+      ;;
+    custom)
+      echo "python your_agent.py"
+      ;;
+    *)
+      echo "python your_agent.py"
+      ;;
+  esac
+}
+
 resolve_policy_path() {
   local input="$1"
   if [[ "$input" == /* ]] && [[ -f "$input" ]]; then
@@ -167,6 +290,7 @@ if [[ "${1:-}" == "status" ]]; then
   else
     echo "daemon: not running"
   fi
+
   if [[ -f "$VAULT_PID_FILE" ]]; then
     vault_pid="$(cat "$VAULT_PID_FILE" 2>/dev/null || true)"
     if [[ -n "$vault_pid" ]] && kill -0 "$vault_pid" >/dev/null 2>&1; then
@@ -177,22 +301,34 @@ if [[ "${1:-}" == "status" ]]; then
   else
     echo "vault: not running"
   fi
+
   echo "socket: $SOCKET_PATH"
+  echo "run helper: $RUN_HELPER"
   exit 0
 fi
 
 ASSUME_YES=0
+FRAMEWORK_INPUT="${FARAMESH_WIZARD_FRAMEWORK:-langchain}"
 AGENT_CMD_INPUT="${FARAMESH_WIZARD_AGENT_CMD:-}"
-POLICY_INPUT="${FARAMESH_WIZARD_POLICY:-$CORE_DIR/policies/langchain_single_agent.fpl}"
+POLICY_INPUT="${FARAMESH_WIZARD_POLICY:-}"
 IDP_PROVIDER_INPUT="${FARAMESH_WIZARD_IDP_PROVIDER:-default}"
 WITH_VAULT_INPUT="${FARAMESH_WIZARD_WITH_VAULT:-auto}"
 RUN_NOW_INPUT="${FARAMESH_WIZARD_RUN_NOW:-}"
 AGENT_ID_INPUT="${FARAMESH_WIZARD_AGENT_ID:-}"
+STRICT_INPUT="${FARAMESH_WIZARD_STRICT:-yes}"
+CREDENTIAL_PROFILE_INPUT="${FARAMESH_WIZARD_CREDENTIAL_PROFILE:-production}"
+CREDENTIAL_BACKEND_INPUT="${FARAMESH_WIZARD_CREDENTIAL_BACKEND:-auto}"
+ALLOW_ENV_FALLBACK_INPUT="${FARAMESH_WIZARD_ALLOW_ENV_CREDENTIAL_FALLBACK:-}"
+SPIFFE_ID_INPUT="${FARAMESH_WIZARD_SPIFFE_ID:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --yes|-y)
       ASSUME_YES=1
+      ;;
+    --framework)
+      FRAMEWORK_INPUT="${2:-}"
+      shift
       ;;
     --agent-cmd)
       AGENT_CMD_INPUT="${2:-}"
@@ -218,6 +354,22 @@ while [[ $# -gt 0 ]]; do
       AGENT_ID_INPUT="${2:-}"
       shift
       ;;
+    --strict)
+      STRICT_INPUT="${2:-}"
+      shift
+      ;;
+    --credential-profile)
+      CREDENTIAL_PROFILE_INPUT="${2:-}"
+      shift
+      ;;
+    --credential-backend)
+      CREDENTIAL_BACKEND_INPUT="${2:-}"
+      shift
+      ;;
+    --allow-env-credential-fallback)
+      ALLOW_ENV_FALLBACK_INPUT="${2:-}"
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -229,14 +381,33 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
   shift
- done
+done
 
 if ! command -v go >/dev/null 2>&1; then
   echo "missing dependency: go" >&2
   exit 1
 fi
 
-default_agent_cmd="python ../demo_interactive_ai_agent.py"
+FRAMEWORK_INPUT="$(normalize_framework "$FRAMEWORK_INPUT")"
+if [[ -z "$FRAMEWORK_INPUT" ]]; then
+  echo "invalid framework. expected: langchain|langgraph|deepagents|mcp|custom" >&2
+  exit 1
+fi
+
+if [[ "$ASSUME_YES" -eq 0 ]]; then
+  FRAMEWORK_INPUT="$(prompt_default "Framework (langchain|langgraph|deepagents|mcp|custom)" "$FRAMEWORK_INPUT")"
+  FRAMEWORK_INPUT="$(normalize_framework "$FRAMEWORK_INPUT")"
+  if [[ -z "$FRAMEWORK_INPUT" ]]; then
+    echo "invalid framework selection" >&2
+    exit 1
+  fi
+fi
+
+if [[ -z "$POLICY_INPUT" ]]; then
+  POLICY_INPUT="$(framework_default_policy "$FRAMEWORK_INPUT")"
+fi
+
+default_agent_cmd="$(framework_default_agent_cmd "$FRAMEWORK_INPUT")"
 
 if [[ -z "$AGENT_CMD_INPUT" ]]; then
   if [[ "$ASSUME_YES" -eq 1 ]]; then
@@ -246,20 +417,42 @@ if [[ -z "$AGENT_CMD_INPUT" ]]; then
   fi
 fi
 
-if [[ -z "$POLICY_INPUT" ]]; then
-  POLICY_INPUT="$CORE_DIR/policies/langchain_single_agent.fpl"
+if [[ "$ASSUME_YES" -eq 0 ]]; then
+  POLICY_INPUT="$(prompt_default "Policy path" "$POLICY_INPUT")"
+  CREDENTIAL_PROFILE_INPUT="$(prompt_default "Credential profile (production|development|auto)" "$CREDENTIAL_PROFILE_INPUT")"
+  STRICT_INPUT="$(prompt_default "Strict startup gates (yes|no)" "$STRICT_INPUT")"
+  if [[ "$CREDENTIAL_BACKEND_INPUT" == "auto" ]]; then
+    if [[ "$(normalize_credential_profile "$CREDENTIAL_PROFILE_INPUT")" == "development" ]]; then
+      CREDENTIAL_BACKEND_INPUT="env"
+    else
+      CREDENTIAL_BACKEND_INPUT="local-vault"
+    fi
+  fi
+  CREDENTIAL_BACKEND_INPUT="$(prompt_default "Credential backend (auto|local-vault|vault|aws|gcp|azure|1password|infisical|env)" "$CREDENTIAL_BACKEND_INPUT")"
+  RUN_NOW_INPUT="$(prompt_default "Run command now (yes|no)" "${RUN_NOW_INPUT:-yes}")"
 fi
 
-POLICY_PATH="$(resolve_policy_path "$POLICY_INPUT")"
-if [[ ! -f "$POLICY_PATH" ]]; then
-  echo "policy file not found: $POLICY_PATH" >&2
+CREDENTIAL_PROFILE_INPUT="$(normalize_credential_profile "$CREDENTIAL_PROFILE_INPUT")"
+if [[ -z "$CREDENTIAL_PROFILE_INPUT" ]]; then
+  echo "invalid credential profile. expected: production|development|auto" >&2
   exit 1
 fi
 
-WITH_VAULT_INPUT="$(echo "$WITH_VAULT_INPUT" | tr '[:upper:]' '[:lower:]')"
-if [[ "$WITH_VAULT_INPUT" != "auto" && "$WITH_VAULT_INPUT" != "on" && "$WITH_VAULT_INPUT" != "off" ]]; then
-  echo "invalid --with-vault mode: $WITH_VAULT_INPUT" >&2
+CREDENTIAL_BACKEND_INPUT="$(normalize_credential_backend "$CREDENTIAL_BACKEND_INPUT")"
+if [[ -z "$CREDENTIAL_BACKEND_INPUT" ]]; then
+  echo "invalid credential backend. expected: auto|local-vault|vault|aws|gcp|azure|1password|infisical|env" >&2
   exit 1
+fi
+
+STRICT_INPUT="$(normalize_yes_no "$STRICT_INPUT")"
+if [[ -z "$STRICT_INPUT" ]]; then
+  echo "invalid --strict value. expected yes or no" >&2
+  exit 1
+fi
+
+STRICT_BOOL="false"
+if [[ "$STRICT_INPUT" == "yes" ]]; then
+  STRICT_BOOL="true"
 fi
 
 if [[ -z "$RUN_NOW_INPUT" ]]; then
@@ -275,11 +468,47 @@ if [[ -z "$RUN_NOW_INPUT" ]]; then
   exit 1
 fi
 
+if [[ -z "$ALLOW_ENV_FALLBACK_INPUT" ]]; then
+  if [[ "$CREDENTIAL_PROFILE_INPUT" == "development" ]]; then
+    ALLOW_ENV_FALLBACK_INPUT="yes"
+  else
+    ALLOW_ENV_FALLBACK_INPUT="no"
+  fi
+fi
+ALLOW_ENV_FALLBACK_INPUT="$(normalize_yes_no "$ALLOW_ENV_FALLBACK_INPUT")"
+if [[ -z "$ALLOW_ENV_FALLBACK_INPUT" ]]; then
+  echo "invalid --allow-env-credential-fallback value. expected yes or no" >&2
+  exit 1
+fi
+
+WITH_VAULT_INPUT="$(echo "$WITH_VAULT_INPUT" | tr '[:upper:]' '[:lower:]')"
+if [[ "$WITH_VAULT_INPUT" != "auto" && "$WITH_VAULT_INPUT" != "on" && "$WITH_VAULT_INPUT" != "off" ]]; then
+  echo "invalid --with-vault mode: $WITH_VAULT_INPUT" >&2
+  exit 1
+fi
+
+if [[ "$CREDENTIAL_BACKEND_INPUT" == "local-vault" && "$WITH_VAULT_INPUT" == "auto" ]]; then
+  WITH_VAULT_INPUT="on"
+fi
+if [[ "$CREDENTIAL_BACKEND_INPUT" == "vault" && "$WITH_VAULT_INPUT" == "auto" ]]; then
+  WITH_VAULT_INPUT="off"
+fi
+
+POLICY_PATH="$(resolve_policy_path "$POLICY_INPUT")"
+if [[ ! -f "$POLICY_PATH" ]]; then
+  echo "policy file not found: $POLICY_PATH" >&2
+  exit 1
+fi
+
 if [[ -z "$AGENT_ID_INPUT" ]]; then
   AGENT_ID_INPUT="$(echo "$AGENT_CMD_INPUT" | tr '[:space:]' '-' | tr -cd '[:alnum:]_-/.' | tr '/.' '-')"
 fi
 if [[ -z "$AGENT_ID_INPUT" ]]; then
   AGENT_ID_INPUT="agent"
+fi
+
+if [[ -z "$SPIFFE_ID_INPUT" ]]; then
+  SPIFFE_ID_INPUT="spiffe://example.org/agent/$AGENT_ID_INPUT"
 fi
 
 mkdir -p "$RUN_DIR" "$DATA_DIR"
@@ -293,13 +522,13 @@ VAULT_ADDR="${FARAMESH_WIZARD_VAULT_ADDR:-http://127.0.0.1:18200}"
 VAULT_TOKEN="${FARAMESH_WIZARD_VAULT_TOKEN:-root}"
 SECRET_SENTINEL="${FARAMESH_WIZARD_SECRET_VALUE:-vault-real-credential}"
 
-if [[ "$WITH_VAULT_INPUT" == "on" ]] || [[ "$WITH_VAULT_INPUT" == "auto" && "$(command -v vault >/dev/null 2>&1; echo $?)" -eq 0 ]]; then
+if [[ "$WITH_VAULT_INPUT" == "on" ]]; then
   if ! command -v vault >/dev/null 2>&1; then
-    echo "vault requested but CLI is not installed" >&2
+    echo "vault requested but vault CLI is not installed" >&2
     exit 1
   fi
   if [[ "$VAULT_ADDR" == https://* ]]; then
-    echo "wizard vault mode only supports http:// addresses" >&2
+    echo "wizard local vault mode only supports http:// addresses" >&2
     exit 1
   fi
 
@@ -311,6 +540,7 @@ if [[ "$WITH_VAULT_INPUT" == "on" ]] || [[ "$WITH_VAULT_INPUT" == "auto" && "$(c
 
   export VAULT_ADDR VAULT_TOKEN
   vault kv put secret/faramesh/vault/probe value="$SECRET_SENTINEL" >/dev/null
+  vault kv put secret/faramesh/vault/probe/_execute_tool_sync value="$SECRET_SENTINEL" >/dev/null
   USE_VAULT=1
 fi
 
@@ -321,28 +551,81 @@ fi
   "$BIN_PATH" verify buildinfo --emit >"$BUILDINFO_PATH"
 )
 
+onboard_interactive="false"
+if [[ "$ASSUME_YES" -eq 0 && -t 0 && -t 1 ]]; then
+  onboard_interactive="true"
+fi
+
+run_onboard_preflight() {
+  local -a onboard_cmd
+  onboard_cmd=(
+    "$BIN_PATH" onboard
+    --strict="$STRICT_BOOL"
+    --interactive="$onboard_interactive"
+    --policy "$POLICY_PATH"
+    --idp-provider "$IDP_PROVIDER_INPUT"
+    --spiffe-socket "$SPIFFE_SOCKET_PATH"
+    --spiffe-id "$SPIFFE_ID_INPUT"
+    --credential-profile "$CREDENTIAL_PROFILE_INPUT"
+    --credential-backend "$CREDENTIAL_BACKEND_INPUT"
+  )
+  if [[ "$USE_VAULT" -eq 1 ]]; then
+    onboard_cmd+=(--vault-addr "$VAULT_ADDR")
+  fi
+
+  if [[ "$ALLOW_ENV_FALLBACK_INPUT" == "yes" ]]; then
+    FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK=true "${onboard_cmd[@]}"
+  else
+    FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK=false "${onboard_cmd[@]}"
+  fi
+}
+
+run_onboard_preflight
+
 serve_cmd=(
   "$BIN_PATH" serve
   --policy "$POLICY_PATH"
   --socket "$SOCKET_PATH"
   --data-dir "$DATA_DIR"
-  --strict-preflight
   --idp-provider "$IDP_PROVIDER_INPUT"
   --spiffe-socket "$SPIFFE_SOCKET_PATH"
+  --spiffe-id "$SPIFFE_ID_INPUT"
   --integrity-manifest "$MANIFEST_PATH"
   --integrity-base-dir "$CORE_DIR"
   --buildinfo-expected "$BUILDINFO_PATH"
   --log-level warn
 )
-if [[ "$USE_VAULT" -eq 1 ]]; then
-  serve_cmd+=(--vault-addr "$VAULT_ADDR" --vault-token "$VAULT_TOKEN" --vault-mount secret)
+
+if [[ "$STRICT_INPUT" == "yes" ]]; then
+  serve_cmd+=(--strict-preflight --skip-onboard-preflight)
 fi
 
-FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID_INPUT" "${serve_cmd[@]}" >"$DAEMON_LOG" 2>&1 &
+if [[ "$ALLOW_ENV_FALLBACK_INPUT" == "yes" ]]; then
+  serve_cmd+=(--allow-env-credential-fallback)
+fi
+
+if [[ "$USE_VAULT" -eq 1 ]]; then
+  serve_cmd+=(--vault-addr "$VAULT_ADDR" --vault-token "$VAULT_TOKEN" --vault-mount secret)
+elif [[ "$CREDENTIAL_BACKEND_INPUT" == "vault" ]]; then
+  if [[ -n "${VAULT_ADDR:-}" ]]; then
+    serve_cmd+=(--vault-addr "$VAULT_ADDR")
+  fi
+  if [[ -n "${VAULT_TOKEN:-}" ]]; then
+    serve_cmd+=(--vault-token "$VAULT_TOKEN")
+  fi
+elif [[ "$CREDENTIAL_BACKEND_INPUT" == "aws" && -n "${FARAMESH_CREDENTIAL_AWS_REGION:-}" ]]; then
+  serve_cmd+=(--aws-secrets-region "$FARAMESH_CREDENTIAL_AWS_REGION")
+elif [[ "$CREDENTIAL_BACKEND_INPUT" == "gcp" && -n "${FARAMESH_CREDENTIAL_GCP_PROJECT:-}" ]]; then
+  serve_cmd+=(--gcp-secrets-project "$FARAMESH_CREDENTIAL_GCP_PROJECT")
+elif [[ "$CREDENTIAL_BACKEND_INPUT" == "azure" && -n "${FARAMESH_CREDENTIAL_AZURE_VAULT_URL:-}" ]]; then
+  serve_cmd+=(--azure-vault-url "$FARAMESH_CREDENTIAL_AZURE_VAULT_URL")
+fi
+
+FARAMESH_SPIFFE_ID="$SPIFFE_ID_INPUT" "${serve_cmd[@]}" >"$DAEMON_LOG" 2>&1 &
 echo "$!" >"$DAEMON_PID_FILE"
 wait_for_daemon
 
-"$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity verify --spiffe "spiffe://example.org/agent/$AGENT_ID_INPUT" >/dev/null
+"$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity verify --spiffe "$SPIFFE_ID_INPUT" >/dev/null
 
 cat >"$ENV_FILE" <<EOF
 export FARAMESH_SOCKET="$SOCKET_PATH"
@@ -350,6 +633,10 @@ export FARAMESH_AGENT_ID="$AGENT_ID_INPUT"
 export FARAMESH_POLICY_PATH="$POLICY_PATH"
 export FARAMESH_BIN="$BIN_PATH"
 export FARAMESH_WORKSPACE_DIR="$WORKSPACE_DIR"
+export FARAMESH_WIZARD_FRAMEWORK="$FRAMEWORK_INPUT"
+export FARAMESH_WIZARD_STRICT="$STRICT_INPUT"
+export FARAMESH_WIZARD_CREDENTIAL_PROFILE="$CREDENTIAL_PROFILE_INPUT"
+export FARAMESH_WIZARD_CREDENTIAL_BACKEND="$CREDENTIAL_BACKEND_INPUT"
 EOF
 
 cat >"$RUN_HELPER" <<'EOF'
@@ -385,8 +672,14 @@ if [[ "$RUN_NOW_INPUT" == "yes" ]]; then
 fi
 
 echo "ready"
+echo "framework: $FRAMEWORK_INPUT"
+echo "strict: $STRICT_INPUT"
+echo "credential_profile: $CREDENTIAL_PROFILE_INPUT"
+echo "credential_backend: $CREDENTIAL_BACKEND_INPUT"
 echo "socket: $SOCKET_PATH"
 echo "policy: $POLICY_PATH"
 echo "run another command: $RUN_HELPER -- <command> [args]"
 echo "status: bash $CORE_DIR/scripts/faramesh_govern_wizard.sh status"
 echo "stop: bash $CORE_DIR/scripts/faramesh_govern_wizard.sh stop"
+echo "offboard project wiring: bash $CORE_DIR/scripts/faramesh_setup.sh offboard --path <agent-project>"
+echo "uninstall + detach: bash $CORE_DIR/scripts/faramesh_setup.sh uninstall --path <agent-project> --yes"

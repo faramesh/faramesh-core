@@ -577,6 +577,37 @@ func TestEnforceStartupPreflightFailsCredentialSequestrationWithoutBackend(t *te
 	}
 }
 
+func TestHasCredentialSequestrationBackendAllowEnvFallbackFlag(t *testing.T) {
+	t.Setenv("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK", "false")
+
+	if !hasCredentialSequestrationBackend(Config{AllowEnvCredentialFallback: true}) {
+		t.Fatalf("expected explicit AllowEnvCredentialFallback config to satisfy backend gate")
+	}
+	if hasCredentialSequestrationBackend(Config{}) {
+		t.Fatalf("expected no backend when env fallback is disabled and no external backend is configured")
+	}
+}
+
+func TestBuildCredentialRouterPrefersExternalDefaultBackend(t *testing.T) {
+	router := buildCredentialRouter(Config{AWSSecretsRegion: "us-east-1"})
+	resolved := router.ResolveRoute("stripe/refund")
+	if resolved.Backend != "aws_secrets_manager" {
+		t.Fatalf("expected wildcard route to prefer aws_secrets_manager backend, got %+v", resolved)
+	}
+	if router.FallbackBackendName() != "env" {
+		t.Fatalf("expected env fallback backend, got %q", router.FallbackBackendName())
+	}
+}
+
+func TestBuildCredentialRouterInvalidDefaultOverrideFallsBackToEnvRoute(t *testing.T) {
+	t.Setenv("FARAMESH_CREDENTIAL_DEFAULT_BACKEND", "not-real")
+	router := buildCredentialRouter(Config{AWSSecretsRegion: "us-east-1"})
+	resolved := router.ResolveRoute("stripe/refund")
+	if resolved.Backend != "env" {
+		t.Fatalf("expected invalid override to fall back wildcard route to env, got %+v", resolved)
+	}
+}
+
 func TestEnforceStartupPreflightFailsIDPRequirementWithoutProvider(t *testing.T) {
 	d := newStrictPreflightDaemon(t)
 	doc := &policy.Doc{
@@ -667,5 +698,128 @@ func TestEnforceStartupPreflightFailsBuildinfoMismatch(t *testing.T) {
 	err := d.enforceStartupPreflight(&policy.Doc{}, &preflightWorkloadProvider{identity: &principal.Identity{ID: "spiffe://example.org/a", Verified: true, Method: "spiffe"}})
 	if err == nil || !strings.Contains(err.Error(), "startup preflight failed: integrity gate (buildinfo mismatch:") {
 		t.Fatalf("expected buildinfo mismatch error, got %v", err)
+	}
+}
+
+func TestNewNormalizesNetworkHardeningMode(t *testing.T) {
+	d, err := New(Config{NetworkHardeningMode: "  AUDIT  ", ProxyPort: 8080, Log: zap.NewNop()})
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	if d.cfg.NetworkHardeningMode != "audit" {
+		t.Fatalf("expected normalized network hardening mode audit, got %q", d.cfg.NetworkHardeningMode)
+	}
+}
+
+func TestNewRejectsInvalidNetworkHardeningMode(t *testing.T) {
+	_, err := New(Config{NetworkHardeningMode: "strict", Log: zap.NewNop()})
+	if err == nil {
+		t.Fatal("expected invalid network hardening mode error")
+	}
+	if !strings.Contains(err.Error(), "invalid network hardening mode") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewRejectsHardeningModeWithoutProxyPort(t *testing.T) {
+	_, err := New(Config{NetworkHardeningMode: "enforce", ProxyPort: 0, Log: zap.NewNop()})
+	if err == nil {
+		t.Fatal("expected hardening mode/proxy port validation error")
+	}
+	if !strings.Contains(err.Error(), "requires --proxy-port") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewRejectsInferenceRoutesWithoutProxyForward(t *testing.T) {
+	_, err := New(Config{
+		ProxyPort:           8080,
+		ProxyForward:        false,
+		InferenceRoutesFile: "routes.json",
+		Log:                 zap.NewNop(),
+	})
+	if err == nil {
+		t.Fatal("expected inference routes/proxy-forward validation error")
+	}
+	if !strings.Contains(err.Error(), "inference routes require --proxy-forward") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewProxyForwardImpliesConnect(t *testing.T) {
+	d, err := New(Config{ProxyPort: 8080, ProxyForward: true, Log: zap.NewNop()})
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	if !d.cfg.ProxyConnect {
+		t.Fatal("expected ProxyConnect to be enabled when ProxyForward is true")
+	}
+}
+
+func TestLoadInferenceRoutesFromFileNormalizesFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routes.json")
+	raw := `[
+	  {
+	    "host_pattern": " api.openai.com ",
+	    "path_pattern": " /v1/* ",
+	    "upstream": " https://upstream.example.com ",
+	    "auth_type": " bearer ",
+	    "auth_header": " authorization ",
+	    "auth_token": " token ",
+	    "auth_token_env": " OPENAI_TOKEN ",
+	    "auth_broker_tool_id": " proxy/http ",
+	    "auth_broker_operation": " invoke ",
+	    "auth_broker_scope": " inference:chat ",
+	    "model_rewrite": " gpt-4o-mini "
+	  }
+	]`
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write routes file: %v", err)
+	}
+
+	routes, err := loadInferenceRoutesFromFile(path)
+	if err != nil {
+		t.Fatalf("load routes: %v", err)
+	}
+	if len(routes) != 1 {
+		t.Fatalf("expected one route, got %d", len(routes))
+	}
+	r := routes[0]
+	if r.Name != "route-1" {
+		t.Fatalf("expected generated route name route-1, got %q", r.Name)
+	}
+	if r.HostPattern != "api.openai.com" || r.PathPattern != "/v1/*" {
+		t.Fatalf("expected trimmed host/path patterns, got host=%q path=%q", r.HostPattern, r.PathPattern)
+	}
+	if r.Upstream != "https://upstream.example.com" {
+		t.Fatalf("expected trimmed upstream, got %q", r.Upstream)
+	}
+	if r.AuthType != "bearer" || r.AuthHeader != "authorization" {
+		t.Fatalf("expected trimmed auth fields, got auth_type=%q auth_header=%q", r.AuthType, r.AuthHeader)
+	}
+	if r.AuthToken != "token" || r.AuthTokenEnv != "OPENAI_TOKEN" {
+		t.Fatalf("expected trimmed auth token fields, got token=%q env=%q", r.AuthToken, r.AuthTokenEnv)
+	}
+	if r.AuthBrokerToolID != "proxy/http" || r.AuthBrokerOperation != "invoke" || r.AuthBrokerScope != "inference:chat" {
+		t.Fatalf("expected trimmed broker auth fields, got tool=%q operation=%q scope=%q", r.AuthBrokerToolID, r.AuthBrokerOperation, r.AuthBrokerScope)
+	}
+	if r.ModelRewrite != "gpt-4o-mini" {
+		t.Fatalf("expected trimmed model rewrite, got %q", r.ModelRewrite)
+	}
+}
+
+func TestLoadInferenceRoutesFromFileRejectsEmptyUpstream(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "routes-invalid.json")
+	raw := `[{"name":"bad-route","host_pattern":"*","path_pattern":"*","upstream":"  "}]`
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatalf("write routes file: %v", err)
+	}
+
+	_, err := loadInferenceRoutesFromFile(path)
+	if err == nil {
+		t.Fatal("expected empty upstream validation error")
+	}
+	if !strings.Contains(err.Error(), "empty upstream") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
