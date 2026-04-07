@@ -344,7 +344,9 @@ type Server struct {
 	pipeline          *core.Pipeline
 	log               *zap.Logger
 	principalResolver func(context.Context, string) (*principal.Identity, error)
+	listenerMu        sync.Mutex
 	listener          net.Listener
+	acceptDone        chan struct{}
 	started           time.Time
 	sessMu            sync.RWMutex
 	sessions          map[string]*managedSession
@@ -429,9 +431,13 @@ func (s *Server) Listen(socketPath string) error {
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		return fmt.Errorf("chmod socket: %w", err)
 	}
+	s.listenerMu.Lock()
 	s.listener = ln
+	s.acceptDone = make(chan struct{})
+	acceptDone := s.acceptDone
+	s.listenerMu.Unlock()
 	s.log.Info("SDK adapter listening", zap.String("socket", socketPath))
-	go s.accept()
+	go s.accept(ln, acceptDone)
 	return nil
 }
 
@@ -527,9 +533,26 @@ func (s *Server) UnsubscribeCallbacks(ch chan callbackEvent) {
 // Close shuts down the listener.
 func (s *Server) Close() error {
 	var closeErr error
-	if s.listener != nil {
-		closeErr = s.listener.Close()
+
+	s.listenerMu.Lock()
+	ln := s.listener
+	acceptDone := s.acceptDone
+	s.listener = nil
+	s.acceptDone = nil
+	s.listenerMu.Unlock()
+
+	if ln != nil {
+		closeErr = ln.Close()
 	}
+
+	if acceptDone != nil {
+		select {
+		case <-acceptDone:
+		case <-time.After(5 * time.Second):
+			s.log.Warn("SDK adapter accept loop drain timeout reached; waiting on handlers anyway")
+		}
+	}
+
 	done := make(chan struct{})
 	go func() {
 		s.wg.Wait()
@@ -543,9 +566,12 @@ func (s *Server) Close() error {
 	return closeErr
 }
 
-func (s *Server) accept() {
+func (s *Server) accept(ln net.Listener, acceptDone chan struct{}) {
+	if acceptDone != nil {
+		defer close(acceptDone)
+	}
 	for {
-		conn, err := s.listener.Accept()
+		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
