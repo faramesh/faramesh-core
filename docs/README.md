@@ -2,6 +2,19 @@
 
 This index improves navigation across the most important faramesh-core documentation pages and connects related content in fpl-lang.
 
+## Priority Path (Quick First)
+
+If you want to start fast, go here first:
+
+1. [Guides Index (Quick Usage)](guides/README.md)
+2. [Simple Docs Index](simple/README.md)
+3. [All Features Quick Guide](guides/FEATURES_QUICK_GUIDE.md)
+
+If you need deep internals, use:
+
+1. [Power-User Docs Index](power-users/README.md)
+2. [All Features Technical Reference](power-users/FEATURES_TECHNICAL_REFERENCE.md)
+
 ## Core pages
 
 1. [Repository README](../README.md)
@@ -11,9 +24,20 @@ This index improves navigation across the most important faramesh-core documenta
 
 ## Guides
 
-1. [Real Agent Test Guide](guides/REAL_AGENT_TEST_GUIDE.md)
-2. [Network Hardening Audit Canary Runbook](guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
-3. [Network Hardening Progressive Enforce Runbook](guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
+1. [Guides Index (Quick Usage)](guides/README.md)
+2. [All Features Quick Guide](guides/FEATURES_QUICK_GUIDE.md)
+3. [Framework Guides (LangChain / LangGraph / Deep Agents)](guides/frameworks/README.md)
+4. [Real Agent Test Guide](guides/REAL_AGENT_TEST_GUIDE.md)
+5. [Network Hardening Audit Canary Runbook](guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
+6. [Network Hardening Progressive Enforce Runbook](guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
+7. [MCP Interception and Governance (Quick Guide)](guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md)
+
+## Power-User Specs
+
+1. [Power-User Docs Index](power-users/README.md)
+2. [All Features Technical Reference](power-users/FEATURES_TECHNICAL_REFERENCE.md)
+3. [Framework Technical Guides (LangChain / LangGraph / Deep Agents)](power-users/frameworks/README.md)
+4. [MCP Interception and Governance (Power-User Spec)](power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
 
 ## Related FPL language docs
 
