@@ -11,6 +11,4 @@ Reference layouts for attaching **`faramesh`** to agents in production environme
 | **`docker-compose/`** | Socket-volume sidecar example for local / CI. |
 | **`google-cloud-run/`** | Cloud Run + serverless handler notes. |
 
-Non-critical deploy examples are being split into a companion repository. See **`docs/DEPLOY_EXAMPLES_SPLIT_PLAN.md`** for the phased migration plan and target list.
-
-Runtime policy variables (**`vars.deployment_kind`**, **`vars.runtime_kind`**, **`vars.region`**, **`vars.k8s_namespace`**, **`vars.faramesh_version`**, optional **`vars.trust_level`** / hints) are set in **`internal/core/runtimeenv`** (`PolicyVarOverlay`). Trust model: **`docs/dev/ENFORCEMENT_STACK_AND_TRUST.md`**.
+Runtime policy variables (**`vars.deployment_kind`**, **`vars.runtime_kind`**, **`vars.region`**, **`vars.k8s_namespace`**, **`vars.faramesh_version`**, optional **`vars.trust_level`** / hints) are set in **`internal/core/runtimeenv`** (`PolicyVarOverlay`).
