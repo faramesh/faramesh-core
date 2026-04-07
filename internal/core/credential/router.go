@@ -3,10 +3,18 @@ package credential
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
+
+// RouteResolution describes how a tool ID maps to a broker backend.
+type RouteResolution struct {
+	Pattern      string `json:"pattern,omitempty"`
+	Backend      string `json:"backend,omitempty"`
+	UsedFallback bool   `json:"used_fallback,omitempty"`
+}
 
 // Router routes credential requests to the appropriate broker based on
 // tool-to-backend mappings defined in the policy. It also implements
@@ -41,6 +49,78 @@ func (r *Router) AddRoute(toolPattern, brokerName string) error {
 	}
 	r.routes[toolPattern] = brokerName
 	return nil
+}
+
+// RoutesSnapshot returns a copy of the configured tool-pattern routes.
+func (r *Router) RoutesSnapshot() map[string]string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string]string, len(r.routes))
+	for pattern, backend := range r.routes {
+		out[pattern] = backend
+	}
+	return out
+}
+
+// BackendNames returns all configured broker backend names, sorted.
+func (r *Router) BackendNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.backends))
+	for name := range r.backends {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// FallbackBackendName returns the fallback backend name, if configured.
+func (r *Router) FallbackBackendName() string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.fallback == nil {
+		return ""
+	}
+	return r.fallback.Name()
+}
+
+// ResolveRoute returns route-level resolution details for diagnostics.
+func (r *Router) ResolveRoute(toolID string) RouteResolution {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if name, ok := r.routes[toolID]; ok {
+		if _, backendOK := r.backends[name]; backendOK {
+			return RouteResolution{Pattern: toolID, Backend: name}
+		}
+	}
+
+	bestPattern := ""
+	bestBackend := ""
+	for pattern, name := range r.routes {
+		if pattern == toolID {
+			continue
+		}
+		if !matchToolPattern(pattern, toolID) {
+			continue
+		}
+		if _, backendOK := r.backends[name]; !backendOK {
+			continue
+		}
+		if len(pattern) > len(bestPattern) {
+			bestPattern = pattern
+			bestBackend = name
+		}
+	}
+	if bestBackend != "" {
+		return RouteResolution{Pattern: bestPattern, Backend: bestBackend}
+	}
+
+	if r.fallback != nil {
+		return RouteResolution{Backend: r.fallback.Name(), UsedFallback: true}
+	}
+
+	return RouteResolution{}
 }
 
 // Resolve finds the appropriate broker for a tool call.

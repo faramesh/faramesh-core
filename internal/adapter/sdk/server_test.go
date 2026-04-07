@@ -7,6 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +19,7 @@ import (
 	"go.uber.org/zap/zaptest/observer"
 
 	"github.com/faramesh/faramesh-core/internal/core"
+	"github.com/faramesh/faramesh-core/internal/core/credential"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/principal"
@@ -409,6 +414,94 @@ func TestCredentialOpsLifecycleOverSocket(t *testing.T) {
 	}
 }
 
+func TestCredentialRoutingMapOverSocket(t *testing.T) {
+	doc, version, err := policy.LoadBytes([]byte(`
+faramesh-version: "1.0"
+agent-id: "sdk-credential-map"
+tools:
+  stripe/refund:
+    tags: ["credential:broker", "credential:required", "credential:scope:payments"]
+  http/get:
+    tags: ["read_only"]
+rules:
+  - id: allow-all
+    match:
+      tool: "*"
+    effect: permit
+default_effect: deny
+`))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	engine, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+
+	envBroker := &credential.EnvBroker{}
+	router := credential.NewRouter([]credential.Broker{envBroker}, envBroker)
+	if err := router.AddRoute("*", "env"); err != nil {
+		t.Fatalf("add route: %v", err)
+	}
+
+	p := core.NewPipeline(core.Config{
+		Engine:           policy.NewAtomicEngine(engine),
+		CredentialRouter: router,
+	})
+	srv := NewServer(p, zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"credential","op":"routing_map"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+
+	if configured, _ := resp["router_configured"].(bool); !configured {
+		t.Fatalf("expected router_configured=true: %#v", resp)
+	}
+	if tc, _ := resp["tool_count"].(float64); int(tc) != 2 {
+		t.Fatalf("expected tool_count=2: %#v", resp)
+	}
+
+	toolsRaw, ok := resp["tools"].([]any)
+	if !ok {
+		t.Fatalf("missing tools list: %#v", resp)
+	}
+
+	byTool := map[string]map[string]any{}
+	for _, raw := range toolsRaw {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		toolID := asString(entry["tool_id"])
+		if toolID != "" {
+			byTool[toolID] = entry
+		}
+	}
+
+	stripe := byTool["stripe/refund"]
+	if stripe == nil {
+		t.Fatalf("missing stripe/refund in diagnostics: %#v", resp)
+	}
+	if enabled, _ := stripe["broker_enabled"].(bool); !enabled {
+		t.Fatalf("expected stripe/refund broker_enabled=true: %#v", stripe)
+	}
+	if required, _ := stripe["required"].(bool); !required {
+		t.Fatalf("expected stripe/refund required=true: %#v", stripe)
+	}
+	if scope := asString(stripe["scope"]); scope != "payments" {
+		t.Fatalf("expected stripe/refund scope=payments, got %q", scope)
+	}
+
+	httpGet := byTool["http/get"]
+	if httpGet == nil {
+		t.Fatalf("missing http/get in diagnostics: %#v", resp)
+	}
+	if enabled, _ := httpGet["broker_enabled"].(bool); enabled {
+		t.Fatalf("expected http/get broker_enabled=false: %#v", httpGet)
+	}
+}
+
 func TestIncidentOpsLifecycleOverSocket(t *testing.T) {
 	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
 	client := startSocketHandler(t, srv)
@@ -641,6 +734,59 @@ rules: []
 	if got := asString(resp["effect"]); got != "DENY" {
 		t.Fatalf("expected DENY when principal token is provided without resolver, got %q (%#v)", got, resp)
 	}
+}
+
+func TestListenRejectsActiveSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket behavior not available on windows")
+	}
+
+	socketPath := filepath.Join(t.TempDir(), "faramesh.sock")
+	activeListener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Skipf("unable to allocate unix socket: %v", err)
+	}
+	defer activeListener.Close()
+
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	err = srv.Listen(socketPath)
+	if err == nil {
+		_ = srv.Close()
+		t.Fatal("expected listen to fail when socket is already active")
+	}
+	if !strings.Contains(err.Error(), "already in use") {
+		t.Fatalf("expected already-in-use error, got: %v", err)
+	}
+}
+
+func TestListenReusesStaleSocketFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket behavior not available on windows")
+	}
+
+	socketPath := filepath.Join(t.TempDir(), "faramesh.sock")
+	staleListener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Skipf("unable to allocate unix socket: %v", err)
+	}
+	if err := staleListener.Close(); err != nil {
+		t.Fatalf("close stale listener: %v", err)
+	}
+	if _, err := os.Stat(socketPath); err != nil {
+		t.Fatalf("expected stale socket path to remain on disk: %v", err)
+	}
+
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	if err := srv.Listen(socketPath); err != nil {
+		t.Fatalf("listen should recover stale socket path: %v", err)
+	}
+	defer srv.Close()
+
+	conn, err := net.DialTimeout("unix", socketPath, 300*time.Millisecond)
+	if err != nil {
+		t.Fatalf("dial recovered listener: %v", err)
+	}
+	_ = conn.Close()
 }
 
 type testSocketClient struct {
