@@ -34,6 +34,14 @@ func TestToolID_Hardening_StripsNullAndInvisible(t *testing.T) {
 	}
 }
 
+func TestToolID_DeepAgentsExecuteLayerPathNormalization(t *testing.T) {
+	id := " ../task//research-agent/_execute_tool_sync "
+	got := ToolID(id)
+	if got != "task/research-agent/_execute_tool_sync" {
+		t.Fatalf("ToolID() = %q, want %q", got, "task/research-agent/_execute_tool_sync")
+	}
+}
+
 func TestValue_TypedSliceCanonicalization(t *testing.T) {
 	in := []string{" hеllo ", "ok\u200B", "safe\x00suffix"}
 
