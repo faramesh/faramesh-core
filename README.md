@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="readme-logo.svg" alt="Faramesh" width="500" />
+  <img src="docs/assets/readme-logo.svg" alt="Faramesh" width="500" />
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@ It enforces execution control before actions run, adds human approval when neede
 tamper-evident decision evidence for audit and compliance.
 
 <p align="center">
-  <img src="demo-repo.png" alt="Faramesh repository demo" width="980" />
+  <img src="docs/assets/demo-repo.png" alt="Faramesh repository demo" width="980" />
 </p>
 
 <p align="center">
@@ -57,6 +57,7 @@ tamper-evident decision evidence for audit and compliance.
 - [Credential Broker](#credential-broker)
 - [Workload Identity (SPIFFE/SPIRE)](#workload-identity-spiffespire)
 - [Observability Integrations](#observability-integrations)
+- [Latency Benchmarks](#latency-benchmarks)
 - [Cross-Platform Enforcement](#cross-platform-enforcement)
 - [Policy Packs](#policy-packs)
 - [Repository Map](#repository-map)
@@ -96,6 +97,36 @@ go install github.com/faramesh/faramesh-core/cmd/faramesh@latest
 
 # Source checkout (single setup entrypoint)
 make setup
+```
+
+## Setup Lifecycle (Source Checkout)
+
+For local repositories and existing agent stacks (LangChain, LangGraph, DeepAgents, MCP), use one command surface:
+
+```bash
+# Canonical setup command
+bash scripts/faramesh_setup.sh
+```
+
+Key lifecycle commands:
+
+```bash
+# Guided governance startup (framework + policy + credential profile toggles)
+bash scripts/faramesh_setup.sh start
+
+# Optional preflight only
+bash scripts/faramesh_setup.sh onboard --policy policies/default.fpl
+
+# Stop / inspect runtime
+bash scripts/faramesh_setup.sh status
+bash scripts/faramesh_setup.sh stop
+
+# Detach Faramesh wiring from an existing project (dry-run, then apply)
+bash scripts/faramesh_setup.sh offboard --path /path/to/agent
+bash scripts/faramesh_setup.sh offboard --path /path/to/agent --apply
+
+# Full cleanup: detach + remove local runtime and common local binaries
+bash scripts/faramesh_setup.sh uninstall --path /path/to/agent --yes
 ```
 
 ## Quick Start
@@ -320,6 +351,34 @@ Faramesh exposes Prometheus-compatible metrics on `/metrics` via `--metrics-port
 - Grafana: scrape via Prometheus or Grafana Alloy, then build dashboards and alerts.
 - Datadog: use OpenMetrics scraping against `/metrics` and correlate with decision/audit events.
 - New Relic: ingest Prometheus/OpenMetrics data from `/metrics` for governance and runtime monitoring.
+
+## Latency Benchmarks
+
+Faramesh includes a reproducible benchmark target for policy-engine and full-pipeline latency:
+
+```bash
+make benchmark-latency
+```
+
+Command details used for the numbers below:
+
+```bash
+go test ./internal/core/policy -run '^$' -bench BenchmarkEngineEvaluateSimplePermit -benchmem -benchtime=2s -cpu=1 -count=5
+go test ./internal/core -run '^$' -bench BenchmarkPipelineEvaluateSimplePermit -benchmem -benchtime=2s -cpu=1 -count=5
+```
+
+Measured on 2026-04-06 (darwin/arm64, Apple M1):
+
+| Benchmark | Median Latency | Allocations |
+|----------|----------------|-------------|
+| `BenchmarkEngineEvaluateSimplePermit` | `68.52 ns/op` | `0 allocs/op` |
+| `BenchmarkPipelineEvaluateSimplePermit` | `57,774 ns/op` (`57.774 us/op`) | `151 allocs/op` |
+
+Observed added latency for full governance pipeline vs raw policy evaluation:
+
+- approximately `57.705 us` per decision on median samples.
+
+These are reference measurements for release engineering, not hard latency guarantees.
 
 ## Cross-Platform Enforcement
 

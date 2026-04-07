@@ -225,7 +225,7 @@ func isOffboardCandidate(path string) bool {
 	}
 	ext := strings.ToLower(filepath.Ext(name))
 	switch ext {
-	case ".py", ".sh", ".bash", ".zsh":
+	case ".py", ".sh", ".bash", ".zsh", ".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx":
 		return true
 	default:
 		return false
@@ -252,20 +252,31 @@ func rewriteOffboardFile(path string, src string) (string, []string, int, bool) 
 	if ext == ".py" {
 		return rewritePythonOffboard(src)
 	}
+	if ext == ".js" || ext == ".ts" || ext == ".mjs" || ext == ".cjs" || ext == ".jsx" || ext == ".tsx" {
+		return rewriteJSOffboard(src)
+	}
 	return rewriteShellOffboard(src)
 }
 
 var (
-	pyImportRe         = regexp.MustCompile(`^\s*import\s+faramesh(?:\.[A-Za-z0-9_]+)*(?:\s+as\s+[A-Za-z0-9_]+)?\s*$`)
-	pyFromImportRe     = regexp.MustCompile(`^\s*from\s+(faramesh(?:\.[A-Za-z0-9_]+)*)\s+import\s+(.+?)\s*$`)
-	pyDecoratorNameRe  = regexp.MustCompile(`^\s*@(?:[A-Za-z0-9_]+\.)?(governed_tool|faramesh_tool|govern_agentcore_tool)\b`)
-	pyEnvAssignRe      = regexp.MustCompile(`^\s*os\.environ\[(?:"|')FARAMESH_[A-Z0-9_]+(?:"|')\]\s*=`)
-	pyEnvSetDefaultRe  = regexp.MustCompile(`^\s*os\.environ\.setdefault\(\s*(?:"|')FARAMESH_[A-Z0-9_]+(?:"|')\s*,`)
-	pyPutEnvRe         = regexp.MustCompile(`^\s*os\.putenv\(\s*(?:"|')FARAMESH_[A-Z0-9_]+(?:"|')\s*,`)
-	shellExportRe      = regexp.MustCompile(`^\s*export\s+FARAMESH_[A-Z0-9_]+\s*=`)
-	shellAssignOnlyRe  = regexp.MustCompile(`^\s*FARAMESH_[A-Z0-9_]+\s*=`) // with or without continuation
-	shellPrefixAssigns = regexp.MustCompile(`^\s*((?:FARAMESH_[A-Z0-9_]+=[^\s]+\s+)+)(.+)$`)
-	shellUnsetRe       = regexp.MustCompile(`^\s*unset\s+(?:FARAMESH_[A-Z0-9_]+\s*)+$`)
+	pyImportRe          = regexp.MustCompile(`^\s*import\s+faramesh(?:\.[A-Za-z0-9_]+)*(?:\s+as\s+[A-Za-z0-9_]+)?\s*$`)
+	pyFromImportRe      = regexp.MustCompile(`^\s*from\s+(faramesh(?:\.[A-Za-z0-9_]+)*)\s+import\s+(.+?)\s*$`)
+	pyDecoratorNameRe   = regexp.MustCompile(`^\s*@(?:[A-Za-z0-9_]+\.)?(governed_tool|faramesh_tool|govern_agentcore_tool)\b`)
+	pyEnvAssignRe       = regexp.MustCompile(`^\s*os\.environ\[(?:"|')FARAMESH_[A-Z0-9_]+(?:"|')\]\s*=`)
+	pyEnvSetDefaultRe   = regexp.MustCompile(`^\s*os\.environ\.setdefault\(\s*(?:"|')FARAMESH_[A-Z0-9_]+(?:"|')\s*,`)
+	pyPutEnvRe          = regexp.MustCompile(`^\s*os\.putenv\(\s*(?:"|')FARAMESH_[A-Z0-9_]+(?:"|')\s*,`)
+	shellExportRe       = regexp.MustCompile(`^\s*export\s+FARAMESH_[A-Z0-9_]+\s*=`)
+	shellNodeOptExport  = regexp.MustCompile(`^\s*export\s+NODE_OPTIONS\s*=.*@faramesh/sdk/autopatch`)
+	shellAssignOnlyRe   = regexp.MustCompile(`^\s*FARAMESH_[A-Z0-9_]+\s*=`) // with or without continuation
+	shellPrefixAssigns  = regexp.MustCompile(`^\s*((?:FARAMESH_[A-Z0-9_]+=[^\s]+\s+)+)(.+)$`)
+	shellUnsetRe        = regexp.MustCompile(`^\s*unset\s+(?:FARAMESH_[A-Z0-9_]+\s*)+$`)
+	nodeOptAssignRe     = regexp.MustCompile(`^\s*NODE_OPTIONS\s*=.*@faramesh/sdk/autopatch`)
+	nodeOptPrefixRe     = regexp.MustCompile(`^\s*NODE_OPTIONS=("[^"]*"|'[^']*'|\S+)\s+(.+)$`)
+	jsImportFarameshRe  = regexp.MustCompile(`^\s*import\s+.*['\"](?:@?faramesh(?:/sdk)?[^'\"]*)['\"]\s*;?\s*$`)
+	jsRequireFarameshRe = regexp.MustCompile(`^\s*(?:(?:const|let|var)\s+[^=]+\s*=\s*)?require\(\s*['\"](?:@?faramesh(?:/sdk)?[^'\"]*)['\"]\s*\)\s*;?\s*$`)
+	jsEnvAssignRe       = regexp.MustCompile(`^\s*process\.env\.FARAMESH_[A-Z0-9_]+\s*=`)
+	jsInstallCallRe     = regexp.MustCompile(`\binstallAutoPatch\s*\(`)
+	jsGovernCallRe      = regexp.MustCompile(`\bgovern\s*\(`)
 )
 
 func rewritePythonOffboard(src string) (string, []string, int, bool) {
@@ -656,6 +667,12 @@ func rewriteShellOffboard(src string) (string, []string, int, bool) {
 			continue
 		}
 
+		if shellNodeOptExport.MatchString(line) {
+			ruleHits["remove_faramesh_node_options_export"]++
+			removedLines++
+			continue
+		}
+
 		if shellUnsetRe.MatchString(line) {
 			ruleHits["remove_faramesh_unset"]++
 			removedLines++
@@ -671,12 +688,87 @@ func rewriteShellOffboard(src string) (string, []string, int, bool) {
 			continue
 		}
 
+		if m := nodeOptPrefixRe.FindStringSubmatch(line); len(m) == 3 {
+			if strings.Contains(m[1], "@faramesh/sdk/autopatch") {
+				ruleHits["strip_faramesh_node_options_prefix"]++
+				out = append(out, leadingIndent(line)+strings.TrimLeft(m[2], " \t"))
+				continue
+			}
+		}
+
+		if nodeOptAssignRe.MatchString(line) {
+			ruleHits["remove_faramesh_node_options_assignment"]++
+			removedLines++
+			continue
+		}
+
 		if shellAssignOnlyRe.MatchString(line) {
 			ruleHits["remove_faramesh_assignment"]++
 			removedLines++
 			if indent := leadingIndent(line); indent != "" {
 				out = append(out, indent+": # faramesh offboard assignment removed")
 			}
+			continue
+		}
+
+		out = append(out, line)
+	}
+
+	next := strings.Join(out, "\n")
+	return next, sortedRuleNames(ruleHits), removedLines, next != src
+}
+
+func rewriteJSOffboard(src string) (string, []string, int, bool) {
+	lines := strings.Split(src, "\n")
+	out := make([]string, 0, len(lines))
+	ruleHits := map[string]int{}
+	removedLines := 0
+
+	for _, line := range lines {
+		trim := strings.TrimSpace(line)
+		if trim == "" {
+			out = append(out, line)
+			continue
+		}
+
+		if jsImportFarameshRe.MatchString(line) || jsRequireFarameshRe.MatchString(line) {
+			ruleHits["remove_faramesh_js_import"]++
+			removedLines++
+			continue
+		}
+
+		if jsEnvAssignRe.MatchString(line) {
+			ruleHits["remove_faramesh_js_env_assignment"]++
+			removedLines++
+			continue
+		}
+
+		if eq := strings.Index(line, "="); eq >= 0 {
+			lhs := strings.TrimRight(line[:eq], " \t")
+			rhs := strings.TrimSpace(line[eq+1:])
+			if jsInstallCallRe.MatchString(rhs) {
+				ruleHits["neutralize_js_install_autopatch"]++
+				out = append(out, lhs+" = false;")
+				removedLines++
+				continue
+			}
+			if jsGovernCallRe.MatchString(rhs) {
+				ruleHits["neutralize_js_govern_call"]++
+				out = append(out, lhs+` = { effect: "PERMIT" };`)
+				removedLines++
+				continue
+			}
+		}
+
+		if jsInstallCallRe.MatchString(trim) {
+			ruleHits["remove_js_install_autopatch_call"]++
+			removedLines++
+			continue
+		}
+
+		if jsGovernCallRe.MatchString(trim) {
+			ruleHits["remove_js_govern_call"]++
+			removedLines++
 			continue
 		}
 
