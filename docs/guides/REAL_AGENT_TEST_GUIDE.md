@@ -11,7 +11,7 @@ cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
 make govern-wizard
 ```
 
-Use defaults and press Enter. The wizard is for any agent command; default command is LangChain-first (`python ../demo_interactive_ai_agent.py`) so you can validate quickly, then swap to your own command.
+Use defaults and press Enter. The wizard is for any agent command; default command is LangChain-first (`python faramesh-core/demo_interactive_ai_agent.py`) so you can validate quickly, then swap to your own command.
 
 ## Scope (important)
 
