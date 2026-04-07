@@ -1,0 +1,7 @@
+name,mode,policy,duration,max_network_deny,max_audit_violations,max_audit_bypass
+canary-audit,audit,policies/default.fpl,300,0,50,0
+staging-enforce-10,enforce,policies/staging_enforce_10.fpl,300,15,200,10
+staging-enforce-50,enforce,policies/staging_enforce_50.fpl,300,25,200,10
+prod-enforce-10,enforce,policies/prod_enforce_10.fpl,300,20,200,10
+prod-enforce-50,enforce,policies/prod_enforce_50.fpl,300,30,200,10
+prod-enforce-100,enforce,policies/prod_enforce_100.fpl,300,40,200,10
