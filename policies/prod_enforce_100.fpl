@@ -1,0 +1,26 @@
+agent default {
+  default deny
+
+  budget session {
+    max_calls 500
+    daily $10
+    on_exceed deny
+  }
+
+  rules {
+    permit http/get
+
+    # Keep existing high-risk operations in human approval flow.
+    defer shell/* reason: "shell commands require human approval"
+    defer stripe/refund
+      reason: "refund requires human approval"
+
+    # Prod 100: full approved inference surface for this baseline profile.
+    permit proxy/connect port: 443
+    permit proxy/http host: api.openai.com port: 443 method: POST path: /v1/chat/completions
+    permit proxy/http host: api.openai.com port: 443 method: POST path: /v1/responses
+    permit proxy/http host: api.openai.com port: 443 method: POST path: /v1/embeddings
+    permit proxy/http host: api.anthropic.com port: 443 method: POST path: /v1/messages
+    permit proxy/http host: *.openai.azure.com port: 443 method: POST path: /openai/deployments/*/chat/completions query: api-version=*
+  }
+}
