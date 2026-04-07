@@ -92,9 +92,9 @@ func detectIDE(cwd string) string {
 
 func detectAgentHarness(cwd string) string {
 	switch {
-	case binaryExists("openclaw") || dirExists(filepath.Join(cwd, ".openclaw")):
+	case dirExists(filepath.Join(cwd, ".openclaw")):
 		return "openclaw"
-	case binaryExists("deepagents") || dirExists(filepath.Join(cwd, ".deepagents")):
+	case dirExists(filepath.Join(cwd, ".deepagents")):
 		return "deepagents-cli"
 	case binaryExists("claude") && dirExists(filepath.Join(cwd, ".claude")):
 		return "claude-code"
