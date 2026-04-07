@@ -36,7 +36,7 @@ If a LangChain app uses MCP tools, use MCP boundary governance as well:
 
 Detailed MCP semantics:
 
-- `../mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md`
+- [MCP_INTERCEPTION_GOVERNANCE_SPEC.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
 
 ## Operational controls
 
@@ -55,5 +55,5 @@ go test ./...
 
 ## Related docs
 
-- Quick guide: `../../guides/frameworks/LANGCHAIN_QUICK_GUIDE.md`
-- Product technical matrix: `../FEATURES_TECHNICAL_REFERENCE.md`
+- Quick guide: [LANGCHAIN_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/frameworks/LANGCHAIN_QUICK_GUIDE.md)
+- Product technical matrix: [FEATURES_TECHNICAL_REFERENCE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/FEATURES_TECHNICAL_REFERENCE.md)

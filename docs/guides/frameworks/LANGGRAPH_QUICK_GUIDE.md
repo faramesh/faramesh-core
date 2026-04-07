@@ -67,4 +67,4 @@ This prevents MCP tools from bypassing governance.
 
 Use power-user spec:
 
-- `../../power-users/frameworks/LANGGRAPH_TECHNICAL_GUIDE.md`
+- [LANGGRAPH_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/LANGGRAPH_TECHNICAL_GUIDE.md)

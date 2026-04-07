@@ -40,7 +40,7 @@ For MCP-backed tools inside graph flows, apply MCP boundary governance in additi
 
 MCP technical details:
 
-- `../mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md`
+- [MCP_INTERCEPTION_GOVERNANCE_SPEC.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
 
 ## Validation commands
 
@@ -51,5 +51,5 @@ go test ./...
 
 ## Related docs
 
-- Quick guide: `../../guides/frameworks/LANGGRAPH_QUICK_GUIDE.md`
-- Product technical matrix: `../FEATURES_TECHNICAL_REFERENCE.md`
+- Quick guide: [LANGGRAPH_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/frameworks/LANGGRAPH_QUICK_GUIDE.md)
+- Product technical matrix: [FEATURES_TECHNICAL_REFERENCE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/FEATURES_TECHNICAL_REFERENCE.md)

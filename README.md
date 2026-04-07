@@ -285,8 +285,8 @@ Faramesh intercepts every MCP `tools/call` request. The IDE agent connects to Fa
 
 MCP docs are split by audience:
 
-- Fast setup and daily usage: `docs/guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md`
-- Full technical spec and deep hardening details: `docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md`
+- Fast setup and daily usage: [MCP_INTERCEPTION_GOVERNANCE_PLAN.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md)
+- Full technical spec and deep hardening details: [MCP_INTERCEPTION_GOVERNANCE_SPEC.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
 
 ## Credential Broker
 

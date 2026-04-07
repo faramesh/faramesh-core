@@ -73,4 +73,4 @@ This keeps MCP tool calls inside the same governance boundary.
 
 Use power-user spec:
 
-- `../../power-users/frameworks/LANGCHAIN_TECHNICAL_GUIDE.md`
+- [LANGCHAIN_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/LANGCHAIN_TECHNICAL_GUIDE.md)

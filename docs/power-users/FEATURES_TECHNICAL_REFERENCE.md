@@ -6,7 +6,7 @@ Use this when you need architecture internals, control surfaces, and operational
 
 For simple usage, use:
 
-- `../guides/FEATURES_QUICK_GUIDE.md`
+- [FEATURES_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/FEATURES_QUICK_GUIDE.md)
 
 ## Coverage Policy
 
@@ -21,25 +21,25 @@ This document is the power-user umbrella for the whole product.
 
 | Feature Domain | Quick Usage Doc | Power/Technical Doc |
 |---|---|---|
-| Install and onboarding | `../simple/01_INSTALL.md`, `../simple/00_START_HERE.md` | `../README.md` |
-| Setup lifecycle automation | `../simple/00_START_HERE.md` | `../README.md` |
-| Agent governance runtime | `../simple/02_QUICKSTART.md` | `../README.md` |
-| LangChain runtime governance | `../guides/frameworks/LANGCHAIN_QUICK_GUIDE.md` | `frameworks/LANGCHAIN_TECHNICAL_GUIDE.md` |
-| LangGraph runtime governance | `../guides/frameworks/LANGGRAPH_QUICK_GUIDE.md` | `frameworks/LANGGRAPH_TECHNICAL_GUIDE.md` |
-| Deep Agents runtime governance | `../guides/frameworks/DEEP_AGENTS_QUICK_GUIDE.md` | `frameworks/DEEP_AGENTS_TECHNICAL_GUIDE.md` |
-| Policy authoring (FPL) | `../simple/03_POLICY_SIMPLE.md` | `../fpl/POLICY_AUTHORING_REFERENCE.md`, `../fpl/LANGUAGE_REFERENCE.md` |
-| Runtime monitoring and DPR | `../simple/04_RUN_AND_MONITOR.md` | `../README.md` |
-| Human approvals (DEFER flow) | `../simple/05_APPROVALS.md` | `../README.md` |
-| Adapter usage (general) | `../simple/06_ADAPTERS.md` | `../README.md` |
-| MCP governance | `../guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md` | `mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md` |
-| Production setup controls | `../simple/07_PRODUCTION_SETUP.md` | `../README.md` |
-| Troubleshooting | `../simple/08_TROUBLESHOOTING.md` | `../README.md` |
-| Network hardening rollout | `../guides/NETWORK_HARDENING_CANARY_RUNBOOK.md` | `../guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md` |
-| Chain exfil hardening | `../guides/CHAIN_EXFIL_HARDENING_PLAYBOOK.md` | `../guides/CHAIN_EXFIL_HARDENING_PLAYBOOK.md` |
-| Credential broker | `../guides/FEATURES_QUICK_GUIDE.md` | `../README.md` |
-| SPIFFE workload identity | `../guides/FEATURES_QUICK_GUIDE.md` | `../README.md` |
-| Observability and metrics | `../guides/FEATURES_QUICK_GUIDE.md` | `../README.md` |
-| SDK surfaces (Python/Node) | `../guides/FEATURES_QUICK_GUIDE.md` | `../README.md`, `../../sdk/python/README.md`, `../../sdk/node/README.md` |
+| Install and onboarding | [01_INSTALL.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/01_INSTALL.md), [00_START_HERE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/00_START_HERE.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| Setup lifecycle automation | [00_START_HERE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/00_START_HERE.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| Agent governance runtime | [02_QUICKSTART.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/02_QUICKSTART.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| LangChain runtime governance | [LANGCHAIN_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/frameworks/LANGCHAIN_QUICK_GUIDE.md) | [LANGCHAIN_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/LANGCHAIN_TECHNICAL_GUIDE.md) |
+| LangGraph runtime governance | [LANGGRAPH_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/frameworks/LANGGRAPH_QUICK_GUIDE.md) | [LANGGRAPH_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/LANGGRAPH_TECHNICAL_GUIDE.md) |
+| Deep Agents runtime governance | [DEEP_AGENTS_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/frameworks/DEEP_AGENTS_QUICK_GUIDE.md) | [DEEP_AGENTS_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/DEEP_AGENTS_TECHNICAL_GUIDE.md) |
+| Policy authoring (FPL) | [03_POLICY_SIMPLE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/03_POLICY_SIMPLE.md) | [POLICY_AUTHORING_REFERENCE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/fpl/POLICY_AUTHORING_REFERENCE.md), [LANGUAGE_REFERENCE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/fpl/LANGUAGE_REFERENCE.md) |
+| Runtime monitoring and DPR | [04_RUN_AND_MONITOR.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/04_RUN_AND_MONITOR.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| Human approvals (DEFER flow) | [05_APPROVALS.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/05_APPROVALS.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| Adapter usage (general) | [06_ADAPTERS.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/06_ADAPTERS.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| MCP governance | [MCP_INTERCEPTION_GOVERNANCE_PLAN.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md) | [MCP_INTERCEPTION_GOVERNANCE_SPEC.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md) |
+| Production setup controls | [07_PRODUCTION_SETUP.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/07_PRODUCTION_SETUP.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| Troubleshooting | [08_TROUBLESHOOTING.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/08_TROUBLESHOOTING.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| Network hardening rollout | [NETWORK_HARDENING_CANARY_RUNBOOK.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/NETWORK_HARDENING_CANARY_RUNBOOK.md) | [NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md) |
+| Chain exfil hardening | [CHAIN_EXFIL_HARDENING_PLAYBOOK.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/CHAIN_EXFIL_HARDENING_PLAYBOOK.md) | [CHAIN_EXFIL_HARDENING_PLAYBOOK.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/CHAIN_EXFIL_HARDENING_PLAYBOOK.md) |
+| Credential broker | [FEATURES_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/FEATURES_QUICK_GUIDE.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| SPIFFE workload identity | [FEATURES_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/FEATURES_QUICK_GUIDE.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| Observability and metrics | [FEATURES_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/FEATURES_QUICK_GUIDE.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| SDK surfaces (Python/Node) | [FEATURES_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/FEATURES_QUICK_GUIDE.md) | [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md), [README.md](https://github.com/faramesh/faramesh-core/blob/main/sdk/python/README.md), [README.md](https://github.com/faramesh/faramesh-core/blob/main/sdk/node/README.md) |
 
 ## Technical Breakdown by Feature
 
@@ -51,8 +51,8 @@ This document is the power-user umbrella for the whole product.
 
 Source anchors:
 
-- `../README.md` (architecture and runtime sections)
-- `../../internal/core/`
+- [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) (architecture and runtime sections)
+- [internal/core](https://github.com/faramesh/faramesh-core/tree/main/internal/core)
 
 ### 2. Policy Language (FPL)
 
@@ -61,10 +61,10 @@ Source anchors:
 
 Source anchors:
 
-- `../fpl/README.md`
-- `../fpl/LANGUAGE_REFERENCE.md`
-- `../fpl/POLICY_AUTHORING_REFERENCE.md`
-- `../fpl/BENCHMARK_RELIABILITY_REPORTING.md`
+- [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/fpl/README.md)
+- [LANGUAGE_REFERENCE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/fpl/LANGUAGE_REFERENCE.md)
+- [POLICY_AUTHORING_REFERENCE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/fpl/POLICY_AUTHORING_REFERENCE.md)
+- [BENCHMARK_RELIABILITY_REPORTING.md](https://github.com/faramesh/faramesh-core/blob/main/docs/fpl/BENCHMARK_RELIABILITY_REPORTING.md)
 
 ### 3. Adapter and Integration Surfaces
 
@@ -76,14 +76,14 @@ Primary integration surfaces are exposed through runtime commands and adapter pa
 
 Source anchors:
 
-- `../simple/06_ADAPTERS.md`
-- `mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md`
+- [06_ADAPTERS.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/06_ADAPTERS.md)
+- [MCP_INTERCEPTION_GOVERNANCE_SPEC.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
 
 ### 3a. Framework-Specific Runtime Guides
 
-- LangChain technical guide: `frameworks/LANGCHAIN_TECHNICAL_GUIDE.md`
-- LangGraph technical guide: `frameworks/LANGGRAPH_TECHNICAL_GUIDE.md`
-- Deep Agents technical guide: `frameworks/DEEP_AGENTS_TECHNICAL_GUIDE.md`
+- LangChain technical guide: [LANGCHAIN_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/LANGCHAIN_TECHNICAL_GUIDE.md)
+- LangGraph technical guide: [LANGGRAPH_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/LANGGRAPH_TECHNICAL_GUIDE.md)
+- Deep Agents technical guide: [DEEP_AGENTS_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/DEEP_AGENTS_TECHNICAL_GUIDE.md)
 
 ### 4. MCP Technical Surface
 
@@ -95,7 +95,7 @@ Source anchors:
 
 Source anchor:
 
-- `mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md`
+- [MCP_INTERCEPTION_GOVERNANCE_SPEC.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
 
 ### 5. Security and Hardening Domains
 
@@ -105,8 +105,8 @@ Source anchor:
 
 Source anchors:
 
-- `../guides/NETWORK_HARDENING_CANARY_RUNBOOK.md`
-- `../guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md`
+- [NETWORK_HARDENING_CANARY_RUNBOOK.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
+- [NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
 
 #### Chain exfil hardening
 
@@ -114,7 +114,7 @@ Source anchors:
 
 Source anchor:
 
-- `../guides/CHAIN_EXFIL_HARDENING_PLAYBOOK.md`
+- [CHAIN_EXFIL_HARDENING_PLAYBOOK.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/CHAIN_EXFIL_HARDENING_PLAYBOOK.md)
 
 ### 6. Credential and Identity Controls
 
@@ -123,7 +123,7 @@ Source anchor:
 
 Source anchors:
 
-- `../README.md`
+- [README.md](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md)
 
 ### 7. Operations, Metrics, and Validation
 
