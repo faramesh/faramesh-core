@@ -94,6 +94,66 @@ What it intercepts before execution:
 - LangGraph `ToolNode._run_one` (fallback for older ToolNode versions)
 - LangGraph `ToolNode._arun_one` (fallback for older ToolNode versions)
 
+## DeepAgents Drop-In Interception
+
+Use this when your agent is assembled via `deepagents.create_deep_agent(...)`
+and you want the same Faramesh governance guarantees.
+
+```python
+from faramesh.adapters.deepagents import install_deepagents_interceptor
+
+install_deepagents_interceptor(
+    policy="policy.fpl",
+    agent_id="research-supervisor",
+    fail_open=False,
+    include_langgraph=True,
+)
+
+# Build and run your DeepAgents graph normally.
+```
+
+DeepAgents adapter guarantees:
+
+- Patches DeepAgents `create_deep_agent` entrypoint
+- Reuses LangChain/LangGraph execution-layer interception
+- Preserves Faramesh fail-closed behavior (`PERMIT|DENY|DEFER`)
+- Keeps tool IDs compatible with operation-aware FPL matching
+
+### OpenRouter Qwen Production Harness (DeepAgents)
+
+Use the bundled harness to validate production-style governance with
+OpenRouter `qwen/qwen3.6-plus:free`.
+
+```bash
+# 1) Activate your SDK/deepagents environment
+source /tmp/faramesh-deepagents-venv313/bin/activate
+
+# 2) Start daemon with strict policy for this harness
+cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+go run ./cmd/faramesh serve \
+    --socket /tmp/faramesh.sock \
+    --data-dir /tmp/faramesh-data \
+    --policy sdk/python/examples/policies/deepagents_openrouter_qwen_production.fpl
+
+# 3) In another shell, run the harness under Faramesh runtime wiring
+cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+OPENROUTER_API_KEY=<your_key> \
+go run ./cmd/faramesh run \
+    --daemon-socket /tmp/faramesh.sock \
+    --agent-id deepagents-openrouter-qwen-prod \
+    --policy sdk/python/examples/policies/deepagents_openrouter_qwen_production.fpl \
+    -- python sdk/python/examples/deepagents_openrouter_qwen_production.py
+
+# 4) Export DPR evidence for the run
+go run ./cmd/faramesh audit export \
+    /tmp/faramesh-data/faramesh.db \
+    --agent deepagents-openrouter-qwen-prod \
+    --format json
+```
+
+Harness path: `sdk/python/examples/deepagents_openrouter_qwen_production.py`
+Policy path: `sdk/python/examples/policies/deepagents_openrouter_qwen_production.fpl`
+
 ## One-Command Runtime For Custom Agents
 
 For custom LangChain/LangGraph projects, use the daemon + runtime wrapper path:
@@ -162,6 +222,8 @@ LangChain/LangGraph interception behavior:
 ```bash
 python -m unittest \
     tests.test_langchain_policy_fpl_harness \
+    tests.test_deepagents_policy_fpl_harness \
+    tests.test_deepagents_adapter \
     tests.test_langchain_adapter \
     tests.test_langchain_live_integration
 ```
@@ -191,6 +253,10 @@ Use this checklist in CI/CD for production-grade LangChain/LangGraph governance:
 4. Pin and review framework versions whenever upgrading LangChain/LangGraph.
 5. Run daemon-backed FPL verification before release cutovers.
 6. Store test artifacts (logs and DPR records) for incident forensics.
+
+For DeepAgents workloads, apply the same checklist plus DeepAgents adapter
+coverage tests (`tests.test_deepagents_adapter`,
+`tests.test_deepagents_policy_fpl_harness`).
 
 Note: Python 3.14 currently emits a LangChain core Pydantic v1 compatibility
 warning in test output; test execution still completes successfully.
