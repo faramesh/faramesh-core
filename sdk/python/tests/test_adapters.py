@@ -213,6 +213,7 @@ class TestAutopatchNewFrameworks(unittest.TestCase):
     def test_patchers_registry(self):
         from faramesh.autopatch import _PATCHERS
 
+        self.assertIn("deepagents", _PATCHERS)
         self.assertIn("google-adk", _PATCHERS)
         self.assertIn("llamaindex", _PATCHERS)
         self.assertIn("strands-agents", _PATCHERS)
@@ -220,7 +221,7 @@ class TestAutopatchNewFrameworks(unittest.TestCase):
 
     def test_patcher_count(self):
         from faramesh.autopatch import _PATCHERS
-        self.assertGreaterEqual(len(_PATCHERS), 10)
+        self.assertGreaterEqual(len(_PATCHERS), 11)
 
 
 if __name__ == "__main__":

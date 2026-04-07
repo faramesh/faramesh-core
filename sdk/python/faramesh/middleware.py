@@ -109,7 +109,7 @@ class FarameshMiddleware:
 
         if effect == "DENY":
             self._deny_count += 1
-            reason = result.get("reason_code", "POLICY_DENY")
+            reason = result.get("reason_code") or "POLICY_DENY"
             logger.warning("faramesh: DENY %s — %s", tool_name, reason)
             raise RuntimeError(f"Faramesh DENY: {reason} (tool={tool_name})")
 

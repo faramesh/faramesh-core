@@ -8,6 +8,7 @@ so every tool call flows through Faramesh governance.
 Supported frameworks and their patch points:
     - LangChain/LangGraph:      BaseTool.run/arun/invoke/ainvoke +
                                 ToolNode._execute_tool_sync/_execute_tool_async
+    - DeepAgents:               create_deep_agent entrypoint + LangChain/LangGraph hooks
   - CrewAI:                   BaseTool._run
   - AutoGen/AG2:              ConversableAgent._execute_tool_call
   - OpenAI Agents SDK:        FunctionTool.on_invoke_tool
@@ -195,7 +196,7 @@ def _wrap_method(cls: type, method_name: str, framework: str, tool_id_fn: Callab
         result = _govern_call(tid, call_args)
         effect = _normalize_effect(result.get("effect", ""))
         if effect == "DENY":
-            reason = result.get("reason_code", "POLICY_DENY")
+            reason = result.get("reason_code") or "POLICY_DENY"
             raise RuntimeError(f"Faramesh DENY: {reason} (tool={tid})")
         if effect == "DEFER":
             token = result.get("defer_token", "")
@@ -262,6 +263,14 @@ def _patch_langchain() -> bool:
 
     patched = install_langchain_interceptor(include_langgraph=True, fail_open=False)
     return bool(patched.get("langchain") or patched.get("langgraph"))
+
+
+def _patch_deepagents() -> bool:
+    """Patch DeepAgents entrypoint and align with LangChain/LangGraph hooks."""
+    from faramesh.adapters.deepagents import install_deepagents_interceptor
+
+    patched = install_deepagents_interceptor(include_langgraph=True, fail_open=False)
+    return bool(patched.get("deepagents") or patched.get("langchain") or patched.get("langgraph"))
 
 
 def _patch_crewai() -> bool:
@@ -419,6 +428,7 @@ def _patch_haystack() -> bool:
 
 _PATCHERS: dict[str, Callable[[], bool]] = {
     "langchain": _patch_langchain,
+    "deepagents": _patch_deepagents,
     "crewai": _patch_crewai,
     "autogen": _patch_autogen,
     "openai-agents": _patch_openai_agents,
