@@ -86,16 +86,17 @@ func NewTriage(cfg TriageConfig) *Triage {
 // Classify determines the priority and SLA for a DEFER based on rules.
 func (t *Triage) Classify(token, agentID, toolID, reason string) *TriagedItem {
 	t.mu.RLock()
-	defer t.mu.RUnlock()
+	cfg := t.config
+	t.mu.RUnlock()
 
 	now := time.Now()
-	priority := t.config.DefaultPriority
-	sla := t.config.DefaultSLA
+	priority := cfg.DefaultPriority
+	sla := cfg.DefaultSLA
 	autoDeny := true
 	escalateTo := ""
 
 	// Find the first matching rule.
-	for _, rule := range t.config.Rules {
+	for _, rule := range cfg.Rules {
 		if matchToolGlob(rule.ToolPattern, toolID) {
 			priority = rule.Priority
 			if rule.SLA > 0 {
@@ -108,7 +109,7 @@ func (t *Triage) Classify(token, agentID, toolID, reason string) *TriagedItem {
 	}
 
 	// Override SLA based on priority defaults if not set by rule.
-	if sla == t.config.DefaultSLA {
+	if sla == cfg.DefaultSLA {
 		switch priority {
 		case PriorityCritical:
 			sla = 2 * time.Minute

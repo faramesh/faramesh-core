@@ -59,6 +59,14 @@ type Record struct {
 	ArgProvenance     map[string]string `json:"arg_provenance,omitempty"`    // arg_path -> source_dpr_record_id
 	SelectorSnapshot  map[string]any    `json:"selector_snapshot,omitempty"` // selector values that drove decision
 
+	// ── Network Hardening Evidence (DPR-safe) ──
+	HardeningMode                string `json:"hardening_mode,omitempty"`
+	NetworkHostHash              string `json:"network_host_hash,omitempty"`
+	NetworkPort                  int    `json:"network_port,omitempty"`
+	NetworkResolvedIPHash        string `json:"network_resolved_ip_hash,omitempty"`
+	NetworkAuditBypass           bool   `json:"network_audit_bypass,omitempty"`
+	InferenceModelRewriteApplied bool   `json:"inference_model_rewrite_applied,omitempty"`
+
 	// ── Custom Operators ──
 	CustomOperatorsEvaluated []string       `json:"custom_operators_evaluated,omitempty"`
 	OperatorResults          map[string]any `json:"operator_results,omitempty"`
@@ -123,6 +131,12 @@ func (r *Record) CanonicalBytes() []byte {
 		IncidentSeverity   string    `json:"incident_severity,omitempty"`
 		PolicyVersion      string    `json:"policy_version"`
 		ArgsStructuralSig  string    `json:"args_structural_sig"`
+		HardeningMode      string    `json:"hardening_mode,omitempty"`
+		NetworkHostHash    string    `json:"network_host_hash,omitempty"`
+		NetworkPort        int       `json:"network_port,omitempty"`
+		NetworkResolvedIP  string    `json:"network_resolved_ip_hash,omitempty"`
+		NetworkAuditBypass bool      `json:"network_audit_bypass,omitempty"`
+		InferenceRewrite   bool      `json:"inference_model_rewrite_applied,omitempty"`
 		WorkflowPhase      string    `json:"workflow_phase,omitempty"`
 		CredentialBrokered bool      `json:"credential_brokered,omitempty"`
 		DegradedMode       string    `json:"degraded_mode,omitempty"`
@@ -148,6 +162,12 @@ func (r *Record) CanonicalBytes() []byte {
 		IncidentSeverity:   r.IncidentSeverity,
 		PolicyVersion:      r.PolicyVersion,
 		ArgsStructuralSig:  r.ArgsStructuralSig,
+		HardeningMode:      r.HardeningMode,
+		NetworkHostHash:    r.NetworkHostHash,
+		NetworkPort:        r.NetworkPort,
+		NetworkResolvedIP:  r.NetworkResolvedIPHash,
+		NetworkAuditBypass: r.NetworkAuditBypass,
+		InferenceRewrite:   r.InferenceModelRewriteApplied,
 		WorkflowPhase:      r.WorkflowPhase,
 		CredentialBrokered: r.CredentialBrokered,
 		DegradedMode:       r.DegradedMode,
