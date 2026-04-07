@@ -340,7 +340,12 @@ func NewHTTPGateway(pipeline *core.Pipeline, agentID, targetURL string, log *zap
 		agentID:   agentID,
 		targetURL: targetURL,
 		log:       log,
-		client:    &http.Client{Timeout: 30 * time.Second},
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 	u, err := url.Parse(targetURL)
 	if err != nil {
@@ -494,7 +499,8 @@ func (g *HTTPGateway) handleMCPBatch(w http.ResponseWriter, r *http.Request, bod
 		isNotification := msg.ID == nil && msg.Method != ""
 		if isNotification {
 			if _, _, _, err := g.doUpstreamRequest(r, rawEl); err != nil {
-				http.Error(w, "upstream MCP server error: "+err.Error(), http.StatusBadGateway)
+				g.log.Error("upstream MCP server error", zap.Error(err))
+				http.Error(w, `{"error":"upstream service unavailable"}`, http.StatusBadGateway)
 				return
 			}
 			continue
@@ -511,7 +517,8 @@ func (g *HTTPGateway) handleMCPBatch(w http.ResponseWriter, r *http.Request, bod
 			}
 			st, respBody, err := g.forwardMCPWithPostScanBytes(r, rawEl, toolName)
 			if err != nil {
-				http.Error(w, "upstream MCP server error: "+err.Error(), http.StatusBadGateway)
+				g.log.Error("upstream MCP server error", zap.Error(err))
+				http.Error(w, `{"error":"upstream service unavailable"}`, http.StatusBadGateway)
 				return
 			}
 			var up MCPMessage
@@ -524,7 +531,8 @@ func (g *HTTPGateway) handleMCPBatch(w http.ResponseWriter, r *http.Request, bod
 		}
 		st, respBody, _, err := g.doUpstreamRequest(r, rawEl)
 		if err != nil {
-			http.Error(w, "upstream MCP server error: "+err.Error(), http.StatusBadGateway)
+			g.log.Error("upstream MCP server error", zap.Error(err))
+			http.Error(w, `{"error":"upstream service unavailable"}`, http.StatusBadGateway)
 			return
 		}
 		var up MCPMessage
@@ -582,13 +590,17 @@ func (g *HTTPGateway) forwardMCPStream(w http.ResponseWriter, r *http.Request, b
 	streamClient := &http.Client{
 		Timeout:   0,
 		Transport: g.client.Transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 	if streamClient.Transport == nil {
 		streamClient.Transport = http.DefaultTransport
 	}
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, g.upstreamURL(r), bytes.NewReader(body))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		g.log.Error("failed to build upstream request", zap.Error(err))
+		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 	for k, vs := range r.Header {
@@ -599,7 +611,8 @@ func (g *HTTPGateway) forwardMCPStream(w http.ResponseWriter, r *http.Request, b
 	proxyReq.ContentLength = int64(len(body))
 	resp, err := streamClient.Do(proxyReq)
 	if err != nil {
-		http.Error(w, "upstream MCP server error: "+err.Error(), http.StatusBadGateway)
+		g.log.Error("upstream MCP server error", zap.Error(err))
+		http.Error(w, `{"error":"upstream service unavailable"}`, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
@@ -698,7 +711,8 @@ func (g *HTTPGateway) interceptToolsCall(msg MCPMessage) (resp *MCPMessage, forw
 func (g *HTTPGateway) forwardMCPRaw(w http.ResponseWriter, r *http.Request, body []byte) {
 	st, respBody, hdr, err := g.doUpstreamRequest(r, body)
 	if err != nil {
-		http.Error(w, "upstream MCP server error: "+err.Error(), http.StatusBadGateway)
+		g.log.Error("upstream MCP server error", zap.Error(err))
+		http.Error(w, `{"error":"upstream service unavailable"}`, http.StatusBadGateway)
 		return
 	}
 	for k, vs := range hdr {
@@ -714,7 +728,8 @@ func (g *HTTPGateway) forwardMCPRaw(w http.ResponseWriter, r *http.Request, body
 func (g *HTTPGateway) forwardMCPWithPostScan(w http.ResponseWriter, r *http.Request, body []byte, toolID string) {
 	st, respBody, hdr, err := g.doUpstreamRequest(r, body)
 	if err != nil {
-		http.Error(w, "upstream MCP server error: "+err.Error(), http.StatusBadGateway)
+		g.log.Error("upstream MCP server error", zap.Error(err))
+		http.Error(w, `{"error":"upstream service unavailable"}`, http.StatusBadGateway)
 		return
 	}
 	var respMsg MCPMessage

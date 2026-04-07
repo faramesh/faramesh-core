@@ -174,7 +174,8 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	clientConn, _, err := hijacker.Hijack()
 	if err != nil {
 		destConn.Close()
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.log.Error("CONNECT hijack failed", zap.Error(err))
+		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return
 	}
 

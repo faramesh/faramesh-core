@@ -181,7 +181,12 @@ func validateToken(horizonURL, token string) (*cloud.TokenInfo, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("User-Agent", "faramesh-cli/"+version)
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		// Horizon might not be reachable — allow offline token storage with a warning.
@@ -230,10 +235,10 @@ func validateToken(horizonURL, token string) (*cloud.TokenInfo, error) {
 }
 
 func maskToken(token string) string {
-	if len(token) <= 8 {
+	if len(token) <= 4 {
 		return strings.Repeat("*", len(token))
 	}
-	return token[:8] + strings.Repeat("*", min(len(token)-8, 20))
+	return strings.Repeat("*", min(len(token)-4, 20)) + token[len(token)-4:]
 }
 
 func min(a, b int) int {

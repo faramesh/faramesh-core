@@ -33,9 +33,11 @@ from __future__ import annotations
 import os
 import json
 import time
+import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, List, Union, Callable
 from pathlib import Path
+from urllib.parse import urlparse
 import requests
 from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
 
@@ -77,6 +79,13 @@ class ClientConfig:
             env_url = os.getenv("FARAMESH_BASE_URL") or os.getenv("FARA_API_BASE")
             if env_url:
                 self.base_url = env_url.rstrip("/")
+        parsed = urlparse(self.base_url)
+        if parsed.scheme == "http" and parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
+            warnings.warn(
+                f"Faramesh base_url uses plain HTTP with non-localhost host ({parsed.hostname}). "
+                "Use https:// in production to protect governance decisions and credentials in transit.",
+                stacklevel=2,
+            )
         # Load retry config from env
         if self.max_retries == 3:
             retries_env = os.getenv("FARAMESH_RETRIES")
