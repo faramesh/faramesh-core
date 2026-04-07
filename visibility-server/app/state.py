@@ -214,6 +214,12 @@ class EventStore:
                 return None
             return self._clone_action(action)
 
+    def get_public_action(self, call_id: str) -> dict[str, Any] | None:
+        action = self.get_action(call_id)
+        if action is None:
+            return None
+        return self.to_public_action(action)
+
     def pending_defers(self) -> list[dict[str, Any]]:
         with self._lock:
             pending = [
@@ -223,6 +229,9 @@ class EventStore:
             ]
         pending.sort(key=lambda item: parse_timestamp(str(item.get("updated_at") or "")), reverse=True)
         return pending
+
+    def pending_public_defers(self) -> list[dict[str, Any]]:
+        return [self.to_public_action(item) for item in self.pending_defers()]
 
     def count(self) -> int:
         with self._lock:
@@ -239,8 +248,10 @@ class EventStore:
         agent: str | None = None,
         tool: str | None = None,
         query: str | None = None,
+        redact_sensitive: bool = False,
     ) -> list[dict[str, Any]]:
-        items = [self.to_legacy_action(item) for item in self.list_actions(limit=max(limit, 5000))]
+        projector = self.to_public_legacy_action if redact_sensitive else self.to_legacy_action
+        items = [projector(item) for item in self.list_actions(limit=max(limit, 5000))]
         filtered: list[dict[str, Any]] = []
         status_norm = (status or "").strip().lower()
         agent_norm = (agent or "").strip().lower()
@@ -272,11 +283,16 @@ class EventStore:
         filtered.sort(key=lambda item: parse_timestamp(str(item.get("updated_at") or "")), reverse=True)
         return filtered[: max(1, limit)]
 
-    def get_legacy_action(self, call_id: str) -> dict[str, Any] | None:
+    def get_legacy_action(self, call_id: str, redact_sensitive: bool = False) -> dict[str, Any] | None:
         item = self.get_action(call_id)
         if item is None:
             return None
+        if redact_sensitive:
+            return self.to_public_legacy_action(item)
         return self.to_legacy_action(item)
+
+    def list_public_actions(self, limit: int = 100) -> list[dict[str, Any]]:
+        return [self.to_public_action(item) for item in self.list_actions(limit=limit)]
 
     def to_legacy_action(self, action: dict[str, Any]) -> dict[str, Any]:
         call_id = str(action.get("call_id") or "")
@@ -367,6 +383,16 @@ class EventStore:
             "timeline": [dict(item) for item in action.get("timeline") or []],
         }
         return out
+
+    def to_public_action(self, action: dict[str, Any]) -> dict[str, Any]:
+        public = self._clone_action(action)
+        public["defer_token"] = ""
+        public["params"] = _redacted_mapping_summary(public.get("params"))
+        public["timeline"] = [_redact_timeline_event(item) for item in public.get("timeline") or []]
+        return public
+
+    def to_public_legacy_action(self, action: dict[str, Any]) -> dict[str, Any]:
+        return self.to_legacy_action(self.to_public_action(action))
 
     def _ingest_callback_decision(self, event: dict[str, Any]) -> None:
         call_id = str(event.get("call_id") or "").strip()
@@ -842,3 +868,23 @@ def _plain_reason_from_code(reason_code: str) -> str:
     if not code:
         return ""
     return f"Policy decision: {code}."
+
+
+def _redacted_mapping_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    keys = sorted(str(key) for key in value.keys())
+    if not keys:
+        return {}
+    return {
+        "redacted": True,
+        "key_count": len(keys),
+        "keys": keys,
+    }
+
+
+def _redact_timeline_event(event: dict[str, Any]) -> dict[str, Any]:
+    redacted = dict(event)
+    redacted["defer_token"] = ""
+    redacted["args"] = _redacted_mapping_summary(event.get("args"))
+    return redacted

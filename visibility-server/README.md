@@ -13,6 +13,12 @@ Local FastAPI service for live governance visibility.
 - Surfaces runtime identity and credential-vault health
 - Serves a web UI for action lifecycle and defer controls
 
+Sensitive values are redacted from the HTTP API surface:
+
+- Runtime credential responses expose metadata only, never raw key material
+- Action responses redact raw tool params and defer/approval tokens
+- Browser approval flows resolve pending actions by call id without exposing the underlying token
+
 ## Endpoints
 
 - `GET /healthz`

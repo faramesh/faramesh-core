@@ -77,8 +77,10 @@ class VisibilityV1ApiE2ETests(unittest.TestCase):
         self.assertEqual(action["status"], "pending_approval")
         self.assertEqual(action["tool"], "payment")
         self.assertEqual(action["operation"], "refund")
-        self.assertEqual(action["approval_token"], "tok-v1-list")
-        self.assertEqual(action["params"]["amount"], 1200)
+        self.assertIsNone(action["approval_token"])
+        self.assertEqual(action["params"]["keys"], ["amount", "currency"])
+        self.assertTrue(action["params"]["redacted"])
+        self.assertEqual(action["context"]["defer_token"], "")
 
     def test_v1_actions_state_matrix_uses_domain_tool_names(self) -> None:
         self.store.ingest_callback_event(
@@ -206,13 +208,84 @@ class VisibilityV1ApiE2ETests(unittest.TestCase):
         updated = res.json()
         self.assertEqual(updated["id"], "call-v1-approval")
         self.assertEqual(updated["status"], "approved")
-        self.assertEqual(updated["approval_token"], "tok-v1-approval")
+        self.assertIsNone(updated["approval_token"])
 
         self.assertTrue(mocked.called)
         sent_payload = mocked.call_args.args[1]
         self.assertEqual(sent_payload["type"], "approve_defer")
         self.assertEqual(sent_payload["defer_token"], "tok-v1-approval")
         self.assertTrue(sent_payload["approved"])
+
+    def test_runtime_redacts_credential_key_material(self) -> None:
+        def fake_send(_socket_path, payload, timeout_seconds=3.0):  # noqa: ARG001
+            req_type = payload.get("type")
+            if req_type == "status":
+                return {"running": True, "policy_version": "pol-1"}
+            if req_type == "identity":
+                if payload.get("op") == "whoami":
+                    return {"workload": "payments-worker", "trust_level": "high"}
+                return {"trust_level": "high"}
+            if req_type == "credential":
+                if payload.get("op") == "health":
+                    return {"healthy": True}
+                if payload.get("op") == "list":
+                    return {
+                        "credentials": [
+                            {
+                                "name": "stripe",
+                                "key": "sk_live_secret",
+                                "scope": "payments:refund",
+                                "status": "active",
+                                "audit": ["registered", "rotated"],
+                            }
+                        ]
+                    }
+            if req_type == "session":
+                return {"sessions": []}
+            if req_type == "model":
+                return {"models": []}
+            return {}
+
+        with patch.object(visibility_main, "send_json_request", side_effect=fake_send):
+            res = self.client.get("/v1/runtime")
+
+        self.assertEqual(res.status_code, 200)
+        payload = res.json()
+        credentials = payload["vault"]["credentials"]
+        self.assertEqual(len(credentials), 1)
+        self.assertNotIn("key", credentials[0])
+        self.assertEqual(credentials[0]["name"], "stripe")
+        self.assertTrue(credentials[0]["key_present"])
+        self.assertEqual(credentials[0]["audit_count"], 2)
+
+    def test_actions_endpoint_redacts_tokens_and_params(self) -> None:
+        self.store.ingest_callback_event(
+            {
+                "event_type": "decision",
+                "call_id": "call-public-action",
+                "agent_id": "agent-e2e",
+                "session_id": "sess-e2e",
+                "tool_id": "payment/refund",
+                "tool_name": "payment",
+                "operation": "refund",
+                "effect": "DEFER",
+                "reason_code": "RULE_DEFER",
+                "reason": "Approval required",
+                "defer_token": "tok-public-action",
+                "timestamp": "2026-04-06T14:02:00Z",
+                "args": {"amount": 9000, "currency": "USD"},
+            }
+        )
+
+        res = self.client.get("/actions/call-public-action")
+        self.assertEqual(res.status_code, 200)
+        payload = res.json()
+        self.assertEqual(payload["call_id"], "call-public-action")
+        self.assertEqual(payload["defer_token"], "")
+        self.assertEqual(payload["params"]["keys"], ["amount", "currency"])
+        self.assertTrue(payload["params"]["redacted"])
+        self.assertEqual(payload["timeline"][0]["defer_token"], "")
+        self.assertEqual(payload["timeline"][0]["args"]["keys"], ["amount", "currency"])
 
 
 if __name__ == "__main__":

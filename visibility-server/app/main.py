@@ -156,6 +156,22 @@ def _daemon_call(payload: dict[str, Any], timeout_seconds: float = 1.5) -> dict[
     return {"value": response}
 
 
+def _sanitize_credential_record(record: Any) -> dict[str, Any]:
+    if not isinstance(record, dict):
+        return {}
+    audit = record.get("audit")
+    return {
+        "name": str(record.get("name") or ""),
+        "scope": str(record.get("scope") or ""),
+        "max_scope": str(record.get("max_scope") or ""),
+        "status": str(record.get("status") or ""),
+        "created_at": str(record.get("created_at") or ""),
+        "updated_at": str(record.get("updated_at") or ""),
+        "key_present": bool(str(record.get("key") or "")),
+        "audit_count": len(audit) if isinstance(audit, list) else 0,
+    }
+
+
 def _runtime_snapshot() -> dict[str, Any]:
     status = _daemon_call({"type": "status"})
     identity = _daemon_call({"type": "identity", "op": "whoami"})
@@ -167,7 +183,7 @@ def _runtime_snapshot() -> dict[str, Any]:
 
     credentials = []
     if isinstance(credential_list.get("credentials"), list):
-        credentials = credential_list["credentials"]
+        credentials = [_sanitize_credential_record(item) for item in credential_list["credentials"]]
 
     return {
         "daemon_status": status,
@@ -255,13 +271,13 @@ def v1_runtime_details() -> dict[str, Any]:
 @app.get("/actions")
 def list_actions(limit: int = 200) -> dict[str, Any]:
     bounded_limit = max(1, min(limit, 1000))
-    items = STORE.list_actions(limit=bounded_limit)
+    items = STORE.list_public_actions(limit=bounded_limit)
     return {"count": len(items), "items": items}
 
 
 @app.get("/actions/{call_id:path}")
 def get_action(call_id: str) -> dict[str, Any]:
-    action = STORE.get_action(call_id)
+    action = STORE.get_public_action(call_id)
     if action is None:
         raise HTTPException(status_code=404, detail="action not found")
     return action
@@ -298,12 +314,13 @@ def list_v1_actions(
         agent=agent,
         tool=tool,
         query=q,
+        redact_sensitive=True,
     )
 
 
 @app.get("/v1/actions/{call_id:path}")
 def get_v1_action(call_id: str) -> dict[str, Any]:
-    action = STORE.get_legacy_action(call_id)
+    action = STORE.get_legacy_action(call_id, redact_sensitive=True)
     if action is None:
         raise HTTPException(status_code=404, detail="action not found")
     return action
@@ -311,26 +328,28 @@ def get_v1_action(call_id: str) -> dict[str, Any]:
 
 @app.post("/v1/actions/{call_id:path}/approval")
 def approve_v1_action(call_id: str, body: ApprovalBody) -> dict[str, Any]:
-    action = STORE.get_legacy_action(call_id)
+    action = STORE.get_action(call_id)
     if action is None:
         raise HTTPException(status_code=404, detail="action not found")
 
-    token = str(action.get("approval_token") or "").strip()
+    token = str(action.get("defer_token") or "").strip()
     if not token:
         raise HTTPException(status_code=409, detail="action has no approval token")
 
     provided_token = str(body.token or "").strip()
-    if provided_token and provided_token != token:
+    if not provided_token:
+        raise HTTPException(status_code=400, detail="approval token is required")
+    if provided_token != token:
         raise HTTPException(status_code=409, detail="approval token mismatch")
 
-    if str(action.get("status") or "") != "pending_approval":
+    if str(action.get("state") or "") != "pending":
         raise HTTPException(status_code=409, detail="action is not pending approval")
 
     reason_default = "approved via visibility server" if body.approve else "denied via visibility server"
     reason = (body.reason or reason_default).strip() or reason_default
     _resolve_defer(token, approved=body.approve, reason=reason)
 
-    updated = STORE.get_legacy_action(call_id)
+    updated = STORE.get_legacy_action(call_id, redact_sensitive=True)
     if updated is None:
         raise HTTPException(status_code=404, detail="action not found after approval")
     return updated
@@ -354,7 +373,7 @@ def deny_action(call_id: str, body: ResolutionBody) -> dict[str, Any]:
 
 @app.get("/defers/pending")
 def pending_defers() -> dict[str, Any]:
-    items = STORE.pending_defers()
+    items = STORE.pending_public_defers()
     return {"count": len(items), "items": items}
 
 

@@ -155,6 +155,39 @@ class EventStoreTests(unittest.TestCase):
         self.assertEqual(legacy["context"]["principal_method"], "spiffe")
         self.assertEqual(legacy["context"]["record_hash"], "hash-1")
 
+    def test_public_projection_redacts_sensitive_fields(self) -> None:
+        store = EventStore(self.db_path)
+        store.ingest_callback_event(
+            {
+                "event_type": "decision",
+                "call_id": "call-public",
+                "agent_id": "agent-public",
+                "tool_id": "payment/refund",
+                "tool_name": "payment",
+                "operation": "refund",
+                "effect": "DEFER",
+                "reason_code": "RULE_DEFER",
+                "reason": "Refund exceeds policy threshold",
+                "defer_token": "tok-public",
+                "timestamp": "2026-04-06T11:10:00Z",
+                "args": {"order_id": "ord-1", "amount": 4200},
+            }
+        )
+
+        action = store.get_public_action("call-public")
+        self.assertIsNotNone(action)
+        self.assertEqual(action["defer_token"], "")
+        self.assertEqual(action["params"]["keys"], ["amount", "order_id"])
+        self.assertTrue(action["params"]["redacted"])
+        self.assertEqual(action["timeline"][0]["defer_token"], "")
+        self.assertEqual(action["timeline"][0]["args"]["keys"], ["amount", "order_id"])
+
+        legacy = store.get_legacy_action("call-public", redact_sensitive=True)
+        self.assertIsNotNone(legacy)
+        self.assertIsNone(legacy["approval_token"])
+        self.assertEqual(legacy["context"]["defer_token"], "")
+        self.assertEqual(legacy["params"]["keys"], ["amount", "order_id"])
+
     def test_state_db_persists_actions_across_restarts(self) -> None:
         state_db = Path(self.tmpdir.name) / "visibility.db"
         store = EventStore(self.db_path, state_db_path=state_db)

@@ -929,21 +929,14 @@
 
       const approvalDiv = el("detailApproval");
       approvalDiv.innerHTML = "";
-      if (action.approval_token) {
-        const badge = document.createElement("span");
-        badge.className = "badge-approval-token";
-        badge.textContent = action.approval_token;
-        approvalDiv.appendChild(badge);
-      } else {
-        approvalDiv.textContent =
-          action.status === "pending_approval"
-            ? "Awaiting token issuance."
-            : "No approval token (auto decision or already resolved).";
-      }
+      approvalDiv.textContent =
+        action.status === "pending_approval"
+          ? "Approval token withheld from the browser."
+          : "No approval token exposed for this action.";
 
       const actionsDiv = el("detailActions");
       actionsDiv.innerHTML = "";
-      if (action.status === "pending_approval" && action.approval_token) {
+      if (action.status === "pending_approval") {
         const approveBtn = document.createElement("button");
         approveBtn.className = "btn btn-approve";
         approveBtn.textContent = "Approve · allow";
@@ -1018,29 +1011,29 @@
 
     async function performApproval(action, approve) {
       try {
-        const body = {
-          token: action.approval_token,
-          approve: approve,
-        };
+        const reasonDefault = approve
+          ? "approved via visibility UI"
+          : "denied via visibility UI";
+        const reason = prompt(
+          `Optional reason for ${approve ? "approval" : "denial"}:`,
+          reasonDefault
+        ) || "";
         const res = await fetch(
-          `${BASE_URL}/v1/actions/${encodeURIComponent(action.id)}/approval`,
+          `${BASE_URL}/actions/${encodeURIComponent(action.id)}/${approve ? "approve" : "deny"}`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
+            body: JSON.stringify({ reason }),
           }
         );
         if (!res.ok) {
           const t = await res.text();
-          throw new Error(t || "Approval failed");
+          throw new Error(t || "Approval request failed");
         }
-        const updated = await res.json();
+        selectedId = action.id;
+        await res.json();
         showToast(approve ? "Action approved" : "Action denied");
-
-        const idx = actions.findIndex((a) => a.id === action.id);
-        if (idx !== -1) actions[idx] = updated;
-        selectedId = updated.id;
-        applyFilters();
+        await fetchActions();
       } catch (err) {
         console.error(err);
         showToast("Approval error", true);
