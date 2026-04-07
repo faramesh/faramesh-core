@@ -10,9 +10,18 @@ permissions:
   contents: read
 
 jobs:
+  top-level-allowlist:
+    name: Top-level Allowlist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enforce top-level allowlist
+        run: bash scripts/ci/check_top_level_allowlist.sh
+
   burst-rate-harness:
     name: Burst Rate Harness
     runs-on: ubuntu-latest
+    needs: [top-level-allowlist]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -25,6 +34,7 @@ jobs:
   defer-timeout-resume-harness:
     name: Defer Timeout Resume Harness
     runs-on: ubuntu-latest
+    needs: [top-level-allowlist]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -37,6 +47,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    needs: [top-level-allowlist]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -49,6 +60,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    needs: [top-level-allowlist]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

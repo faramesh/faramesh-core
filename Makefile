@@ -1,5 +1,5 @@
 # Faramesh Core — local developer entrypoints (CI: monorepo `.github/workflows/faramesh-core-release-gate.yml`).
-.PHONY: all build build-release compile clean test test-race vet sbom docker verify-reproducible release install setup setup-status setup-stop langchain-single langchain-real langchain-real-fpl langgraph-real langgraph-real-fpl burst-rate-harness defer-timeout-resume-harness langchain-wizard govern-wizard
+.PHONY: all build build-release compile clean test test-race vet sbom docker verify-reproducible release install setup setup-status setup-stop benchmark-latency langchain-single langchain-real langchain-real-fpl langgraph-real langgraph-real-fpl burst-rate-harness defer-timeout-resume-harness linux-interception-harness node-autopatch-harness policy-roundtrip-harness langchain-wizard govern-wizard
 
 all: vet compile test build
 
@@ -81,6 +81,11 @@ setup-status:
 setup-stop:
 	bash scripts/faramesh_setup.sh stop
 
+# Reproducible latency benchmark for policy engine vs full governance pipeline.
+benchmark-latency:
+	go test ./internal/core/policy -run '^$$' -bench BenchmarkEngineEvaluateSimplePermit -benchmem -benchtime=2s -cpu=1 -count=5
+	go test ./internal/core -run '^$$' -bench BenchmarkPipelineEvaluateSimplePermit -benchmem -benchtime=2s -cpu=1 -count=5
+
 # Strict end-to-end smoke for a single LangChain agent governed over socket.
 langchain-single:
 	bash tests/langchain_single_agent_governed.sh
@@ -108,6 +113,18 @@ burst-rate-harness:
 # Defer timeout/resume stress harness for late resolve and conflict stability.
 defer-timeout-resume-harness:
 	bash tests/defer_timeout_resume_stress_harness.sh
+
+# Linux interception enforcement harness for faramesh run profile matrix.
+linux-interception-harness:
+	bash tests/linux_interception_matrix_harness.sh
+
+# Real-stack Node autopatch harness with permit/deny/defer + DPR verification.
+node-autopatch-harness:
+	bash tests/node_autopatch_real_stack.sh
+
+# Policy conversion round-trip harness (lossless and lossy classes).
+policy-roundtrip-harness:
+	bash tests/policy_roundtrip_harness.sh
 
 # Minimal-interaction installer/wizard for governed LangChain agent runs.
 langchain-wizard:
