@@ -125,11 +125,13 @@ type EvalContext struct {
 //	session.history            — array of recent tool calls (newest first)
 //	session.cost_usd           — session cost in USD (when CostShield is enabled)
 //	session.daily_cost_usd     — daily cost in USD (when CostShield is enabled)
+//	session.intent_class       — cached async intent class (empty when unset/expired)
 type SessionCtx struct {
 	CallCount    int64            `expr:"call_count"`
 	History      []map[string]any `expr:"history"` // [{tool, effect, timestamp}, ...]
 	CostUSD      float64          `expr:"cost_usd"`
 	DailyCostUSD float64          `expr:"daily_cost_usd"`
+	IntentClass  string           `expr:"intent_class"`
 }
 
 // ToolCtx exposes per-tool metadata declared in the policy tools: block.
@@ -688,6 +690,7 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 			"history":        []map[string]any{},
 			"cost_usd":       float64(0),
 			"daily_cost_usd": float64(0),
+			"intent_class":   "",
 		},
 		"tool": map[string]any{
 			"reversibility": "",
@@ -751,6 +754,7 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 		"history":        history,
 		"cost_usd":       ctx.Session.CostUSD,
 		"daily_cost_usd": ctx.Session.DailyCostUSD,
+		"intent_class":   ctx.Session.IntentClass,
 	}
 
 	tags := ctx.Tool.Tags

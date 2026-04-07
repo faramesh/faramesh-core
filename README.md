@@ -421,6 +421,7 @@ faramesh-core/
 - [30-Second Real Agent Guide](docs/guides/REAL_AGENT_TEST_GUIDE.md)
 - [Network Hardening Canary Runbook](docs/guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
 - [Network Hardening Progressive Enforce Runbook](docs/guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
+- [Chain Exfil Hardening Playbook](docs/guides/CHAIN_EXFIL_HARDENING_PLAYBOOK.md)
 - [Simple Docs Track (Start Here)](docs/simple/00_START_HERE.md)
 - [FPL Docs in Repo](docs/fpl/README.md)
 - [Deployment References](deploy/README.md)
