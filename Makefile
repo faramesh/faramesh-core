@@ -128,7 +128,7 @@ policy-roundtrip-harness:
 
 # Minimal-interaction installer/wizard for governed LangChain agent runs.
 langchain-wizard:
-	bash scripts/faramesh_govern_wizard.sh --agent-cmd "python ../demo_interactive_ai_agent.py"
+	bash scripts/faramesh_govern_wizard.sh --agent-cmd "python faramesh-core/demo_interactive_ai_agent.py"
 
 # Minimal-interaction installer/wizard for any agent command.
 govern-wizard:

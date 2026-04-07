@@ -230,7 +230,7 @@ framework_default_agent_cmd() {
   local framework="$1"
   case "$framework" in
     langchain)
-      echo "python demo_interactive_ai_agent.py"
+      echo "python faramesh-core/demo_interactive_ai_agent.py"
       ;;
     langgraph)
       echo "python faramesh-core/tests/langgraph_single_agent_dropin.py"
