@@ -13,3 +13,7 @@ Read in this order:
 7. `06_ADAPTERS.md`
 8. `07_PRODUCTION_SETUP.md`
 9. `08_TROUBLESHOOTING.md`
+
+For a one-page map of all major features in simple language:
+
+10. `../guides/FEATURES_QUICK_GUIDE.md`

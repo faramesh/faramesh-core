@@ -283,6 +283,11 @@ faramesh mcp wrap -- node your-mcp-server.js
 
 Faramesh intercepts every MCP `tools/call` request. The IDE agent connects to Faramesh instead of the real MCP server. Non-tool-call methods pass through unchanged.
 
+MCP docs are split by audience:
+
+- Fast setup and daily usage: `docs/guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md`
+- Full technical spec and deep hardening details: `docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md`
+
 ## Credential Broker
 
 Faramesh strips API keys from the agent's environment. Credentials are only issued after the policy permits the specific tool call.
@@ -417,15 +422,68 @@ faramesh-core/
 
 ## Documentation Hub
 
+Start here if you want to move fast (quick-user path):
+
+- [Guides Index (Quick Usage)](docs/guides/README.md)
+- [Simple Docs Start Here](docs/simple/00_START_HERE.md)
+- [All Features Quick Guide](docs/guides/FEATURES_QUICK_GUIDE.md)
+- [Framework Quick Guides (LangChain / LangGraph / Deep Agents)](docs/guides/frameworks/README.md)
+
+Advanced path (deep technical docs):
+
+- [Power-User Docs Index](docs/power-users/README.md)
+- [All Features Power-User Technical Reference](docs/power-users/FEATURES_TECHNICAL_REFERENCE.md)
+- [Framework Power-User Technical Guides](docs/power-users/frameworks/README.md)
+- [MCP Power-User Spec (Full Technical Details)](docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
+
+More docs and references:
+
 - [Docs Index](docs/README.md)
 - [30-Second Real Agent Guide](docs/guides/REAL_AGENT_TEST_GUIDE.md)
 - [Network Hardening Canary Runbook](docs/guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
 - [Network Hardening Progressive Enforce Runbook](docs/guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
 - [Chain Exfil Hardening Playbook](docs/guides/CHAIN_EXFIL_HARDENING_PLAYBOOK.md)
-- [Simple Docs Track (Start Here)](docs/simple/00_START_HERE.md)
 - [FPL Docs in Repo](docs/fpl/README.md)
 - [Deployment References](deploy/README.md)
 - [FPL Language Repo](https://github.com/faramesh/fpl-lang)
+
+## All-Features Documentation Outline
+
+Every major Faramesh feature has two documentation tracks:
+
+- Quick track (simple language, fast usage): [All Features Quick Guide](docs/guides/FEATURES_QUICK_GUIDE.md)
+- Power-user track (full technical breakdown): [All Features Power-User Technical Reference](docs/power-users/FEATURES_TECHNICAL_REFERENCE.md)
+
+Dedicated framework tracks:
+
+- Quick framework guides: [docs/guides/frameworks/README.md](docs/guides/frameworks/README.md)
+- Power-user framework specs: [docs/power-users/frameworks/README.md](docs/power-users/frameworks/README.md)
+
+When a new feature is added, both tracks should be updated.
+
+## MCP Documentation Outline
+
+Use this map to choose the right MCP docs path.
+
+### Fast Path (Most Teams)
+
+- [MCP Quick Guide](docs/guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md)
+- Covers:
+  - how to run `faramesh mcp wrap -- <server>`
+  - how to run MCP HTTP gateway with `faramesh serve --mcp-proxy-port --mcp-target`
+  - production command example with key hardening flags
+  - fast troubleshooting and validation commands
+
+### Power-User Path (Advanced Operators)
+
+- [MCP Power-User Spec](docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
+- Covers:
+  - transport and JSON-RPC behavior details
+  - edge auth mode behavior (`off|bearer|mtls|bearer_or_mtls`)
+  - strict `MCP-Protocol-Version` enforcement rules
+  - session TTL/idle lifecycle behavior
+  - SSE replay (`Last-Event-ID`) cache and boundaries
+  - implementation and test breakdown by file
 
 ## CLI Reference
 
@@ -513,12 +571,29 @@ Full documentation at [faramesh.dev/docs](https://faramesh.dev/docs).
 
 Repository docs for crawlers and contributors:
 
+Quick-user docs first:
+
+- [Guides Index (Quick Usage)](docs/guides/README.md)
+- [Simple Docs Start Here](docs/simple/00_START_HERE.md)
+- [All Features Quick Guide](docs/guides/FEATURES_QUICK_GUIDE.md)
+- [Framework Quick Guides (LangChain / LangGraph / Deep Agents)](docs/guides/frameworks/README.md)
+
+Power-user docs:
+
+- [Power-User Docs Index](docs/power-users/README.md)
+- [All Features Power-User Technical Reference](docs/power-users/FEATURES_TECHNICAL_REFERENCE.md)
+- [Framework Power-User Technical Guides](docs/power-users/frameworks/README.md)
+- [MCP Power-User Spec](docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
+
+More docs and references:
+
 - [Docs Index](docs/README.md)
 - [30-Second Real Agent Guide](docs/guides/REAL_AGENT_TEST_GUIDE.md)
 - [Simple Docs Track](docs/simple/README.md)
-- [Simple Docs Start Here](docs/simple/00_START_HERE.md)
 - [Network Hardening Canary Runbook](docs/guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
 - [Network Hardening Progressive Enforce Runbook](docs/guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
+- [MCP Quick Guide](docs/guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md)
+- [MCP Power-User Spec](docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
 - [FPL Docs in Repo](docs/fpl/README.md)
 - [Deployment References](deploy/README.md)
 - [FPL Getting Started](https://github.com/faramesh/fpl-lang/blob/main/docs/GETTING_STARTED.md)
