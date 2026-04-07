@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"bytes"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,11 +11,12 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 
-	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 	"github.com/faramesh/faramesh-core/internal/core"
+	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/session"
 )
@@ -390,5 +393,486 @@ func TestHTTPGateway_OPTIONS_forwards(t *testing.T) {
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Methods"); got == "" {
 		t.Fatal("expected CORS methods header from upstream")
+	}
+}
+
+func TestHTTPGateway_DELETE_forwards(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Fatalf("upstream got method %s", r.Method)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer up.Close()
+
+	g := NewHTTPGateway(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop())
+	req := httptest.NewRequest(http.MethodDelete, "/", nil)
+	rec := httptest.NewRecorder()
+	g.handleMCP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("code %d", rec.Code)
+	}
+}
+
+func TestHTTPGateway_singleNotificationAccepted(t *testing.T) {
+	calls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer up.Close()
+
+	g := NewHTTPGateway(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop())
+	body := `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	g.handleMCP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("expected one upstream call, got %d", calls)
+	}
+	if strings.TrimSpace(rec.Body.String()) != "" {
+		t.Fatalf("expected empty body, got %q", rec.Body.String())
+	}
+}
+
+func TestHTTPGateway_singleResponseAccepted(t *testing.T) {
+	calls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer up.Close()
+
+	g := NewHTTPGateway(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop())
+	body := `{"jsonrpc":"2.0","id":"srv-req-1","result":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	g.handleMCP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if calls != 1 {
+		t.Fatalf("expected one upstream call, got %d", calls)
+	}
+}
+
+func TestHTTPGateway_batchNotificationsAcceptedNoBody(t *testing.T) {
+	calls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer up.Close()
+
+	g := NewHTTPGateway(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop())
+	body := `[
+	  {"jsonrpc":"2.0","method":"notifications/initialized","params":{}},
+	  {"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"123"}}
+	]`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	g.handleMCP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if calls != 2 {
+		t.Fatalf("expected two upstream calls, got %d", calls)
+	}
+	if strings.TrimSpace(rec.Body.String()) != "" {
+		t.Fatalf("expected empty body, got %q", rec.Body.String())
+	}
+}
+
+func TestHTTPGateway_blocksDisallowedOrigin(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("upstream should not be reached for blocked origins")
+	}))
+	defer up.Close()
+
+	g := NewHTTPGateway(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop())
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req.Header.Set("Origin", "https://evil.example")
+	rec := httptest.NewRecorder()
+	g.handleMCP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHTTPGateway_allowsConfiguredOrigin(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer up.Close()
+
+	g := NewHTTPGateway(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop(), "https://app.example.com")
+	body := `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req.Header.Set("Origin", "https://app.example.com")
+	rec := httptest.NewRecorder()
+	g.handleMCP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHTTPGateway_sessionIsolationUsesMcpSessionHeader(t *testing.T) {
+	pol := `
+faramesh-version: "1.0"
+agent-id: "mcp-http-test"
+default_effect: deny
+rules:
+  - id: deny-repeat-safe
+    match:
+      tool: "safe/tool"
+      when: "history_contains_within('safe/tool', 300)"
+    effect: deny
+    reason_code: REPEAT_BLOCK
+  - id: allow-safe
+    match:
+      tool: "safe/tool"
+    effect: permit
+`
+
+	upCalls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upCalls++
+		b, _ := io.ReadAll(r.Body)
+		var m MCPMessage
+		_ = json.Unmarshal(b, &m)
+		resp := MCPMessage{JSONRPC: "2.0", ID: m.ID, Result: json.RawMessage(`{"ok":true}`)}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer up.Close()
+
+	g := NewHTTPGateway(testMCPPipelineFromYAML(t, pol), "agent-1", up.URL, zap.NewNop())
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"safe/tool","arguments":{}}}`
+
+	reqA := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	reqA.Header.Set("Mcp-Session-Id", "session-A")
+	recA := httptest.NewRecorder()
+	g.handleMCP(recA, reqA)
+	if recA.Code != http.StatusOK {
+		t.Fatalf("first session code=%d body=%s", recA.Code, recA.Body.String())
+	}
+
+	reqB := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	reqB.Header.Set("Mcp-Session-Id", "session-B")
+	recB := httptest.NewRecorder()
+	g.handleMCP(recB, reqB)
+	if recB.Code != http.StatusOK {
+		t.Fatalf("second session code=%d body=%s", recB.Code, recB.Body.String())
+	}
+
+	if upCalls != 2 {
+		t.Fatalf("expected both requests to reach upstream, calls=%d", upCalls)
+	}
+}
+
+func TestHTTPGateway_edgeAuthBearerRequired(t *testing.T) {
+	upCalls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upCalls++
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer up.Close()
+
+	g := NewHTTPGatewayWithConfig(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop(), HTTPGatewayConfig{
+		EdgeAuthMode:        "bearer",
+		EdgeAuthBearerToken: "topsecret",
+	})
+	body := `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`
+
+	reqNoAuth := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	recNoAuth := httptest.NewRecorder()
+	g.handleMCP(recNoAuth, reqNoAuth)
+	if recNoAuth.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%q", recNoAuth.Code, recNoAuth.Body.String())
+	}
+
+	reqAuth := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	reqAuth.Header.Set("Authorization", "Bearer topsecret")
+	recAuth := httptest.NewRecorder()
+	g.handleMCP(recAuth, reqAuth)
+	if recAuth.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%q", recAuth.Code, recAuth.Body.String())
+	}
+
+	if upCalls != 1 {
+		t.Fatalf("expected one upstream call, got %d", upCalls)
+	}
+}
+
+func TestHTTPGateway_edgeAuthMTLSRequired(t *testing.T) {
+	upCalls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upCalls++
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer up.Close()
+
+	g := NewHTTPGatewayWithConfig(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop(), HTTPGatewayConfig{
+		EdgeAuthMode: "mtls",
+	})
+	body := `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`
+
+	reqNoTLS := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	recNoTLS := httptest.NewRecorder()
+	g.handleMCP(recNoTLS, reqNoTLS)
+	if recNoTLS.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d body=%q", recNoTLS.Code, recNoTLS.Body.String())
+	}
+
+	reqTLS := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	reqTLS.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{{}}}
+	recTLS := httptest.NewRecorder()
+	g.handleMCP(recTLS, reqTLS)
+	if recTLS.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%q", recTLS.Code, recTLS.Body.String())
+	}
+
+	if upCalls != 1 {
+		t.Fatalf("expected one upstream call, got %d", upCalls)
+	}
+}
+
+func TestHTTPGateway_protocolVersionStrictRejectsMissingRequestHeader(t *testing.T) {
+	upCalls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upCalls++
+		w.Header().Set("MCP-Protocol-Version", "2025-06-18")
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer up.Close()
+
+	g := NewHTTPGatewayWithConfig(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop(), HTTPGatewayConfig{
+		ProtocolVersionMode: "strict",
+		ProtocolVersion:     "2025-06-18",
+	})
+	body := `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	g.handleMCP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if upCalls != 0 {
+		t.Fatalf("expected no upstream calls, got %d", upCalls)
+	}
+}
+
+func TestHTTPGateway_protocolVersionStrictRejectsMissingUpstreamHeader(t *testing.T) {
+	upCalls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upCalls++
+		resp := MCPMessage{JSONRPC: "2.0", ID: 1, Result: json.RawMessage(`{"ok":true}`)}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer up.Close()
+
+	g := NewHTTPGatewayWithConfig(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop(), HTTPGatewayConfig{
+		ProtocolVersionMode: "strict",
+		ProtocolVersion:     "2025-06-18",
+	})
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req.Header.Set("MCP-Protocol-Version", "2025-06-18")
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	g.handleMCP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected 502, got %d body=%q", rec.Code, rec.Body.String())
+	}
+	if upCalls != 1 {
+		t.Fatalf("expected one upstream call, got %d", upCalls)
+	}
+}
+
+func TestHTTPGateway_sessionTTLExpires(t *testing.T) {
+	upCalls := 0
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upCalls++
+		b, _ := io.ReadAll(r.Body)
+		var m MCPMessage
+		_ = json.Unmarshal(b, &m)
+		resp := MCPMessage{JSONRPC: "2.0", ID: m.ID, Result: json.RawMessage(`{"ok":true}`)}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer up.Close()
+
+	g := NewHTTPGatewayWithConfig(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop(), HTTPGatewayConfig{
+		SessionTTL: 5 * time.Minute,
+	})
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"safe/tool","arguments":{}}}`
+
+	req1 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req1.Header.Set("Mcp-Session-Id", "session-expire")
+	rec1 := httptest.NewRecorder()
+	g.handleMCP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("expected first request 200, got %d body=%q", rec1.Code, rec1.Body.String())
+	}
+
+	probe := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	probe.Header.Set("Mcp-Session-Id", "session-expire")
+	sessionID := g.sessionIDForRequest(probe)
+	g.sessionMu.Lock()
+	state := g.sessionStates[sessionID]
+	state.createdAt = time.Now().Add(-10 * time.Minute)
+	g.sessionStates[sessionID] = state
+	g.sessionMu.Unlock()
+
+	req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req2.Header.Set("Mcp-Session-Id", "session-expire")
+	rec2 := httptest.NewRecorder()
+	g.handleMCP(rec2, req2)
+	if rec2.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for expired session, got %d body=%q", rec2.Code, rec2.Body.String())
+	}
+	if upCalls != 1 {
+		t.Fatalf("expected one upstream call, got %d", upCalls)
+	}
+}
+
+func TestHTTPGateway_deleteTerminatesSessionState(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			b, _ := io.ReadAll(r.Body)
+			var m MCPMessage
+			_ = json.Unmarshal(b, &m)
+			resp := MCPMessage{JSONRPC: "2.0", ID: m.ID, Result: json.RawMessage(`{"ok":true}`)}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected method %s", r.Method)
+		}
+	}))
+	defer up.Close()
+
+	g := NewHTTPGatewayWithConfig(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop(), HTTPGatewayConfig{
+		SessionTTL: 10 * time.Minute,
+	})
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"safe/tool","arguments":{}}}`
+
+	req1 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	req1.Header.Set("Mcp-Session-Id", "session-delete")
+	rec1 := httptest.NewRecorder()
+	g.handleMCP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%q", rec1.Code, rec1.Body.String())
+	}
+
+	probe := httptest.NewRequest(http.MethodPost, "/", nil)
+	probe.Header.Set("Mcp-Session-Id", "session-delete")
+	sessionID := g.sessionIDForRequest(probe)
+	g.sessionMu.Lock()
+	_, existsBefore := g.sessionStates[sessionID]
+	g.sessionMu.Unlock()
+	if !existsBefore {
+		t.Fatal("expected gateway session state to exist")
+	}
+
+	reqDelete := httptest.NewRequest(http.MethodDelete, "/", nil)
+	reqDelete.Header.Set("Mcp-Session-Id", "session-delete")
+	recDelete := httptest.NewRecorder()
+	g.handleMCP(recDelete, reqDelete)
+	if recDelete.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d body=%q", recDelete.Code, recDelete.Body.String())
+	}
+
+	g.sessionMu.Lock()
+	_, existsAfter := g.sessionStates[sessionID]
+	g.sessionMu.Unlock()
+	if existsAfter {
+		t.Fatal("expected gateway session state to be removed after DELETE")
+	}
+}
+
+func TestHTTPGateway_SSEReplayLastEventID(t *testing.T) {
+	call := 0
+	seenLastEventID := make([]string, 0, 2)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call++
+		seenLastEventID = append(seenLastEventID, strings.TrimSpace(r.Header.Get("Last-Event-ID")))
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		switch call {
+		case 1:
+			_, _ = fmt.Fprintf(w, "id: evt-1\n")
+			_, _ = fmt.Fprintf(w, "data: first\n\n")
+			_, _ = fmt.Fprintf(w, "id: evt-2\n")
+			_, _ = fmt.Fprintf(w, "data: second\n\n")
+		case 2:
+			_, _ = fmt.Fprintf(w, "id: evt-3\n")
+			_, _ = fmt.Fprintf(w, "data: third\n\n")
+		default:
+			t.Fatalf("unexpected upstream call %d", call)
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer up.Close()
+
+	g := NewHTTPGatewayWithConfig(testMCPPipeline(t), "agent-1", up.URL, zap.NewNop(), HTTPGatewayConfig{
+		SSEReplayEnabled:   true,
+		SSEReplayMaxEvents: 32,
+		SSEReplayMaxAge:    time.Hour,
+	})
+
+	req1 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req1.Header.Set("Accept", "text/event-stream")
+	req1.Header.Set("Mcp-Session-Id", "session-replay")
+	rec1 := httptest.NewRecorder()
+	g.handleMCP(rec1, req1)
+	if rec1.Code != http.StatusOK {
+		t.Fatalf("first request code=%d body=%q", rec1.Code, rec1.Body.String())
+	}
+	body1 := rec1.Body.String()
+	if !strings.Contains(body1, "id: evt-1") || !strings.Contains(body1, "id: evt-2") {
+		t.Fatalf("expected first stream events, got %q", body1)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/", nil)
+	req2.Header.Set("Accept", "text/event-stream")
+	req2.Header.Set("Mcp-Session-Id", "session-replay")
+	req2.Header.Set("Last-Event-ID", "evt-1")
+	rec2 := httptest.NewRecorder()
+	g.handleMCP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second request code=%d body=%q", rec2.Code, rec2.Body.String())
+	}
+	body2 := rec2.Body.String()
+	if strings.Contains(body2, "id: evt-1") {
+		t.Fatalf("expected replay to start after evt-1, got %q", body2)
+	}
+	if !strings.Contains(body2, "id: evt-2") || !strings.Contains(body2, "id: evt-3") {
+		t.Fatalf("expected replay + live events, got %q", body2)
+	}
+	if len(seenLastEventID) != 2 {
+		t.Fatalf("expected 2 upstream calls, saw %d", len(seenLastEventID))
+	}
+	if seenLastEventID[0] != "" {
+		t.Fatalf("first upstream request should not include Last-Event-ID, got %q", seenLastEventID[0])
+	}
+	if seenLastEventID[1] != "" {
+		t.Fatalf("second upstream request should have gateway-consumed Last-Event-ID, got %q", seenLastEventID[1])
 	}
 }

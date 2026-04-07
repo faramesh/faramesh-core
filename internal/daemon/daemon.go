@@ -94,6 +94,16 @@ type Config struct {
 	GRPCPort                    int
 	MCPProxyPort                int
 	MCPTarget                   string
+	MCPAllowedOrigins           []string
+	MCPEdgeAuthMode             string
+	MCPEdgeAuthBearerToken      string
+	MCPProtocolVersionMode      string
+	MCPProtocolVersion          string
+	MCPSessionTTL               time.Duration
+	MCPSessionIdleTimeout       time.Duration
+	MCPSSEReplayEnabled         bool
+	MCPSSEReplayMaxEvents       int
+	MCPSSEReplayMaxAge          time.Duration
 	MetricsPort                 int
 	DPRDSN                      string
 	RedisURL                    string
@@ -206,6 +216,38 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	if strings.TrimSpace(cfg.InferenceRoutesFile) != "" && !cfg.ProxyForward {
 		return nil, fmt.Errorf("inference routes require --proxy-forward")
+	}
+	cfg.MCPEdgeAuthMode = strings.ToLower(strings.TrimSpace(cfg.MCPEdgeAuthMode))
+	if cfg.MCPEdgeAuthMode == "" {
+		cfg.MCPEdgeAuthMode = "off"
+	}
+	if cfg.MCPEdgeAuthMode != "off" &&
+		cfg.MCPEdgeAuthMode != "bearer" &&
+		cfg.MCPEdgeAuthMode != "mtls" &&
+		cfg.MCPEdgeAuthMode != "bearer_or_mtls" {
+		return nil, fmt.Errorf("invalid MCP edge auth mode %q (supported: off|bearer|mtls|bearer_or_mtls)", cfg.MCPEdgeAuthMode)
+	}
+	if (cfg.MCPEdgeAuthMode == "bearer" || cfg.MCPEdgeAuthMode == "bearer_or_mtls") && strings.TrimSpace(cfg.MCPEdgeAuthBearerToken) == "" {
+		return nil, fmt.Errorf("MCP edge auth mode %q requires a bearer token", cfg.MCPEdgeAuthMode)
+	}
+	cfg.MCPProtocolVersionMode = strings.ToLower(strings.TrimSpace(cfg.MCPProtocolVersionMode))
+	if cfg.MCPProtocolVersionMode == "" {
+		cfg.MCPProtocolVersionMode = "off"
+	}
+	if cfg.MCPProtocolVersionMode != "off" && cfg.MCPProtocolVersionMode != "strict" {
+		return nil, fmt.Errorf("invalid MCP protocol version mode %q (supported: off|strict)", cfg.MCPProtocolVersionMode)
+	}
+	if cfg.MCPSessionTTL < 0 {
+		return nil, fmt.Errorf("MCP session TTL must be >= 0")
+	}
+	if cfg.MCPSessionIdleTimeout < 0 {
+		return nil, fmt.Errorf("MCP session idle timeout must be >= 0")
+	}
+	if cfg.MCPSSEReplayMaxEvents < 0 {
+		return nil, fmt.Errorf("MCP SSE replay max events must be >= 0")
+	}
+	if cfg.MCPSSEReplayMaxAge < 0 {
+		return nil, fmt.Errorf("MCP SSE replay max age must be >= 0")
 	}
 	return &Daemon{cfg: cfg, log: cfg.Log}, nil
 }
@@ -708,7 +750,18 @@ func (d *Daemon) start() error {
 		if d.cfg.MCPTarget == "" {
 			return fmt.Errorf("--mcp-target is required when --mcp-proxy-port is set")
 		}
-		d.mcpGateway = mcp.NewHTTPGateway(pipeline, doc.AgentID, d.cfg.MCPTarget, d.log)
+		d.mcpGateway = mcp.NewHTTPGatewayWithConfig(pipeline, doc.AgentID, d.cfg.MCPTarget, d.log, mcp.HTTPGatewayConfig{
+			AllowedOrigins:      d.cfg.MCPAllowedOrigins,
+			EdgeAuthMode:        d.cfg.MCPEdgeAuthMode,
+			EdgeAuthBearerToken: d.cfg.MCPEdgeAuthBearerToken,
+			ProtocolVersionMode: d.cfg.MCPProtocolVersionMode,
+			ProtocolVersion:     d.cfg.MCPProtocolVersion,
+			SessionTTL:          d.cfg.MCPSessionTTL,
+			SessionIdleTimeout:  d.cfg.MCPSessionIdleTimeout,
+			SSEReplayEnabled:    d.cfg.MCPSSEReplayEnabled,
+			SSEReplayMaxEvents:  d.cfg.MCPSSEReplayMaxEvents,
+			SSEReplayMaxAge:     d.cfg.MCPSSEReplayMaxAge,
+		})
 		if tlsCfg != nil {
 			if err := d.mcpGateway.ListenTLS(fmt.Sprintf(":%d", d.cfg.MCPProxyPort), d.cfg.TLSCertFile, d.cfg.TLSKeyFile, tlsCfg); err != nil {
 				return fmt.Errorf("start MCP HTTP gateway (tls): %w", err)

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -82,24 +83,85 @@ func runMCPWrap(_ *cobra.Command, args []string) error {
 	}
 	defer gw.Close()
 
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for scanner.Scan() {
-		out, err := gw.ProcessStdioLine(scanner.Bytes())
-		if err != nil {
-			return fmt.Errorf("json-rpc line: %w", err)
+	stdinLines := make(chan []byte, 64)
+	stdinErr := make(chan error, 1)
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		for scanner.Scan() {
+			line := append([]byte(nil), scanner.Bytes()...)
+			stdinLines <- line
 		}
-		if len(out) == 0 {
-			continue
+		if err := scanner.Err(); err != nil {
+			stdinErr <- err
 		}
-		if _, err := os.Stdout.Write(out); err != nil {
-			return err
-		}
-		if _, err := os.Stdout.Write([]byte("\n")); err != nil {
-			return err
+		close(stdinLines)
+		close(stdinErr)
+	}()
+
+	for {
+		select {
+		case line, ok := <-stdinLines:
+			if !ok {
+				return nil
+			}
+			out, err := gw.ProcessStdioLine(line)
+			if err != nil {
+				if writeErr := writeJSONRPCErrorLine(-32600, "invalid JSON-RPC: "+err.Error()); writeErr != nil {
+					return writeErr
+				}
+				continue
+			}
+			if len(out) == 0 {
+				continue
+			}
+			if _, err := os.Stdout.Write(out); err != nil {
+				return err
+			}
+			if _, err := os.Stdout.Write([]byte("\n")); err != nil {
+				return err
+			}
+		case outbound, ok := <-gw.Outbound():
+			if !ok {
+				return nil
+			}
+			if len(outbound) == 0 {
+				continue
+			}
+			if _, err := os.Stdout.Write(outbound); err != nil {
+				return err
+			}
+			if _, err := os.Stdout.Write([]byte("\n")); err != nil {
+				return err
+			}
+		case err, ok := <-stdinErr:
+			if !ok {
+				stdinErr = nil
+				continue
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
-	if err := scanner.Err(); err != nil {
+}
+
+func writeJSONRPCErrorLine(code int, message string) error {
+	msg := map[string]any{
+		"jsonrpc": "2.0",
+		"error": map[string]any{
+			"code":    code,
+			"message": message,
+		},
+	}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stdout.Write(b); err != nil {
+		return err
+	}
+	if _, err := os.Stdout.Write([]byte("\n")); err != nil {
 		return err
 	}
 	return nil
