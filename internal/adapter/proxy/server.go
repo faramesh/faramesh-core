@@ -78,6 +78,15 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+// HardeningMode controls additional network hardening checks in proxy flows.
+type HardeningMode string
+
+const (
+	HardeningModeOff     HardeningMode = "off"
+	HardeningModeAudit   HardeningMode = "audit"
+	HardeningModeEnforce HardeningMode = "enforce"
+)
+
 // Server is the HTTP external authorization server (A3 adapter).
 type Server struct {
 	pipeline     *core.Pipeline
@@ -86,6 +95,11 @@ type Server struct {
 	mux          *http.ServeMux
 	connectProxy bool
 	forwardHTTP  bool
+	hardening    HardeningMode
+	privateCIDRs []*net.IPNet
+	privateHosts []string
+	procResolver processIdentityResolver
+	routes       []InferenceRoute
 	rlMu         sync.Mutex
 	rl           map[string]*rate.Limiter
 }
@@ -109,12 +123,64 @@ func WithHTTPForwardProxy(enable bool) ServerOption {
 	}
 }
 
+// WithNetworkHardeningMode configures additional network hardening checks.
+// Supported values: off, audit, enforce.
+func WithNetworkHardeningMode(mode string) ServerOption {
+	return func(s *Server) {
+		s.hardening = normalizeHardeningMode(mode)
+	}
+}
+
+// WithInferenceRoutes configures route-level inference forwarding rules.
+func WithInferenceRoutes(routes []InferenceRoute) ServerOption {
+	return func(s *Server) {
+		s.routes = append([]InferenceRoute(nil), routes...)
+	}
+}
+
+// WithAllowedPrivateCIDRs configures private CIDRs that are exempt from SSRF
+// private-range blocking in hardening mode.
+func WithAllowedPrivateCIDRs(cidrs []string) ServerOption {
+	return func(s *Server) {
+		s.privateCIDRs = nil
+		for _, raw := range cidrs {
+			candidate := strings.TrimSpace(raw)
+			if candidate == "" {
+				continue
+			}
+			_, parsed, err := net.ParseCIDR(candidate)
+			if err != nil {
+				s.log.Warn("ignoring invalid allowed private CIDR", zap.String("cidr", candidate), zap.Error(err))
+				continue
+			}
+			s.privateCIDRs = append(s.privateCIDRs, parsed)
+		}
+	}
+}
+
+// WithAllowedPrivateHosts configures host glob patterns that are exempt from
+// SSRF private-range blocking in hardening mode.
+func WithAllowedPrivateHosts(hosts []string) ServerOption {
+	return func(s *Server) {
+		s.privateHosts = nil
+		for _, raw := range hosts {
+			candidate := strings.ToLower(strings.TrimSpace(raw))
+			if candidate == "" {
+				continue
+			}
+			s.privateHosts = append(s.privateHosts, candidate)
+		}
+	}
+}
+
 // NewServer creates a new proxy adapter server.
 func NewServer(pipeline *core.Pipeline, log *zap.Logger, opts ...ServerOption) *Server {
 	s := &Server{
-		pipeline: pipeline,
-		log:      log,
-		rl:       make(map[string]*rate.Limiter),
+		pipeline:     pipeline,
+		log:          log,
+		hardening:    HardeningModeOff,
+		procResolver: newProcessIdentityResolver(),
+		rl:           make(map[string]*rate.Limiter),
 	}
 	for _, o := range opts {
 		o(s)
@@ -143,6 +209,17 @@ func NewServer(pipeline *core.Pipeline, log *zap.Logger, opts ...ServerOption) *
 		IdleTimeout:  120 * time.Second,
 	}
 	return s
+}
+
+func normalizeHardeningMode(raw string) HardeningMode {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(HardeningModeAudit):
+		return HardeningModeAudit
+	case string(HardeningModeEnforce):
+		return HardeningModeEnforce
+	default:
+		return HardeningModeOff
+	}
 }
 
 // wrapHandler intercepts CONNECT and absolute-form HTTP proxy requests before ServeMux.

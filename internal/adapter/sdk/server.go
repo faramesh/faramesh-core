@@ -30,11 +30,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"go.uber.org/zap"
@@ -95,9 +97,18 @@ type governResponse struct {
 }
 
 type auditEvent struct {
-	Decision core.Decision
-	AgentID  string
-	ToolID   string
+	Decision        core.Decision
+	AgentID         string
+	SessionID       string
+	ToolID          string
+	ToolName        string
+	Operation       string
+	Reason          string
+	Args            map[string]any
+	PrincipalID     string
+	PrincipalMethod string
+	BlastRadius     string
+	Reversibility   string
 }
 
 type callbackEvent struct {
@@ -105,21 +116,31 @@ type callbackEvent struct {
 	Timestamp string `json:"timestamp"`
 
 	// Decision lifecycle payload.
-	CallID     string `json:"call_id,omitempty"`
-	AgentID    string `json:"agent_id,omitempty"`
-	SessionID  string `json:"session_id,omitempty"`
-	ToolID     string `json:"tool_id,omitempty"`
-	Effect     string `json:"effect,omitempty"`
-	RuleID     string `json:"rule_id,omitempty"`
-	ReasonCode string `json:"reason_code,omitempty"`
-	RecordID   string `json:"record_id,omitempty"`
-	LatencyMs  int64  `json:"latency_ms,omitempty"`
-	DeferToken string `json:"defer_token,omitempty"`
+	CallID           string         `json:"call_id,omitempty"`
+	AgentID          string         `json:"agent_id,omitempty"`
+	SessionID        string         `json:"session_id,omitempty"`
+	ToolID           string         `json:"tool_id,omitempty"`
+	Effect           string         `json:"effect,omitempty"`
+	RuleID           string         `json:"rule_id,omitempty"`
+	ReasonCode       string         `json:"reason_code,omitempty"`
+	Reason           string         `json:"reason,omitempty"`
+	RecordID         string         `json:"record_id,omitempty"`
+	LatencyMs        int64          `json:"latency_ms,omitempty"`
+	DeferToken       string         `json:"defer_token,omitempty"`
+	ToolName         string         `json:"tool_name,omitempty"`
+	Operation        string         `json:"operation,omitempty"`
+	BlastRadius      string         `json:"blast_radius,omitempty"`
+	Reversibility    string         `json:"reversibility,omitempty"`
+	PolicyVersion    string         `json:"policy_version,omitempty"`
+	IncidentCategory string         `json:"incident_category,omitempty"`
+	IncidentSeverity string         `json:"incident_severity,omitempty"`
+	PrincipalID      string         `json:"principal_id,omitempty"`
+	PrincipalMethod  string         `json:"principal_method,omitempty"`
+	Args             map[string]any `json:"args,omitempty"`
 
 	// Defer resolution payload.
 	Status   string `json:"status,omitempty"`
 	Approved *bool  `json:"approved,omitempty"`
-	Reason   string `json:"reason,omitempty"`
 }
 
 // pollDeferRequest is the client → server message for polling a DEFER.
@@ -378,12 +399,32 @@ func (s *Server) SetPrincipalResolver(resolver func(context.Context, string) (*p
 
 // Listen binds the Unix socket and starts accepting connections.
 func (s *Server) Listen(socketPath string) error {
-	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove stale socket: %w", err)
-	}
 	ln, err := net.Listen("unix", socketPath)
 	if err != nil {
-		return fmt.Errorf("listen on %q: %w", socketPath, err)
+		if !isAddrInUseError(err) {
+			return fmt.Errorf("listen on %q: %w", socketPath, err)
+		}
+
+		if err := validateSocketPathForReuse(socketPath); err != nil {
+			return err
+		}
+
+		active, probeErr := unixSocketAcceptingConnections(socketPath, 300*time.Millisecond)
+		if probeErr != nil {
+			return fmt.Errorf("probe existing socket %q: %w", socketPath, probeErr)
+		}
+		if active {
+			return fmt.Errorf("socket %q is already in use by another daemon", socketPath)
+		}
+
+		if rmErr := os.Remove(socketPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			return fmt.Errorf("remove stale socket: %w", rmErr)
+		}
+
+		ln, err = net.Listen("unix", socketPath)
+		if err != nil {
+			return fmt.Errorf("listen on %q: %w", socketPath, err)
+		}
 	}
 	if err := os.Chmod(socketPath, 0o600); err != nil {
 		return fmt.Errorf("chmod socket: %w", err)
@@ -392,6 +433,50 @@ func (s *Server) Listen(socketPath string) error {
 	s.log.Info("SDK adapter listening", zap.String("socket", socketPath))
 	go s.accept()
 	return nil
+}
+
+func validateSocketPathForReuse(socketPath string) error {
+	info, err := os.Lstat(socketPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat socket path %q: %w", socketPath, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return fmt.Errorf("socket path %q exists and is not a Unix socket", socketPath)
+	}
+	return nil
+}
+
+func unixSocketAcceptingConnections(socketPath string, timeout time.Duration) (bool, error) {
+	conn, err := net.DialTimeout("unix", socketPath, timeout)
+	if err == nil {
+		_ = conn.Close()
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) {
+		return false, nil
+	}
+	if errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM) {
+		return false, fmt.Errorf("socket exists but is not accessible: %w", err)
+	}
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		// A timeout indicates a potentially active but overloaded endpoint; fail closed.
+		return true, nil
+	}
+	return false, err
+}
+
+func isAddrInUseError(err error) bool {
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) && errors.Is(opErr.Err, syscall.EADDRINUSE) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "address already in use")
 }
 
 // Subscribe returns a channel that receives a copy of every Decision.
@@ -544,9 +629,9 @@ func (s *Server) handle(conn net.Conn) {
 	}
 }
 
-func (s *Server) resolveGovernRequest(req governRequest) (governResponse, core.Decision, error) {
+func (s *Server) resolveGovernRequest(req governRequest) (governResponse, core.Decision, *principal.Identity, error) {
 	if req.AgentID != "" && !s.allowAgent(req.AgentID) {
-		return governResponse{}, core.Decision{}, fmt.Errorf("rate_limited")
+		return governResponse{}, core.Decision{}, nil, fmt.Errorf("rate_limited")
 	}
 	if req.CallID == "" {
 		req.CallID = uuid.New().String()
@@ -575,7 +660,27 @@ func (s *Server) resolveGovernRequest(req governRequest) (governResponse, core.D
 		DeferToken:     decision.DeferToken,
 		LatencyMs:      decision.Latency.Milliseconds(),
 	}
-	return resp, decision, nil
+	return resp, decision, resolvedPrincipal, nil
+}
+
+func splitToolID(toolID string) (string, string) {
+	clean := strings.TrimSpace(toolID)
+	if clean == "" {
+		return "", ""
+	}
+	parts := strings.Split(clean, "/")
+	if len(parts) < 2 {
+		return clean, "invoke"
+	}
+	operation := strings.TrimSpace(parts[len(parts)-1])
+	tool := strings.TrimSpace(strings.Join(parts[:len(parts)-1], "/"))
+	if tool == "" {
+		tool = clean
+	}
+	if operation == "" {
+		operation = "invoke"
+	}
+	return tool, operation
 }
 
 func modelIdentityFromRequest(direct *core.ModelIdentity, name, fingerprint, provider, version string) *core.ModelIdentity {
@@ -634,21 +739,57 @@ func (s *Server) resolvePrincipalFromToken(agentID, principalToken string) *prin
 	return resolved
 }
 
-func (s *Server) emitGovernDecision(req governRequest, decision core.Decision) {
-	s.broadcast(auditEvent{Decision: decision, AgentID: req.AgentID, ToolID: req.ToolID})
+func (s *Server) emitGovernDecision(req governRequest, decision core.Decision, resolvedPrincipal *principal.Identity) {
+	toolName, operation := splitToolID(req.ToolID)
+	toolMeta := core.ToolRuntimeMeta{}
+	if s.pipeline != nil {
+		toolMeta = s.pipeline.ToolMetadata(req.ToolID)
+	}
+	principalID := ""
+	principalMethod := ""
+	if resolvedPrincipal != nil {
+		principalID = strings.TrimSpace(resolvedPrincipal.ID)
+		principalMethod = strings.TrimSpace(resolvedPrincipal.Method)
+	}
+
+	s.broadcast(auditEvent{
+		Decision:        decision,
+		AgentID:         req.AgentID,
+		SessionID:       req.SessionID,
+		ToolID:          req.ToolID,
+		ToolName:        toolName,
+		Operation:       operation,
+		Reason:          decision.Reason,
+		Args:            req.Args,
+		PrincipalID:     principalID,
+		PrincipalMethod: principalMethod,
+		BlastRadius:     toolMeta.BlastRadius,
+		Reversibility:   toolMeta.Reversibility,
+	})
 	s.broadcastCallback(callbackEvent{
-		EventType:  "decision",
-		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
-		CallID:     req.CallID,
-		AgentID:    req.AgentID,
-		SessionID:  req.SessionID,
-		ToolID:     req.ToolID,
-		Effect:     string(decision.Effect),
-		RuleID:     decision.RuleID,
-		ReasonCode: reasons.Normalize(decision.ReasonCode),
-		RecordID:   decision.DPRRecordID,
-		LatencyMs:  decision.Latency.Milliseconds(),
-		DeferToken: decision.DeferToken,
+		EventType:        "decision",
+		Timestamp:        time.Now().UTC().Format(time.RFC3339Nano),
+		CallID:           req.CallID,
+		AgentID:          req.AgentID,
+		SessionID:        req.SessionID,
+		ToolID:           req.ToolID,
+		ToolName:         toolName,
+		Operation:        operation,
+		Effect:           string(decision.Effect),
+		RuleID:           decision.RuleID,
+		ReasonCode:       reasons.Normalize(decision.ReasonCode),
+		Reason:           decision.Reason,
+		RecordID:         decision.DPRRecordID,
+		LatencyMs:        decision.Latency.Milliseconds(),
+		DeferToken:       decision.DeferToken,
+		BlastRadius:      toolMeta.BlastRadius,
+		Reversibility:    toolMeta.Reversibility,
+		PolicyVersion:    decision.PolicyVersion,
+		IncidentCategory: decision.IncidentCategory,
+		IncidentSeverity: decision.IncidentSeverity,
+		PrincipalID:      principalID,
+		PrincipalMethod:  principalMethod,
+		Args:             req.Args,
 	})
 
 	observe.EmitGovernanceLog(s.log, zapcore.InfoLevel, "governed", observe.EventGovernDecision,
@@ -702,7 +843,7 @@ func (s *Server) handleGovernJSONRPC(conn net.Conn, msg map[string]json.RawMessa
 		ModelProvider:      p.ModelProvider,
 		ModelVersion:       p.ModelVersion,
 	}
-	resp, decision, err := s.resolveGovernRequest(req)
+	resp, decision, resolvedPrincipal, err := s.resolveGovernRequest(req)
 	if err != nil {
 		code := -32000
 		msg := err.Error()
@@ -714,7 +855,7 @@ func (s *Server) handleGovernJSONRPC(conn net.Conn, msg map[string]json.RawMessa
 	}
 	req.CallID = resp.CallID
 	writeJSON(conn, map[string]any{"jsonrpc": "2.0", "id": id, "result": resp})
-	s.emitGovernDecision(req, decision)
+	s.emitGovernDecision(req, decision, resolvedPrincipal)
 }
 
 func (s *Server) handleStatus(conn net.Conn) {
@@ -1102,6 +1243,16 @@ func (s *Server) handleCredential(conn net.Conn, line []byte) {
 		writeJSON(conn, map[string]any{"error": "invalid credential request"})
 		return
 	}
+
+	if req.Op == "routing_map" || req.Op == "broker_map" {
+		if s.pipeline == nil {
+			writeJSON(conn, map[string]any{"error": "pipeline unavailable"})
+			return
+		}
+		writeJSON(conn, s.pipeline.CredentialBrokerDiagnostics())
+		return
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	s.credMu.Lock()
@@ -1357,14 +1508,14 @@ func (s *Server) handleGovern(conn net.Conn, line []byte) {
 		writeJSON(conn, map[string]any{"error": "invalid govern request"})
 		return
 	}
-	resp, decision, err := s.resolveGovernRequest(req)
+	resp, decision, resolvedPrincipal, err := s.resolveGovernRequest(req)
 	if err != nil {
 		writeJSON(conn, map[string]any{"error": err.Error(), "reason_code": reasons.SessionRollingLimit})
 		return
 	}
 	req.CallID = resp.CallID
 	writeJSON(conn, resp)
-	s.emitGovernDecision(req, decision)
+	s.emitGovernDecision(req, decision, resolvedPrincipal)
 }
 
 func (s *Server) handlePollDefer(conn net.Conn, line []byte) {
@@ -1484,13 +1635,27 @@ func (s *Server) handleAuditSubscribe(conn net.Conn) {
 	for event := range ch {
 		decision := event.Decision
 		writeJSON(conn, map[string]any{
-			"effect":      string(decision.Effect),
-			"agent_id":    event.AgentID,
-			"tool_id":     event.ToolID,
-			"rule_id":     decision.RuleID,
-			"reason_code": reasons.Normalize(decision.ReasonCode),
-			"defer_token": decision.DeferToken,
-			"latency_ms":  decision.Latency.Milliseconds(),
+			"effect":            string(decision.Effect),
+			"agent_id":          event.AgentID,
+			"session_id":        event.SessionID,
+			"tool_id":           event.ToolID,
+			"tool_name":         event.ToolName,
+			"operation":         event.Operation,
+			"rule_id":           decision.RuleID,
+			"reason_code":       reasons.Normalize(decision.ReasonCode),
+			"reason":            event.Reason,
+			"record_id":         decision.DPRRecordID,
+			"defer_token":       decision.DeferToken,
+			"latency_ms":        decision.Latency.Milliseconds(),
+			"timestamp":         decision.Timestamp.UTC().Format(time.RFC3339Nano),
+			"policy_version":    decision.PolicyVersion,
+			"incident_category": decision.IncidentCategory,
+			"incident_severity": decision.IncidentSeverity,
+			"blast_radius":      event.BlastRadius,
+			"reversibility":     event.Reversibility,
+			"principal_id":      event.PrincipalID,
+			"principal_method":  event.PrincipalMethod,
+			"args":              event.Args,
 		})
 	}
 }
