@@ -12,12 +12,13 @@ MCP governance applies to **traffic that flows through the gateway**. It does **
 - A sibling process that talks to the same upstream MCP server **without** the gateway.
 - Raw HTTP/stdio from the agent runtime that bypasses the configured MCP transport.
 
-Pair with **`ENFORCEMENT_STACK_AND_TRUST.md`** (network + broker + optional kernel layers) for host-level posture.
+Pair with public deployment docs and the repository **`README.md`** enforcement sections for host-level posture details.
 
-## State-of-the-art backlog
+## Where to go next
 
-- Full **capabilities / version** matrix in CI.
-- **Elicitation** and **sampling** governance (deny/defer with DPR).
-- **Multi-upstream** fan-out rules (which server, which tool namespace).
+- Quick usage guide:
+	- **`docs/guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md`**
+- Full technical reference:
+	- **`docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md`**
 
-See **`docs/dev/TODO.md`** → *MCP protocol parity*.
+This file is a short posture summary only.
