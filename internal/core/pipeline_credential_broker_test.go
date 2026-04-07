@@ -186,3 +186,87 @@ func stringRecordField(rec *dpr.Record, field string) string {
 	}
 	return f.String()
 }
+
+func TestCredentialBrokerDiagnosticsIncludesRoutingMap(t *testing.T) {
+	doc, ver, err := policy.LoadBytes([]byte(`
+faramesh-version: "1.0"
+agent-id: "diagnostics-agent"
+tools:
+  stripe/refund:
+    tags: ["credential:broker", "credential:required", "credential:scope:payments"]
+  http/get:
+    tags: ["read_only"]
+rules:
+  - id: permit-all
+    match:
+      tool: "*"
+    effect: permit
+default_effect: deny
+`))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, ver)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+
+	envBroker := &fakeBroker{name: "env"}
+	vaultBroker := &fakeBroker{name: "vault"}
+	router := credential.NewRouter([]credential.Broker{envBroker, vaultBroker}, envBroker)
+	if err := router.AddRoute("*", "env"); err != nil {
+		t.Fatalf("add wildcard route: %v", err)
+	}
+	if err := router.AddRoute("stripe/*", "vault"); err != nil {
+		t.Fatalf("add stripe route: %v", err)
+	}
+
+	p := NewPipeline(Config{
+		Engine:           policy.NewAtomicEngine(eng),
+		WAL:              &captureWAL{},
+		Sessions:         session.NewManager(),
+		Defers:           deferwork.NewWorkflow(""),
+		CredentialRouter: router,
+	})
+
+	diag := p.CredentialBrokerDiagnostics()
+	if !diag.RouterConfigured {
+		t.Fatalf("expected router configured=true")
+	}
+	if diag.ToolCount != 2 {
+		t.Fatalf("tool_count=%d want 2", diag.ToolCount)
+	}
+	if diag.BrokerEnabledCount != 1 {
+		t.Fatalf("broker_enabled_count=%d want 1", diag.BrokerEnabledCount)
+	}
+	if diag.RequiredCount != 1 {
+		t.Fatalf("required_count=%d want 1", diag.RequiredCount)
+	}
+	if diag.FallbackBackend != "env" {
+		t.Fatalf("fallback_backend=%q want env", diag.FallbackBackend)
+	}
+
+	byID := map[string]CredentialBrokerToolDiagnostic{}
+	for _, tool := range diag.Tools {
+		byID[tool.ToolID] = tool
+	}
+
+	stripe := byID["stripe/refund"]
+	if !stripe.BrokerEnabled || !stripe.Required {
+		t.Fatalf("stripe diagnostics missing broker required flags: %+v", stripe)
+	}
+	if stripe.Scope != "payments" {
+		t.Fatalf("stripe scope=%q want payments", stripe.Scope)
+	}
+	if stripe.Backend != "vault" || stripe.MatchedRoute != "stripe/*" {
+		t.Fatalf("stripe routing mismatch: %+v", stripe)
+	}
+
+	httpGet := byID["http/get"]
+	if httpGet.BrokerEnabled {
+		t.Fatalf("http/get should not be broker-enabled by tags: %+v", httpGet)
+	}
+	if httpGet.Backend != "env" || httpGet.MatchedRoute != "*" {
+		t.Fatalf("http/get routing mismatch: %+v", httpGet)
+	}
+}

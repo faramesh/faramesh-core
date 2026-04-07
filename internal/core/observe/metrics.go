@@ -56,6 +56,9 @@ type Metrics struct {
 	// Shadow mode incident exposure counter.
 	shadowExposure atomic.Int64
 
+	// Network hardening outcome counters.
+	hardeningOutcomes sync.Map // hardeningMetricKey -> *atomic.Int64
+
 	// Async DPR queue (River or in-process worker): enqueue + background persist.
 	dprEnqueueOK  atomic.Int64
 	dprEnqueueErr atomic.Int64
@@ -66,6 +69,12 @@ type Metrics struct {
 	crossSessionTracker CrossSessionTracker
 	pieAnalyzer         RuleObserver
 	pieAnalyzerConcrete *PIEAnalyzer
+}
+
+type hardeningMetricKey struct {
+	mode       string
+	outcome    string
+	reasonCode string
 }
 
 // Global default metrics instance.
@@ -252,6 +261,25 @@ func (m *Metrics) RecordShadowExposure() {
 	m.shadowExposure.Add(1)
 }
 
+// RecordHardeningOutcome records hardening-mode outcomes by mode/outcome/reason.
+func (m *Metrics) RecordHardeningOutcome(mode, outcome, reasonCode string) {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = "unknown"
+	}
+	outcome = strings.ToLower(strings.TrimSpace(outcome))
+	if outcome == "" {
+		outcome = "unknown"
+	}
+	reasonCode = strings.TrimSpace(reasonCode)
+	if reasonCode == "" {
+		reasonCode = "unknown"
+	}
+	key := hardeningMetricKey{mode: mode, outcome: outcome, reasonCode: reasonCode}
+	val, _ := m.hardeningOutcomes.LoadOrStore(key, &atomic.Int64{})
+	val.(*atomic.Int64).Add(1)
+}
+
 // RecordDPREnqueue records whether an async DPR record was accepted by the queue
 // (River insert or in-process channel send). Failure usually triggers synchronous fallback save.
 func (m *Metrics) RecordDPREnqueue(success bool) {
@@ -327,6 +355,14 @@ func (m *Metrics) Handler() http.Handler {
 		writeGauge(&b, "faramesh_incidents_prevented_per_1k_calls", int64(m.IncidentsPreventedPer1K()))
 		writeGauge(&b, "faramesh_shadow_mode_incident_exposure", m.shadowExposure.Load())
 
+		// Network hardening counters.
+		m.hardeningOutcomes.Range(func(key, value any) bool {
+			k := key.(hardeningMetricKey)
+			count := value.(*atomic.Int64).Load()
+			writeCounter3(&b, "faramesh_network_hardening_total", "mode", k.mode, "outcome", k.outcome, "reason_code", k.reasonCode, count)
+			return true
+		})
+
 		// Async DPR queue (enqueue + worker persist).
 		writeCounter(&b, "faramesh_dpr_async_enqueue_total", "status", "success", m.dprEnqueueOK.Load())
 		writeCounter(&b, "faramesh_dpr_async_enqueue_total", "status", "error", m.dprEnqueueErr.Load())
@@ -374,6 +410,10 @@ func (m *Metrics) Snapshot() Snapshot {
 
 func writeCounter(b *strings.Builder, name, labelKey, labelVal string, val int64) {
 	fmt.Fprintf(b, "%s{%s=%q} %d\n", name, labelKey, labelVal, val)
+}
+
+func writeCounter3(b *strings.Builder, name, k1, v1, k2, v2, k3, v3 string, val int64) {
+	fmt.Fprintf(b, "%s{%s=%q,%s=%q,%s=%q} %d\n", name, k1, v1, k2, v2, k3, v3, val)
 }
 
 func writeGauge(b *strings.Builder, name string, val int64) {

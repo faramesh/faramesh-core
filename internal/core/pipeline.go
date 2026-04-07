@@ -123,6 +123,39 @@ type RuntimeStatus struct {
 	TrustLevel     string
 }
 
+// ToolRuntimeMeta is a runtime view of policy-declared tool characteristics.
+type ToolRuntimeMeta struct {
+	ToolID        string
+	Reversibility string
+	BlastRadius   string
+	Tags          []string
+}
+
+// CredentialBrokerToolDiagnostic describes broker behavior for one policy tool.
+type CredentialBrokerToolDiagnostic struct {
+	ToolID         string   `json:"tool_id"`
+	Tags           []string `json:"tags,omitempty"`
+	BrokerEnabled  bool     `json:"broker_enabled"`
+	Required       bool     `json:"required"`
+	Scope          string   `json:"scope,omitempty"`
+	MatchedRoute   string   `json:"matched_route,omitempty"`
+	Backend        string   `json:"backend,omitempty"`
+	UsesFallback   bool     `json:"uses_fallback,omitempty"`
+	RouteAvailable bool     `json:"route_available"`
+}
+
+// CredentialBrokerDiagnostics provides a control-plane snapshot of broker routing.
+type CredentialBrokerDiagnostics struct {
+	RouterConfigured   bool                             `json:"router_configured"`
+	Backends           []string                         `json:"backends,omitempty"`
+	FallbackBackend    string                           `json:"fallback_backend,omitempty"`
+	Routes             map[string]string                `json:"routes,omitempty"`
+	ToolCount          int                              `json:"tool_count"`
+	BrokerEnabledCount int                              `json:"broker_enabled_count"`
+	RequiredCount      int                              `json:"required_count"`
+	Tools              []CredentialBrokerToolDiagnostic `json:"tools"`
+}
+
 const (
 	minExecutionTimeoutMS = 50
 	maxExecutionTimeoutMS = 60 * 60 * 1000
@@ -1173,6 +1206,7 @@ func (p *Pipeline) buildRecordWithID(req CanonicalActionRequest, d Decision, arg
 		rec.DegradedMode = p.degraded.Current().String()
 	}
 	setRecordCredentialMeta(rec, credentialMetaFromArgs(req.Args))
+	setRecordNetworkEvidence(rec, req.Args, d)
 	setRecordModelVerificationMeta(rec, req.ModelVerification)
 
 	// Populate principal hash if available.
@@ -1447,6 +1481,104 @@ func setRecordCredentialMeta(rec *dpr.Record, meta credential.DPRMeta) {
 	if f := elem.FieldByName("CredentialScope"); f.IsValid() && f.CanSet() && f.Kind() == reflect.String {
 		f.SetString(meta.Scope)
 	}
+}
+
+func setRecordNetworkEvidence(rec *dpr.Record, args map[string]any, decision Decision) {
+	if rec == nil {
+		return
+	}
+	if args != nil {
+		if mode := networkEvidenceString(args["hardening_mode"]); mode != "" {
+			rec.HardeningMode = strings.ToLower(mode)
+		}
+		if host := networkEvidenceString(args["host"]); host != "" {
+			rec.NetworkHostHash = networkEvidenceHash(strings.ToLower(host))
+		}
+		if port := networkEvidencePort(args["port"]); port > 0 {
+			rec.NetworkPort = port
+		}
+		if resolved := networkEvidenceString(args["resolved_ip"]); resolved != "" {
+			rec.NetworkResolvedIPHash = networkEvidenceHash(strings.ToLower(resolved))
+		}
+		if rewritten, ok := args["inference_model_rewrite_applied"].(bool); ok {
+			rec.InferenceModelRewriteApplied = rewritten
+		}
+	}
+	if decision.Effect == EffectPermit && strings.EqualFold(strings.TrimSpace(decision.ReasonCode), reasons.NetworkL7AuditViolation) {
+		rec.NetworkAuditBypass = true
+	}
+}
+
+func networkEvidenceHash(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%x", sum)[:16]
+}
+
+func networkEvidenceString(v any) string {
+	if v == nil {
+		return ""
+	}
+	s, ok := v.(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(s)
+}
+
+func networkEvidencePort(v any) int {
+	switch typed := v.(type) {
+	case int:
+		return typed
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err != nil {
+			return 0
+		}
+		return parsed
+	default:
+		return 0
+	}
+}
+
+// AcquireCredentialHandle retrieves an ephemeral credential handle via the configured
+// credential router. When required is false, missing router or fetch failures are
+// tolerated and return a nil handle.
+func (p *Pipeline) AcquireCredentialHandle(ctx context.Context, req credential.FetchRequest, required bool) (*credential.CredentialHandle, error) {
+	if p == nil {
+		if required {
+			return nil, fmt.Errorf("pipeline is nil")
+		}
+		return nil, nil
+	}
+	if p.credentialRouter == nil {
+		if required {
+			return nil, fmt.Errorf("credential router not configured")
+		}
+		return nil, nil
+	}
+	if strings.TrimSpace(req.Operation) == "" {
+		req.Operation = "invoke"
+	}
+	handle, err := p.credentialRouter.BrokerCall(ctx, req)
+	if err != nil {
+		if required {
+			return nil, err
+		}
+		return nil, nil
+	}
+	return handle, nil
 }
 
 func (p *Pipeline) assessModelVerification(req CanonicalActionRequest, doc *policy.Doc) *ModelVerificationResult {
@@ -1853,6 +1985,103 @@ func (p *Pipeline) StatusSnapshot() RuntimeStatus {
 		ActiveSessions: activeSessions,
 		TrustLevel:     "unknown",
 	}
+}
+
+// ToolMetadata returns policy-declared metadata for a tool ID.
+// Exact tool IDs are preferred; wildcard tool patterns are used as fallback.
+func (p *Pipeline) ToolMetadata(toolID string) ToolRuntimeMeta {
+	meta := ToolRuntimeMeta{ToolID: toolID}
+	art := p.currentArtifacts()
+	if art == nil || art.engine == nil || art.engine.Doc() == nil || len(art.engine.Doc().Tools) == 0 {
+		return meta
+	}
+
+	doc := art.engine.Doc()
+	if t, ok := doc.Tools[toolID]; ok {
+		meta.Reversibility = strings.TrimSpace(t.Reversibility)
+		meta.BlastRadius = strings.TrimSpace(t.BlastRadius)
+		meta.Tags = append([]string(nil), t.Tags...)
+		return meta
+	}
+
+	bestPattern := ""
+	for pattern := range doc.Tools {
+		if !strings.Contains(pattern, "*") {
+			continue
+		}
+		if !matchToolPattern(pattern, toolID) {
+			continue
+		}
+		if len(pattern) > len(bestPattern) {
+			bestPattern = pattern
+		}
+	}
+
+	if bestPattern != "" {
+		t := doc.Tools[bestPattern]
+		meta.Reversibility = strings.TrimSpace(t.Reversibility)
+		meta.BlastRadius = strings.TrimSpace(t.BlastRadius)
+		meta.Tags = append([]string(nil), t.Tags...)
+	}
+
+	return meta
+}
+
+// CredentialBrokerDiagnostics returns policy+router visibility for brokered tool execution.
+func (p *Pipeline) CredentialBrokerDiagnostics() CredentialBrokerDiagnostics {
+	out := CredentialBrokerDiagnostics{
+		RouterConfigured: p.credentialRouter != nil,
+		Tools:            []CredentialBrokerToolDiagnostic{},
+	}
+	if p.credentialRouter != nil {
+		out.Backends = p.credentialRouter.BackendNames()
+		out.FallbackBackend = p.credentialRouter.FallbackBackendName()
+		out.Routes = p.credentialRouter.RoutesSnapshot()
+	}
+
+	art := p.currentArtifacts()
+	if art == nil || art.engine == nil || art.engine.Doc() == nil || len(art.engine.Doc().Tools) == 0 {
+		return out
+	}
+
+	doc := art.engine.Doc()
+	keys := make([]string, 0, len(doc.Tools))
+	for toolID := range doc.Tools {
+		keys = append(keys, toolID)
+	}
+	sort.Strings(keys)
+
+	tools := make([]CredentialBrokerToolDiagnostic, 0, len(keys))
+	for _, toolID := range keys {
+		decl := doc.Tools[toolID]
+		tags := append([]string(nil), decl.Tags...)
+		useBroker, required, scope := credentialBrokerPlan(policy.ToolCtx{Tags: tags}, nil)
+		entry := CredentialBrokerToolDiagnostic{
+			ToolID:         toolID,
+			Tags:           tags,
+			BrokerEnabled:  useBroker,
+			Required:       required,
+			Scope:          scope,
+			RouteAvailable: p.credentialRouter != nil,
+		}
+		if p.credentialRouter != nil {
+			resolved := p.credentialRouter.ResolveRoute(toolID)
+			entry.MatchedRoute = resolved.Pattern
+			entry.Backend = resolved.Backend
+			entry.UsesFallback = resolved.UsedFallback
+		}
+		if useBroker {
+			out.BrokerEnabledCount++
+		}
+		if required {
+			out.RequiredCount++
+		}
+		tools = append(tools, entry)
+	}
+	out.Tools = tools
+	out.ToolCount = len(tools)
+
+	return out
 }
 
 func (p *Pipeline) emitWebhook(req CanonicalActionRequest, d Decision) {
