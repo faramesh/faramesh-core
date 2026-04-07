@@ -81,35 +81,38 @@ type Config struct {
 	HorizonURL   string
 	HorizonOrgID string
 
-	ProxyPort             int
-	ProxyConnect          bool // HTTP CONNECT only (governed as proxy/connect)
-	ProxyForward          bool // CONNECT + RFC 7230 absolute-form HTTP (proxy/connect + proxy/http)
-	NetworkHardeningMode  string
-	InferenceRoutesFile   string
-	AllowedPrivateCIDRs   []string
-	AllowedPrivateHosts   []string
-	GRPCPort              int
-	MCPProxyPort          int
-	MCPTarget             string
-	MetricsPort           int
-	DPRDSN                string
-	RedisURL              string
-	DPRHMACKey            string
-	TLSCertFile           string
-	TLSKeyFile            string
-	ClientCAFile          string
-	TLSAuto               bool
-	PagerDutyRoutingKey   string
-	PolicyAdminToken      string
-	EnableEBPF            bool
-	EBPFObjectPath        string
-	EBPFAttachTracepoints bool
-	SPIFFESocketPath      string
-	StrictPreflight       bool
-	IDPProvider           string
-	IntegrityManifestPath string
-	IntegrityBaseDir      string
-	BuildInfoExpectedPath string
+	ProxyPort                   int
+	ProxyConnect                bool // HTTP CONNECT only (governed as proxy/connect)
+	ProxyForward                bool // CONNECT + RFC 7230 absolute-form HTTP (proxy/connect + proxy/http)
+	NetworkHardeningMode        string
+	InferenceRoutesFile         string
+	IntentClassifierURL         string
+	IntentClassifierTimeout     time.Duration
+	IntentClassifierBearerToken string
+	AllowedPrivateCIDRs         []string
+	AllowedPrivateHosts         []string
+	GRPCPort                    int
+	MCPProxyPort                int
+	MCPTarget                   string
+	MetricsPort                 int
+	DPRDSN                      string
+	RedisURL                    string
+	DPRHMACKey                  string
+	TLSCertFile                 string
+	TLSKeyFile                  string
+	ClientCAFile                string
+	TLSAuto                     bool
+	PagerDutyRoutingKey         string
+	PolicyAdminToken            string
+	EnableEBPF                  bool
+	EBPFObjectPath              string
+	EBPFAttachTracepoints       bool
+	SPIFFESocketPath            string
+	StrictPreflight             bool
+	IDPProvider                 string
+	IntegrityManifestPath       string
+	IntegrityBaseDir            string
+	BuildInfoExpectedPath       string
 	// AllowEnvCredentialFallback permits env-based credential brokering as an explicit
 	// development escape hatch. Keep false in production strict mode.
 	AllowEnvCredentialFallback bool
@@ -578,6 +581,14 @@ func (d *Daemon) start() error {
 		return err
 	}
 
+	intentClassifier, classifierURL, classifierTimeout := buildIntentClassifier(d.cfg)
+	if intentClassifier != nil {
+		d.log.Info("async intent classifier writer enabled",
+			zap.String("classifier_url", classifierURL),
+			zap.Duration("classifier_timeout", classifierTimeout),
+		)
+	}
+
 	pipeline := core.NewPipeline(core.Config{
 		Engine:                  d.engine,
 		WAL:                     wal,
@@ -597,6 +608,7 @@ func (d *Daemon) start() error {
 		Elevations:              elevationEngine,
 		WorkloadIdentity:        workloadProvider,
 		CredentialRouter:        credentialRouter,
+		IntentClassifier:        intentClassifier,
 		Provenance:              provenanceTracker,
 		PhaseManager:            buildPhaseManagerFromPolicy(doc),
 		PolicySourceType:        d.policySourceType,
@@ -723,6 +735,46 @@ func (d *Daemon) start() error {
 	d.bootstrapEBPF()
 
 	return nil
+}
+
+func buildIntentClassifier(cfg Config) (core.IntentClassifier, string, time.Duration) {
+	classifierURL := strings.TrimSpace(cfg.IntentClassifierURL)
+	if classifierURL == "" {
+		classifierURL = strings.TrimSpace(os.Getenv("FARAMESH_INTENT_CLASSIFIER_URL"))
+	}
+	if classifierURL == "" {
+		return nil, "", 0
+	}
+
+	timeout := cfg.IntentClassifierTimeout
+	if timeout <= 0 {
+		if raw := strings.TrimSpace(os.Getenv("FARAMESH_INTENT_CLASSIFIER_TIMEOUT")); raw != "" {
+			if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+				timeout = parsed
+			}
+		}
+	}
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+
+	bearerToken := strings.TrimSpace(cfg.IntentClassifierBearerToken)
+	if bearerToken == "" {
+		bearerToken = strings.TrimSpace(os.Getenv("FARAMESH_INTENT_CLASSIFIER_BEARER_TOKEN"))
+	}
+
+	classifier := core.NewHTTPIntentClassifier(core.HTTPIntentClassifierConfig{
+		URL:         classifierURL,
+		Timeout:     timeout,
+		BearerToken: bearerToken,
+		Headers: map[string]string{
+			"X-Faramesh-Component": "daemon_intent_classifier",
+		},
+	})
+	if classifier == nil {
+		return nil, "", 0
+	}
+	return classifier, classifierURL, timeout
 }
 
 func buildCredentialRouter(cfg Config) *credential.Router {
