@@ -2,8 +2,8 @@ package dpr
 
 import (
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,6 +53,7 @@ func (s *Store) Save(rec *Record) error {
 			incident_category, incident_severity,
 			policy_version, policy_source_type, policy_source_id,
 			args_structural_sig, arg_provenance, selector_snapshot,
+			hardening_mode, network_host_hash, network_port, network_resolved_ip_hash, network_audit_bypass, inference_model_rewrite_applied,
 			custom_operators_evaluated, operator_results, operator_registry_hash,
 			workflow_phase, phase_transition_record,
 			credential_brokered, credential_source, credential_scope,
@@ -62,7 +63,7 @@ func (s *Store) Save(rec *Record) error {
 			degraded_mode,
 			batch_approval, batch_size, batch_dpr_ids, resolved_by_batch, batch_approval_id,
 			created_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		rec.SchemaVersion, rec.FPLVersion, rec.CARVersion,
 		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig,
 		rec.AgentID, rec.SessionID, rec.ToolID, rec.InterceptAdapter, rec.ExecutionTimeoutMS, rec.PrincipalIDHash,
@@ -70,6 +71,7 @@ func (s *Store) Save(rec *Record) error {
 		rec.IncidentCategory, rec.IncidentSeverity,
 		rec.PolicyVersion, rec.PolicySourceType, rec.PolicySourceID,
 		rec.ArgsStructuralSig, argProv, selSnap,
+		rec.HardeningMode, rec.NetworkHostHash, rec.NetworkPort, rec.NetworkResolvedIPHash, rec.NetworkAuditBypass, rec.InferenceModelRewriteApplied,
 		custOps, opRes, rec.OperatorRegistryHash,
 		rec.WorkflowPhase, rec.PhaseTransitionRecord,
 		rec.CredentialBrokered, rec.CredentialSource, rec.CredentialScope,
@@ -110,6 +112,7 @@ const dprSelectCols = `schema_version, fpl_version, car_version,
 	incident_category, incident_severity,
 	policy_version, policy_source_type, policy_source_id,
 	args_structural_sig, arg_provenance, selector_snapshot,
+	hardening_mode, network_host_hash, network_port, network_resolved_ip_hash, network_audit_bypass, inference_model_rewrite_applied,
 	custom_operators_evaluated, operator_results, operator_registry_hash,
 	workflow_phase, phase_transition_record,
 	credential_brokered, credential_source, credential_scope,
@@ -250,6 +253,12 @@ func migrate(db *sql.DB) error {
 		args_structural_sig        TEXT,
 		arg_provenance             TEXT DEFAULT '',
 		selector_snapshot          TEXT DEFAULT '',
+		hardening_mode             TEXT DEFAULT '',
+		network_host_hash          TEXT DEFAULT '',
+		network_port               INTEGER DEFAULT 0,
+		network_resolved_ip_hash   TEXT DEFAULT '',
+		network_audit_bypass       INTEGER DEFAULT 0,
+		inference_model_rewrite_applied INTEGER DEFAULT 0,
 		custom_operators_evaluated TEXT DEFAULT '',
 		operator_results           TEXT DEFAULT '',
 		operator_registry_hash     TEXT DEFAULT '',
@@ -289,6 +298,7 @@ func migrate(db *sql.DB) error {
 		"denial_token", "incident_category", "incident_severity",
 		"policy_source_type", "policy_source_id",
 		"arg_provenance", "selector_snapshot",
+		"hardening_mode", "network_host_hash", "network_port", "network_resolved_ip_hash", "network_audit_bypass", "inference_model_rewrite_applied",
 		"custom_operators_evaluated", "operator_results", "operator_registry_hash",
 		"workflow_phase", "phase_transition_record",
 		"credential_brokered", "credential_source", "credential_scope",
@@ -301,7 +311,8 @@ func migrate(db *sql.DB) error {
 	for _, col := range v1Cols {
 		defaultVal := "''"
 		if col == "phase_transition_record" || col == "credential_brokered" ||
-			col == "batch_approval" || col == "batch_size" || col == "resolved_by_batch" {
+			col == "batch_approval" || col == "batch_size" || col == "resolved_by_batch" ||
+			col == "network_port" || col == "network_audit_bypass" || col == "inference_model_rewrite_applied" {
 			defaultVal = "0"
 		}
 		// ALTER TABLE ADD COLUMN is a no-op if the column already exists in SQLite.
@@ -325,6 +336,7 @@ func scanRecords(rows *sql.Rows) ([]*Record, error) {
 			&r.IncidentCategory, &r.IncidentSeverity,
 			&r.PolicyVersion, &r.PolicySourceType, &r.PolicySourceID,
 			&r.ArgsStructuralSig, &argProv, &selSnap,
+			&r.HardeningMode, &r.NetworkHostHash, &r.NetworkPort, &r.NetworkResolvedIPHash, &r.NetworkAuditBypass, &r.InferenceModelRewriteApplied,
 			&custOps, &opRes, &r.OperatorRegistryHash,
 			&r.WorkflowPhase, &r.PhaseTransitionRecord,
 			&r.CredentialBrokered, &r.CredentialSource, &r.CredentialScope,

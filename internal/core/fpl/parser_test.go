@@ -82,3 +82,35 @@ func TestParseRulesWhenSupportsSingleQuotedStrings(t *testing.T) {
 		t.Fatalf("unexpected normalized condition: %q", rules[0].Condition)
 	}
 }
+
+func TestParseRulesWithNetworkSelectors(t *testing.T) {
+	src := `permit proxy/http host: api.openai.com port: 443 method: POST path: /v1/* query: model=gpt-* header: x-org=acme when args.user == "alice"`
+	rules, err := ParseRules(src)
+	if err != nil {
+		t.Fatalf("parse network selector rule: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	r := rules[0]
+	if r.Host != "api.openai.com" || r.Port != "443" || r.Method != "POST" || r.Path != "/v1/*" {
+		t.Fatalf("unexpected network selectors: %+v", r)
+	}
+	if r.Query["model"] != "gpt-*" {
+		t.Fatalf("unexpected query selector: %+v", r.Query)
+	}
+	if r.Headers["x-org"] != "acme" {
+		t.Fatalf("unexpected header selector: %+v", r.Headers)
+	}
+	if r.Condition != `args.user == "alice"` {
+		t.Fatalf("unexpected condition parse: %q", r.Condition)
+	}
+}
+
+func TestParseRulesRejectsInvalidNetworkKeyValueSelector(t *testing.T) {
+	src := `permit proxy/http query: missing_equals`
+	_, err := ParseRules(src)
+	if err == nil {
+		t.Fatal("expected parse error for malformed query selector")
+	}
+}
