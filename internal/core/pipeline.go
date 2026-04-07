@@ -94,6 +94,7 @@ type Pipeline struct {
 	elevations        PrincipalElevationResolver
 	workloadIdentity  WorkloadIdentityDetector
 	credentialRouter  *credential.Router
+	intentClassifier  IntentClassifier
 	provenance        observe.ArgProvenanceTracker
 	phaseManager      *phases.PhaseManager
 	policySourceType  string
@@ -181,6 +182,7 @@ type Config struct {
 	Elevations              PrincipalElevationResolver
 	WorkloadIdentity        WorkloadIdentityDetector
 	CredentialRouter        *credential.Router
+	IntentClassifier        IntentClassifier
 	Provenance              observe.ArgProvenanceTracker
 	PhaseManager            *phases.PhaseManager
 	PolicySourceType        string
@@ -228,6 +230,7 @@ func NewPipeline(cfg Config) *Pipeline {
 		elevations:        cfg.Elevations,
 		workloadIdentity:  cfg.WorkloadIdentity,
 		credentialRouter:  cfg.CredentialRouter,
+		intentClassifier:  cfg.IntentClassifier,
 		provenance:        cfg.Provenance,
 		phaseManager:      cfg.PhaseManager,
 		policySourceType:  cfg.PolicySourceType,
@@ -746,6 +749,13 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 				Reason:     reason,
 			}, sess, start, argProvenance)
 		}
+		if _, _, targetsIntentWrite, err := parseIntentClassWrite(req.AgentID, req.Args); targetsIntentWrite && err != nil {
+			return p.decide(req, Decision{
+				Effect:     EffectDeny,
+				ReasonCode: reasons.SessionStateWriteBlocked,
+				Reason:     err.Error(),
+			}, sess, start, argProvenance)
+		}
 	}
 
 	// [3.16] Loop governor — deny burst loops/repetitive invocation patterns.
@@ -847,6 +857,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			History:      historyEntries,
 			CostUSD:      sess.CurrentCostUSD(),
 			DailyCostUSD: sess.DailyCostUSD(),
+			IntentClass:  sess.IntentClass(req.Timestamp),
 		},
 		Tool: toolMeta,
 	}
@@ -1085,6 +1096,9 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 		}
 		observe.Default.RecordIncidentPrevented(d.IncidentCategory, sev)
 	}
+	if d.Effect == EffectShadow || d.Effect == EffectShadowPermit {
+		observe.Default.RecordShadowExposure()
+	}
 
 	// [9] WAL write — fsync before returning.
 	rec := p.buildRecordWithID(req, d, argProvenance, plannedRecordID)
@@ -1129,6 +1143,11 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 	// controls (e.g. deny_count_within) observe the latest decision
 	// deterministically on the very next Evaluate() call.
 	sess.RecordHistory(req.ToolID, string(d.Effect))
+	if d.Effect == EffectPermit {
+		if intentClass, ttl, targetsIntentWrite, err := parseIntentClassWrite(req.AgentID, req.Args); targetsIntentWrite && err == nil {
+			sess.SetIntentClass(intentClass, ttl)
+		}
+	}
 	if d.Effect == EffectPermit || d.Effect == EffectShadow {
 		go p.accountCost(req.AgentID, req.ToolID, sess)
 	}
@@ -1137,6 +1156,10 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 	}
 	if p.webhooks != nil {
 		go p.emitWebhook(req, d)
+	}
+	if p.intentClassifier != nil && shouldRunIntentClassifier(req, d) {
+		asyncReq := cloneCanonicalActionRequest(req)
+		go p.runAsyncIntentClassifier(asyncReq, d)
 	}
 
 	// [11] Return Decision.
@@ -2256,12 +2279,33 @@ var (
 	sqlInjectionRe     = regexp.MustCompile(`(?i)(('|")\s*(;|--|\/\*|OR\s+1\s*=\s*1|DROP\s+TABLE|UNION\s+SELECT))`)
 	codeExecRe         = regexp.MustCompile(`(?i)(\beval\s*\(|\bexec\s*\(|__import__\s*\(|\bsubprocess\b)`)
 	sensitivePathRe    = regexp.MustCompile(`(?i)(\.env$|\.pem$|id_rsa|credentials|\.secret|config\.yaml$|\.key$|\.p12$|/etc/passwd|/etc/shadow)`)
+	multimodalScanner  = postcondition.NewMultimodalScanner()
+	allowedIntentClass = map[string]struct{}{
+		"routine":                 {},
+		"anomalous":               {},
+		"potentially_adversarial": {},
+		"high_risk_intent":        {},
+	}
 )
 
 // runScanners runs the pre-execution safety scanners.
 // Returns (true, reasonCode, reason) if the request should be denied.
 func runScanners(req CanonicalActionRequest) (bool, string, string) {
 	argsStr := fmt.Sprintf("%v", req.Args)
+
+	if multimodalScanner != nil && len(req.Args) > 0 {
+		for _, result := range multimodalScanner.ScanArgs(req.Args) {
+			if result.Safe || len(result.Threats) == 0 {
+				continue
+			}
+			threat := result.Threats[0]
+			reason := fmt.Sprintf("scanner detected encoded %s pattern in argument %q", threat.Type, result.ArgPath)
+			if enc := strings.TrimSpace(result.Encoding); enc != "" {
+				reason = fmt.Sprintf("scanner detected encoded %s pattern in argument %q (%s)", threat.Type, result.ArgPath, enc)
+			}
+			return true, reasons.MultimodalInjection, reason
+		}
+	}
 
 	// Shell classifier: dangerous command patterns.
 	if strings.HasPrefix(req.ToolID, "shell/") || strings.Contains(req.ToolID, "exec") {
@@ -2496,6 +2540,230 @@ func containsNullByteValue(v any) bool {
 	default:
 		return false
 	}
+}
+
+func shouldRunIntentClassifier(req CanonicalActionRequest, d Decision) bool {
+	if strings.TrimSpace(req.AgentID) == "" || strings.TrimSpace(req.SessionID) == "" {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.ToolID)), "session/write") {
+		return false
+	}
+	switch d.Effect {
+	case EffectPermit, EffectShadow:
+		return true
+	default:
+		return false
+	}
+}
+
+func cloneCanonicalActionRequest(req CanonicalActionRequest) CanonicalActionRequest {
+	copyReq := req
+	copyReq.Args = cloneArgsMap(req.Args)
+	return copyReq
+}
+
+func cloneArgsMap(args map[string]any) map[string]any {
+	if len(args) == 0 {
+		return map[string]any{}
+	}
+	cloned := make(map[string]any, len(args))
+	for k, v := range args {
+		cloned[k] = cloneArgValue(v)
+	}
+	return cloned
+}
+
+func cloneArgValue(v any) any {
+	switch typed := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for k, child := range typed {
+			out[k] = cloneArgValue(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i := range typed {
+			out[i] = cloneArgValue(typed[i])
+		}
+		return out
+	default:
+		rv := reflect.ValueOf(v)
+		if !rv.IsValid() {
+			return v
+		}
+		switch rv.Kind() {
+		case reflect.Map:
+			if rv.Type().Key().Kind() != reflect.String {
+				return v
+			}
+			out := make(map[string]any, rv.Len())
+			iter := rv.MapRange()
+			for iter.Next() {
+				out[iter.Key().String()] = cloneArgValue(iter.Value().Interface())
+			}
+			return out
+		case reflect.Slice:
+			if rv.IsNil() {
+				return v
+			}
+			out := make([]any, rv.Len())
+			for i := 0; i < rv.Len(); i++ {
+				out[i] = cloneArgValue(rv.Index(i).Interface())
+			}
+			return out
+		default:
+			return v
+		}
+	}
+}
+
+func (p *Pipeline) runAsyncIntentClassifier(req CanonicalActionRequest, d Decision) {
+	if p.intentClassifier == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	classification, err := p.intentClassifier.Classify(ctx, req, d)
+	if err != nil {
+		p.log.Debug("intent classifier call failed",
+			zap.String("agent_id", req.AgentID),
+			zap.String("session_id", req.SessionID),
+			zap.String("tool_id", req.ToolID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	intentClass := strings.TrimSpace(classification.Class)
+	if intentClass == "" {
+		return
+	}
+
+	args := map[string]any{
+		"key":   req.AgentID + "/intent/class",
+		"value": intentClass,
+	}
+	if classification.TTL > 0 {
+		ttlSeconds := int(classification.TTL.Round(time.Second) / time.Second)
+		if ttlSeconds > 0 {
+			args["ttl_seconds"] = ttlSeconds
+		}
+	}
+
+	writeReq := CanonicalActionRequest{
+		CallID:           "intent-classifier-" + uuid.NewString(),
+		AgentID:          req.AgentID,
+		SessionID:        req.SessionID,
+		ToolID:           "session/write",
+		Args:             args,
+		Timestamp:        time.Now().UTC(),
+		InterceptAdapter: "intent_classifier",
+	}
+	writeDecision := p.Evaluate(writeReq)
+	if writeDecision.Effect != EffectPermit {
+		p.log.Debug("intent classifier session write not permitted",
+			zap.String("agent_id", req.AgentID),
+			zap.String("session_id", req.SessionID),
+			zap.String("reason_code", writeDecision.ReasonCode),
+			zap.String("reason", writeDecision.Reason),
+		)
+	}
+}
+
+func parseIntentClassWrite(agentID string, args map[string]any) (intentClass string, ttl time.Duration, targets bool, err error) {
+	if len(args) == 0 {
+		return "", 0, false, nil
+	}
+	rawKey, _ := args["key"].(string)
+	normalizedKey := strings.ToLower(strings.TrimSpace(rawKey))
+	if normalizedKey == "" {
+		return "", 0, false, nil
+	}
+	if agent := strings.ToLower(strings.TrimSpace(agentID)); agent != "" {
+		prefix := agent + "/"
+		normalizedKey = strings.TrimPrefix(normalizedKey, prefix)
+	}
+	if normalizedKey != "intent/class" && normalizedKey != "intent_class" {
+		return "", 0, false, nil
+	}
+
+	targets = true
+	class := strings.ToLower(strings.TrimSpace(fmt.Sprint(args["value"])))
+	class = strings.ReplaceAll(class, "-", "_")
+	class = strings.ReplaceAll(class, " ", "_")
+	if class == "" {
+		return "", 0, true, fmt.Errorf("intent class write requires a non-empty value")
+	}
+	if _, ok := allowedIntentClass[class]; !ok {
+		return "", 0, true, fmt.Errorf("unsupported intent class %q", class)
+	}
+
+	return class, parseIntentClassTTL(args), true, nil
+}
+
+func parseIntentClassTTL(args map[string]any) time.Duration {
+	ttl := 10 * time.Minute
+	if raw, ok := args["ttl"]; ok {
+		switch v := raw.(type) {
+		case string:
+			if parsed, err := time.ParseDuration(strings.TrimSpace(v)); err == nil && parsed > 0 {
+				ttl = parsed
+			}
+		default:
+			if seconds := parsePositiveInt(raw); seconds > 0 {
+				ttl = time.Duration(seconds) * time.Second
+			}
+		}
+	}
+	for _, key := range []string{"ttl_seconds", "ttl_secs", "ttl_sec"} {
+		if raw, ok := args[key]; ok {
+			if seconds := parsePositiveInt(raw); seconds > 0 {
+				ttl = time.Duration(seconds) * time.Second
+				break
+			}
+		}
+	}
+	if ttl < 30*time.Second {
+		return 30 * time.Second
+	}
+	if ttl > 24*time.Hour {
+		return 24 * time.Hour
+	}
+	return ttl
+}
+
+func parsePositiveInt(v any) int {
+	switch typed := v.(type) {
+	case int:
+		if typed > 0 {
+			return typed
+		}
+	case int32:
+		if typed > 0 {
+			return int(typed)
+		}
+	case int64:
+		if typed > 0 {
+			return int(typed)
+		}
+	case float32:
+		if typed > 0 {
+			return int(typed)
+		}
+	case float64:
+		if typed > 0 {
+			return int(typed)
+		}
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 func riskWeight(toolID string, meta policy.ToolCtx) int {

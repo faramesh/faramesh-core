@@ -29,6 +29,10 @@ type State struct {
 	phase      string
 	killed     atomic.Bool
 
+	intentMu           sync.Mutex
+	intentClass        string
+	intentClassExpires time.Time
+
 	// Cost tracking — session-scoped, resets with session.
 	sessionCostMu  sync.Mutex
 	sessionCostUSD float64
@@ -218,6 +222,41 @@ func (s *State) SetPhase(phase string) {
 	s.mu.Unlock()
 }
 
+// SetIntentClass stores a cached intent class with a TTL.
+// A zero or negative TTL falls back to a safe default.
+func (s *State) SetIntentClass(class string, ttl time.Duration) {
+	class = strings.ToLower(strings.TrimSpace(class))
+	if class == "" {
+		return
+	}
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+	s.intentMu.Lock()
+	s.intentClass = class
+	s.intentClassExpires = time.Now().UTC().Add(ttl)
+	s.intentMu.Unlock()
+}
+
+// IntentClass returns the currently cached intent class when it is still fresh.
+// Expired values are cleared eagerly and reported as empty.
+func (s *State) IntentClass(now time.Time) string {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	s.intentMu.Lock()
+	defer s.intentMu.Unlock()
+	if s.intentClass == "" {
+		return ""
+	}
+	if !s.intentClassExpires.IsZero() && now.After(s.intentClassExpires) {
+		s.intentClass = ""
+		s.intentClassExpires = time.Time{}
+		return ""
+	}
+	return s.intentClass
+}
+
 // History returns a snapshot of the history buffer, newest first.
 func (s *State) History() []HistoryEntry {
 	if s.backend != nil && s.agentID != "" {
@@ -283,6 +322,12 @@ func (s *State) Reset(counter string) {
 			s.phase = ""
 		}
 		s.mu.Unlock()
+	}
+	if mode == "all" || mode == "intent_class" {
+		s.intentMu.Lock()
+		s.intentClass = ""
+		s.intentClassExpires = time.Time{}
+		s.intentMu.Unlock()
 	}
 	if mode == "all" || mode == "kill_switch" {
 		s.killed.Store(false)
