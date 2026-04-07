@@ -12,6 +12,8 @@ DAEMON_LOG="${FARAMESH_E2E_LOG:-$ROOT_DIR/.tmp/faramesh-e2e-daemon.log}"
 SPIFFE_SOCKET_PATH="${FARAMESH_E2E_SPIFFE_SOCKET:-$ROOT_DIR/.tmp/faramesh-spiffe.sock}"
 INTEGRITY_MANIFEST_PATH="${FARAMESH_E2E_INTEGRITY_MANIFEST:-$ROOT_DIR/.tmp/faramesh-e2e-manifest.json}"
 BUILDINFO_EXPECTED_PATH="${FARAMESH_E2E_BUILDINFO_EXPECTED:-$ROOT_DIR/.tmp/faramesh-e2e-buildinfo.json}"
+CREDENTIAL_POLICY_PATH="${FARAMESH_E2E_CREDENTIAL_POLICY:-$ROOT_DIR/.tmp/faramesh-e2e-credential-required.yaml}"
+PRINCIPAL_POLICY_PATH="${FARAMESH_E2E_PRINCIPAL_POLICY:-$ROOT_DIR/.tmp/faramesh-e2e-principal-required.yaml}"
 
 AGENT_ID="e2e-agent"
 CREDENTIAL_NAME="stripe-e2e"
@@ -23,12 +25,33 @@ cleanup() {
     wait "$DAEMON_PID" >/dev/null 2>&1 || true
   fi
   rm -f "$SOCKET_PATH"
+  rm -f "$CREDENTIAL_POLICY_PATH" "$PRINCIPAL_POLICY_PATH"
 }
 trap cleanup EXIT
 
 run_cmd() {
   echo "+ $*"
   "$@"
+}
+
+expect_cmd_fail() {
+  local expected_substr="$1"
+  shift
+
+  echo "+ (expect-fail) $*"
+  local output=""
+  if output="$($@ 2>&1)"; then
+    echo "expected command to fail, but it succeeded"
+    echo "command: $*"
+    echo "$output"
+    return 1
+  fi
+
+  echo "$output"
+  if [[ -n "$expected_substr" ]] && [[ "$output" != *"$expected_substr"* ]]; then
+    echo "expected failure output to contain: $expected_substr"
+    return 1
+  fi
 }
 
 wait_for_daemon() {
@@ -55,9 +78,43 @@ wait_for_daemon() {
 mkdir -p "$(dirname "$BIN_PATH")"
 rm -rf "$DATA_DIR"
 mkdir -p "$DATA_DIR"
-rm -f "$SOCKET_PATH" "$DAEMON_LOG" "$INTEGRITY_MANIFEST_PATH" "$BUILDINFO_EXPECTED_PATH"
+rm -f "$SOCKET_PATH" "$DAEMON_LOG" "$INTEGRITY_MANIFEST_PATH" "$BUILDINFO_EXPECTED_PATH" "$CREDENTIAL_POLICY_PATH" "$PRINCIPAL_POLICY_PATH"
+
+cat >"$CREDENTIAL_POLICY_PATH" <<'YAML'
+faramesh-version: "1.0"
+agent-id: "e2e-agent"
+tools:
+  stripe/refund:
+    tags:
+      - credential:required
+rules:
+  - id: allow-all
+    match:
+      tool: "*"
+    effect: permit
+default_effect: deny
+YAML
+
+cat >"$PRINCIPAL_POLICY_PATH" <<'YAML'
+faramesh-version: "1.0"
+agent-id: "e2e-agent"
+rules:
+  - id: principal-required
+    match:
+      tool: "*"
+      when: principal.verified == true
+    effect: permit
+default_effect: deny
+YAML
 
 go build -o "$BIN_PATH" ./cmd/faramesh
+
+# Validate strict onboarding fail-closed behavior before daemon startup.
+expect_cmd_fail "Policy requires brokered credentials" env FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" onboard --strict=true --policy "$CREDENTIAL_POLICY_PATH" --interactive=false --spiffe-socket "$SPIFFE_SOCKET_PATH" --credential-profile production --credential-backend auto
+run_cmd env FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" onboard --strict=true --policy "$CREDENTIAL_POLICY_PATH" --interactive=false --spiffe-socket "$SPIFFE_SOCKET_PATH" --credential-profile production --credential-backend local-vault
+
+expect_cmd_fail "configured but not ready" env FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" onboard --strict=true --policy "$PRINCIPAL_POLICY_PATH" --idp-provider okta --interactive=false --spiffe-socket "$SPIFFE_SOCKET_PATH"
+run_cmd env FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" onboard --strict=true --policy "$PRINCIPAL_POLICY_PATH" --idp-provider default --interactive=false --spiffe-socket "$SPIFFE_SOCKET_PATH"
 
 run_cmd "$BIN_PATH" verify manifest-generate --base-dir "$ROOT_DIR" --output "$INTEGRITY_MANIFEST_PATH" "$POLICY_PATH"
 "$BIN_PATH" verify buildinfo --emit >"$BUILDINFO_EXPECTED_PATH"
@@ -113,6 +170,7 @@ run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential list
 run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential inspect "$CREDENTIAL_NAME"
 run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential rotate "$CREDENTIAL_NAME" --key sk_live_new
 run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential health
+run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential map
 run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential audit "$CREDENTIAL_NAME" --window 24h
 run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential revoke "$CREDENTIAL_NAME"
 

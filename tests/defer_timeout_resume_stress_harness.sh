@@ -15,4 +15,7 @@ run_cmd go test ./internal/core/defer -run 'TestLateResolveAfterTimeoutKeepsExpi
 # G3 daemon wait-for-approval stress lane: timeout with late approve/deny resumes.
 run_cmd go test ./internal/adapter/daemon -run 'TestWaitForApprovalTimeoutAllowsLateApprovalResolution|TestWaitForApprovalTimeoutAllowsLateDenialResolution' -count=1
 
+# G3 escalation lane: triage SLA breach escalation ordering and single-fire behavior.
+run_cmd go test ./internal/core/defer -run 'TestTriageClassifyAndEscalateOnce|TestTriagePendingSortedOrdersByPriority' -count=1
+
 echo "defer timeout/resume stress harness passed"
