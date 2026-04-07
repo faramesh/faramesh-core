@@ -1,0 +1,55 @@
+agent deepagents-openrouter-qwen-production {
+  default deny
+
+  rules {
+    # Permit explicit low-risk infrastructure status checks.
+    permit infra_status/invoke
+    permit infra_status/ainvoke
+    permit infra_status/run
+    permit infra_status/arun
+    permit infra_status/_execute_tool_sync
+    permit infra_status/_execute_tool_async
+    permit infra_status/_run_one
+    permit infra_status/_arun_one
+
+    # Permit readonly database diagnostics.
+    permit db_readonly_query/invoke
+    permit db_readonly_query/ainvoke
+    permit db_readonly_query/run
+    permit db_readonly_query/arun
+    permit db_readonly_query/_execute_tool_sync
+    permit db_readonly_query/_execute_tool_async
+    permit db_readonly_query/_run_one
+    permit db_readonly_query/_arun_one
+
+    # Allow DeepAgents orchestration plumbing for normal completion paths.
+    permit task/_execute_tool_sync
+    permit task/_execute_tool_async
+    permit task/_run_one
+    permit task/_arun_one
+    permit write_todos/_execute_tool_sync
+    permit write_todos/_execute_tool_async
+    permit write_todos/_run_one
+    permit write_todos/_arun_one
+
+    # Route payment-changing calls through human approval.
+    defer payments_refund/invoke reason: "payments refund requires operator approval"
+    defer payments_refund/ainvoke reason: "payments refund requires operator approval"
+    defer payments_refund/run reason: "payments refund requires operator approval"
+    defer payments_refund/arun reason: "payments refund requires operator approval"
+    defer payments_refund/_execute_tool_sync reason: "payments refund requires operator approval"
+    defer payments_refund/_execute_tool_async reason: "payments refund requires operator approval"
+    defer payments_refund/_run_one reason: "payments refund requires operator approval"
+    defer payments_refund/_arun_one reason: "payments refund requires operator approval"
+
+    # Explicitly block shell execution paths.
+    deny bash_run/invoke reason: "bash execution blocked in production"
+    deny bash_run/ainvoke reason: "bash execution blocked in production"
+    deny bash_run/run reason: "bash execution blocked in production"
+    deny bash_run/arun reason: "bash execution blocked in production"
+    deny bash_run/_execute_tool_sync reason: "bash execution blocked in production"
+    deny bash_run/_execute_tool_async reason: "bash execution blocked in production"
+    deny bash_run/_run_one reason: "bash execution blocked in production"
+    deny bash_run/_arun_one reason: "bash execution blocked in production"
+  }
+}
