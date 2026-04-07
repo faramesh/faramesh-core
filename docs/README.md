@@ -8,6 +8,15 @@ This index improves navigation across the most important faramesh-core documenta
 2. [NPM CLI README](../npm/README.md)
 3. [Node SDK README](../sdk/node/README.md)
 4. [Python SDK README](../sdk/python/README.md)
+5. [Project Organization](PROJECT_ORGANIZATION.md)
+
+## Guides and reports
+
+1. [Real Agent Test Guide](guides/REAL_AGENT_TEST_GUIDE.md)
+2. [Network Hardening Audit Canary Runbook](guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
+3. [Network Hardening Progressive Enforce Runbook](guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
+4. [Architecture Gap Report (2026-03-28)](../reports/architecture/ARCHITECTURE_GAP_REPORT_2026-03-28.md)
+5. [Deploy Examples Split Plan](DEPLOY_EXAMPLES_SPLIT_PLAN.md)
 
 ## Related FPL language docs
 
