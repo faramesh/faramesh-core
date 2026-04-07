@@ -108,6 +108,9 @@ func mustJSON(v any) json.RawMessage {
 // payload is a JSON-RPC MCP message with a result. Applies the same logic as
 // applyPostScanMCPMessage. Other lines (event:, comments, non-JSON data) pass through.
 func transformSSEDataLineForPostScan(line []byte, toolID string, p *core.Pipeline) []byte {
+	if strings.TrimSpace(toolID) == "" {
+		return line
+	}
 	s := string(line)
 	trimLeft := strings.TrimLeft(s, " \t")
 	if !strings.HasPrefix(trimLeft, "data:") {

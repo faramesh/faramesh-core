@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"go.uber.org/zap"
 )
@@ -185,5 +186,79 @@ func TestStdioGateway_ProcessStdioLine_batchEmpty(t *testing.T) {
 	}
 	if strings.TrimSpace(string(out)) != `[]` {
 		t.Fatalf("got %q", out)
+	}
+}
+
+func TestStdioGateway_ProcessStdioLine_notificationNoResponse(t *testing.T) {
+	chdirMCP(t)
+	g, err := NewStdioGateway(testMCPPipeline(t), "agent-1", zap.NewNop(), []string{"go", "run", "./testdata/stdio_echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+
+	start := time.Now()
+	out, err := g.ProcessStdioLine([]byte(`{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected no response line, got %q", string(out))
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("notification path should not block, took %s", elapsed)
+	}
+}
+
+func TestStdioGateway_forwardsUnsolicitedServerNotification(t *testing.T) {
+	chdirMCP(t)
+	g, err := NewStdioGateway(testMCPPipeline(t), "agent-1", zap.NewNop(), []string{"go", "run", "./testdata/stdio_notify"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+
+	msg := MCPMessage{
+		JSONRPC: "2.0",
+		ID:      42,
+		Method:  "ping",
+		Params:  json.RawMessage(`{}`),
+	}
+	out, err := g.ProcessRequest(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Error != nil {
+		t.Fatalf("unexpected error response: %+v", out.Error)
+	}
+
+	select {
+	case line := <-g.Outbound():
+		var up MCPMessage
+		if err := json.Unmarshal(line, &up); err != nil {
+			t.Fatalf("invalid outbound message: %v", err)
+		}
+		if up.Method != "notifications/progress" {
+			t.Fatalf("expected notifications/progress, got %q", up.Method)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected unsolicited upstream notification")
+	}
+}
+
+func TestStdioGateway_ProcessStdioLine_responseNoResponse(t *testing.T) {
+	chdirMCP(t)
+	g, err := NewStdioGateway(testMCPPipeline(t), "agent-1", zap.NewNop(), []string{"go", "run", "./testdata/stdio_echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+
+	out, err := g.ProcessStdioLine([]byte(`{"jsonrpc":"2.0","id":"srv-1","result":{}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("expected no response line, got %q", string(out))
 	}
 }

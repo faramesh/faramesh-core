@@ -52,6 +52,16 @@ var (
 	serveGRPCPort                    int
 	serveMCPProxyPort                int
 	serveMCPTarget                   string
+	serveMCPAllowedOrigins           string
+	serveMCPEdgeAuthMode             string
+	serveMCPEdgeAuthBearerToken      string
+	serveMCPProtocolVersionMode      string
+	serveMCPProtocolVersion          string
+	serveMCPSessionTTL               time.Duration
+	serveMCPSessionIdleTimeout       time.Duration
+	serveMCPSSEReplayEnabled         bool
+	serveMCPSSEReplayMaxEvents       int
+	serveMCPSSEReplayMaxAge          time.Duration
 	serveMetricsPort                 int
 	serveDPRDSN                      string
 	serveRedisURL                    string
@@ -109,6 +119,16 @@ func init() {
 	serveCmd.Flags().IntVar(&serveGRPCPort, "grpc-port", 0, "start gRPC daemon adapter on this port (0 disables)")
 	serveCmd.Flags().IntVar(&serveMCPProxyPort, "mcp-proxy-port", 0, "start MCP HTTP gateway on this port (0 disables)")
 	serveCmd.Flags().StringVar(&serveMCPTarget, "mcp-target", "", "upstream MCP HTTP server base URL (required when --mcp-proxy-port is set)")
+	serveCmd.Flags().StringVar(&serveMCPAllowedOrigins, "mcp-allowed-origins", "", "comma-separated allowed HTTP Origin values for MCP gateway requests (exact origins, e.g. https://app.example.com)")
+	serveCmd.Flags().StringVar(&serveMCPEdgeAuthMode, "mcp-edge-auth-mode", "off", "MCP edge auth mode: off|bearer|mtls|bearer_or_mtls")
+	serveCmd.Flags().StringVar(&serveMCPEdgeAuthBearerToken, "mcp-edge-auth-bearer-token", "", "Bearer token required by MCP edge auth mode bearer/bearer_or_mtls (or set FARAMESH_MCP_EDGE_AUTH_BEARER_TOKEN)")
+	serveCmd.Flags().StringVar(&serveMCPProtocolVersionMode, "mcp-protocol-version-mode", "off", "MCP protocol version enforcement mode: off|strict")
+	serveCmd.Flags().StringVar(&serveMCPProtocolVersion, "mcp-protocol-version", "2025-06-18", "required MCP-Protocol-Version value when --mcp-protocol-version-mode=strict")
+	serveCmd.Flags().DurationVar(&serveMCPSessionTTL, "mcp-session-ttl", 0, "absolute TTL for MCP sessions keyed by Mcp-Session-Id (0 disables)")
+	serveCmd.Flags().DurationVar(&serveMCPSessionIdleTimeout, "mcp-session-idle-timeout", 0, "idle timeout for MCP sessions keyed by Mcp-Session-Id (0 disables)")
+	serveCmd.Flags().BoolVar(&serveMCPSSEReplayEnabled, "mcp-sse-replay-enabled", false, "enable bounded Last-Event-ID replay cache for MCP SSE streams")
+	serveCmd.Flags().IntVar(&serveMCPSSEReplayMaxEvents, "mcp-sse-replay-max-events", 256, "max cached SSE events per MCP session when replay is enabled")
+	serveCmd.Flags().DurationVar(&serveMCPSSEReplayMaxAge, "mcp-sse-replay-max-age", 10*time.Minute, "max age for cached SSE replay events when replay is enabled")
 	serveCmd.Flags().IntVar(&serveMetricsPort, "metrics-port", 0, "start Prometheus metrics endpoint on this port (0 disables)")
 	serveCmd.Flags().StringVar(&serveDPRDSN, "dpr-dsn", "", "PostgreSQL DSN for mirrored DPR writes")
 	serveCmd.Flags().StringVar(&serveRedisURL, "redis-url", "", "Redis URL for shared session backend (optional)")
@@ -182,6 +202,16 @@ func runServe(cmd *cobra.Command, args []string) error {
 		GRPCPort:                    serveGRPCPort,
 		MCPProxyPort:                serveMCPProxyPort,
 		MCPTarget:                   serveMCPTarget,
+		MCPAllowedOrigins:           splitCSVList(serveMCPAllowedOrigins),
+		MCPEdgeAuthMode:             strings.ToLower(strings.TrimSpace(serveMCPEdgeAuthMode)),
+		MCPEdgeAuthBearerToken:      resolveMCPEdgeAuthBearerToken(),
+		MCPProtocolVersionMode:      strings.ToLower(strings.TrimSpace(serveMCPProtocolVersionMode)),
+		MCPProtocolVersion:          strings.TrimSpace(serveMCPProtocolVersion),
+		MCPSessionTTL:               serveMCPSessionTTL,
+		MCPSessionIdleTimeout:       serveMCPSessionIdleTimeout,
+		MCPSSEReplayEnabled:         serveMCPSSEReplayEnabled,
+		MCPSSEReplayMaxEvents:       serveMCPSSEReplayMaxEvents,
+		MCPSSEReplayMaxAge:          serveMCPSSEReplayMaxAge,
 		MetricsPort:                 serveMetricsPort,
 		DPRDSN:                      serveDPRDSN,
 		RedisURL:                    serveRedisURL,
@@ -345,6 +375,13 @@ func resolvePolicyAdminToken() string {
 		return strings.TrimSpace(servePolicyAdminToken)
 	}
 	return strings.TrimSpace(os.Getenv("FARAMESH_POLICY_ADMIN_TOKEN"))
+}
+
+func resolveMCPEdgeAuthBearerToken() string {
+	if strings.TrimSpace(serveMCPEdgeAuthBearerToken) != "" {
+		return strings.TrimSpace(serveMCPEdgeAuthBearerToken)
+	}
+	return strings.TrimSpace(os.Getenv("FARAMESH_MCP_EDGE_AUTH_BEARER_TOKEN"))
 }
 
 func resolveVaultAddr() string {
