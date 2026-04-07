@@ -64,7 +64,7 @@ def faramesh_tool(
 
             effect = _normalize_effect(result.get("effect", ""))
             if effect == "DENY":
-                reason = result.get("reason_code", "POLICY_DENY")
+                reason = result.get("reason_code") or "POLICY_DENY"
                 raise RuntimeError(f"Faramesh DENY: {reason} (tool={tool_id})")
             if effect == "DEFER":
                 token = result.get("defer_token", "")
