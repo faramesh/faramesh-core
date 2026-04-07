@@ -270,7 +270,13 @@ class EventStore:
             filtered.append(item)
 
         filtered.sort(key=lambda item: parse_timestamp(str(item.get("updated_at") or "")), reverse=True)
-        return filtered[: max(1, limit)]
+        result = filtered[: max(1, limit)]
+        for item in result:
+            item["approval_token"] = None
+            ctx = item.get("context")
+            if isinstance(ctx, dict):
+                ctx["defer_token"] = ""
+        return result
 
     def get_legacy_action(self, call_id: str) -> dict[str, Any] | None:
         item = self.get_action(call_id)
