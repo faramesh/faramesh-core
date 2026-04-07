@@ -269,9 +269,38 @@ func fplRuleToRule(r *fpl.Rule, seq int) Rule {
 		}
 	}
 
+	match := Match{
+		Tool:   r.Tool,
+		Host:   strings.TrimSpace(r.Host),
+		Port:   strings.TrimSpace(r.Port),
+		Method: strings.TrimSpace(r.Method),
+		Path:   strings.TrimSpace(r.Path),
+		When:   when,
+	}
+	if len(r.Query) > 0 {
+		match.Query = make(map[string]string, len(r.Query))
+		for key, value := range r.Query {
+			k := strings.TrimSpace(key)
+			if k == "" {
+				continue
+			}
+			match.Query[k] = strings.TrimSpace(value)
+		}
+	}
+	if len(r.Headers) > 0 {
+		match.Headers = make(map[string]string, len(r.Headers))
+		for key, value := range r.Headers {
+			k := strings.TrimSpace(key)
+			if k == "" {
+				continue
+			}
+			match.Headers[k] = strings.TrimSpace(value)
+		}
+	}
+
 	return Rule{
 		ID:         fmt.Sprintf("fpl-%d", seq),
-		Match:      Match{Tool: r.Tool, When: when},
+		Match:      match,
 		Effect:     effect,
 		Notify:     strings.TrimSpace(r.Notify),
 		Reason:     reason,
@@ -693,6 +722,22 @@ func Validate(doc *Doc) []string {
 			seenIDs[rule.ID] = i
 		}
 
+		if strings.TrimSpace(rule.Match.Port) != "" && !isValidPortSelector(rule.Match.Port) {
+			errs = append(errs, fmt.Sprintf("rule %q: invalid match.port %q (expected single port, range, or comma list)", rule.ID, rule.Match.Port))
+		}
+		for key := range rule.Match.Query {
+			if strings.TrimSpace(key) == "" {
+				errs = append(errs, fmt.Sprintf("rule %q: match.query contains empty key", rule.ID))
+				break
+			}
+		}
+		for key := range rule.Match.Headers {
+			if strings.TrimSpace(key) == "" {
+				errs = append(errs, fmt.Sprintf("rule %q: match.headers contains empty key", rule.ID))
+				break
+			}
+		}
+
 		effect := rule.Effect
 		if effect != "permit" && effect != "deny" && effect != "defer" && effect != "shadow" {
 			errs = append(errs, fmt.Sprintf("rule %q: unknown effect %q (must be permit|deny|defer|shadow)", rule.ID, effect))
@@ -838,4 +883,33 @@ func probesMatching(toolPattern string) []string {
 		}
 	}
 	return matched
+}
+
+func isValidPortSelector(raw string) bool {
+	for _, token := range strings.Split(raw, ",") {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		if token == "*" {
+			continue
+		}
+		if strings.Contains(token, "-") {
+			parts := strings.SplitN(token, "-", 2)
+			if len(parts) != 2 {
+				return false
+			}
+			start, errStart := strconv.Atoi(strings.TrimSpace(parts[0]))
+			end, errEnd := strconv.Atoi(strings.TrimSpace(parts[1]))
+			if errStart != nil || errEnd != nil || start <= 0 || end <= 0 || start > 65535 || end > 65535 {
+				return false
+			}
+			continue
+		}
+		port, err := strconv.Atoi(token)
+		if err != nil || port <= 0 || port > 65535 {
+			return false
+		}
+	}
+	return true
 }
