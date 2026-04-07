@@ -3,8 +3,8 @@ package dpr
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -57,6 +57,7 @@ func (s *PGStore) Save(rec *Record) error {
 			incident_category, incident_severity,
 			policy_version, policy_source_type, policy_source_id,
 			args_structural_sig, arg_provenance, selector_snapshot,
+			hardening_mode, network_host_hash, network_port, network_resolved_ip_hash, network_audit_bypass, inference_model_rewrite_applied,
 			custom_operators_evaluated, operator_results, operator_registry_hash,
 			workflow_phase, phase_transition_record,
 			credential_brokered, credential_source, credential_scope,
@@ -69,7 +70,7 @@ func (s *PGStore) Save(rec *Record) error {
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
 			$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-			$39,$40,$41,$42,$43,$44,$45,$46,$47
+			$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53
 		) ON CONFLICT (record_id) DO NOTHING`,
 		rec.SchemaVersion, rec.FPLVersion, rec.CARVersion,
 		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig,
@@ -78,6 +79,7 @@ func (s *PGStore) Save(rec *Record) error {
 		rec.IncidentCategory, rec.IncidentSeverity,
 		rec.PolicyVersion, rec.PolicySourceType, rec.PolicySourceID,
 		rec.ArgsStructuralSig, argProv, selSnap,
+		rec.HardeningMode, rec.NetworkHostHash, rec.NetworkPort, rec.NetworkResolvedIPHash, rec.NetworkAuditBypass, rec.InferenceModelRewriteApplied,
 		custOps, opRes, rec.OperatorRegistryHash,
 		rec.WorkflowPhase, rec.PhaseTransitionRecord,
 		rec.CredentialBrokered, rec.CredentialSource, rec.CredentialScope,
@@ -217,6 +219,7 @@ const pgSelectCols = `schema_version, fpl_version, car_version,
 	incident_category, incident_severity,
 	policy_version, policy_source_type, policy_source_id,
 	args_structural_sig, arg_provenance, selector_snapshot,
+	hardening_mode, network_host_hash, network_port, network_resolved_ip_hash, network_audit_bypass, inference_model_rewrite_applied,
 	custom_operators_evaluated, operator_results, operator_registry_hash,
 	workflow_phase, phase_transition_record,
 	credential_brokered, credential_source, credential_scope,
@@ -258,6 +261,12 @@ func pgMigrate(db *sql.DB) error {
 		args_structural_sig        TEXT,
 		arg_provenance             JSONB DEFAULT '{}',
 		selector_snapshot          JSONB DEFAULT '{}',
+		hardening_mode             TEXT DEFAULT '',
+		network_host_hash          TEXT DEFAULT '',
+		network_port               INTEGER DEFAULT 0,
+		network_resolved_ip_hash   TEXT DEFAULT '',
+		network_audit_bypass       BOOLEAN DEFAULT FALSE,
+		inference_model_rewrite_applied BOOLEAN DEFAULT FALSE,
 		custom_operators_evaluated JSONB DEFAULT '[]',
 		operator_results           JSONB DEFAULT '{}',
 		operator_registry_hash     TEXT DEFAULT '',
@@ -286,6 +295,12 @@ func pgMigrate(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_dpr_incident ON dpr_records(incident_category, incident_severity);
 	CREATE INDEX IF NOT EXISTS idx_dpr_record_hash ON dpr_records(record_hash);
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS execution_timeout_ms INTEGER DEFAULT 0;
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS hardening_mode TEXT DEFAULT '';
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS network_host_hash TEXT DEFAULT '';
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS network_port INTEGER DEFAULT 0;
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS network_resolved_ip_hash TEXT DEFAULT '';
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS network_audit_bypass BOOLEAN DEFAULT FALSE;
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS inference_model_rewrite_applied BOOLEAN DEFAULT FALSE;
 	`)
 	return err
 }
@@ -304,6 +319,7 @@ func pgScanRecords(rows *sql.Rows) ([]*Record, error) {
 			&r.IncidentCategory, &r.IncidentSeverity,
 			&r.PolicyVersion, &r.PolicySourceType, &r.PolicySourceID,
 			&r.ArgsStructuralSig, &argProv, &selSnap,
+			&r.HardeningMode, &r.NetworkHostHash, &r.NetworkPort, &r.NetworkResolvedIPHash, &r.NetworkAuditBypass, &r.InferenceModelRewriteApplied,
 			&custOps, &opRes, &r.OperatorRegistryHash,
 			&r.WorkflowPhase, &r.PhaseTransitionRecord,
 			&r.CredentialBrokered, &r.CredentialSource, &r.CredentialScope,
