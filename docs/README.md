@@ -11,8 +11,9 @@ This index improves navigation across the most important faramesh-core documenta
 
 ## Guides
 
-1. [Network Hardening Audit Canary Runbook](guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
-2. [Network Hardening Progressive Enforce Runbook](guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
+1. [Real Agent Test Guide](guides/REAL_AGENT_TEST_GUIDE.md)
+2. [Network Hardening Audit Canary Runbook](guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
+3. [Network Hardening Progressive Enforce Runbook](guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
 
 ## Related FPL language docs
 
