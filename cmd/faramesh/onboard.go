@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/principal"
@@ -43,10 +45,14 @@ var (
 	onboardPagerDutyRoutingKey string
 	onboardIDPProvider         string
 	onboardSPIFFESocket        string
+	onboardSPIFFEID            string
 	onboardVaultAddr           string
 	onboardAWSRegion           string
 	onboardGCPProject          string
 	onboardAzureVaultURL       string
+	onboardInteractive         bool
+	onboardCredentialProfile   string
+	onboardCredentialBackend   string
 )
 
 func init() {
@@ -57,10 +63,14 @@ func init() {
 	onboardCmd.Flags().StringVar(&onboardPagerDutyRoutingKey, "pagerduty-routing-key", "", "PagerDuty routing key for HITL routing checks")
 	onboardCmd.Flags().StringVar(&onboardIDPProvider, "idp-provider", "", "IdP provider for principal-aware policy checks (default=ephemeral|local|okta|azure_ad|auth0|google|ldap)")
 	onboardCmd.Flags().StringVar(&onboardSPIFFESocket, "spiffe-socket", "", "SPIFFE Workload API socket path for workload identity checks")
+	onboardCmd.Flags().StringVar(&onboardSPIFFEID, "spiffe-id", "", "explicit SPIFFE workload ID override for readiness checks (use with --spiffe-socket or local bootstrap)")
 	onboardCmd.Flags().StringVar(&onboardVaultAddr, "vault-addr", "", "Vault address for credential sequestration checks")
 	onboardCmd.Flags().StringVar(&onboardAWSRegion, "aws-secrets-region", "", "AWS Secrets Manager region for credential sequestration checks")
 	onboardCmd.Flags().StringVar(&onboardGCPProject, "gcp-secrets-project", "", "GCP project for Secret Manager credential checks")
 	onboardCmd.Flags().StringVar(&onboardAzureVaultURL, "azure-vault-url", "", "Azure Key Vault URL for credential sequestration checks")
+	onboardCmd.Flags().BoolVar(&onboardInteractive, "interactive", true, "enable interactive backend prompts when credential requirements are unmet")
+	onboardCmd.Flags().StringVar(&onboardCredentialProfile, "credential-profile", "production", "credential governance profile: production|development|auto")
+	onboardCmd.Flags().StringVar(&onboardCredentialBackend, "credential-backend", "auto", "preferred credential backend: auto|local-vault|vault|aws|gcp|azure|1password|infisical|env")
 }
 
 type onboardStatus string
@@ -99,6 +109,22 @@ type onboardReport struct {
 }
 
 func runOnboard(_ *cobra.Command, _ []string) error {
+	if err := validateOnboardCredentialInputs(onboardCredentialProfile, onboardCredentialBackend); err != nil {
+		return err
+	}
+
+	if override := strings.TrimSpace(onboardSPIFFEID); override != "" {
+		prev, hadPrev := os.LookupEnv("FARAMESH_SPIFFE_ID")
+		_ = os.Setenv("FARAMESH_SPIFFE_ID", override)
+		defer func() {
+			if hadPrev {
+				_ = os.Setenv("FARAMESH_SPIFFE_ID", prev)
+			} else {
+				_ = os.Unsetenv("FARAMESH_SPIFFE_ID")
+			}
+		}()
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getwd: %w", err)
@@ -195,9 +221,10 @@ func runOnboard(_ *cobra.Command, _ []string) error {
 	}
 
 	checks = append(checks, evaluateHITLReadiness(doc, onboardSlackWebhook, onboardPagerDutyRoutingKey))
-	checks = append(checks, evaluateIdentityReadiness(onboardStrict, onboardSPIFFESocket))
+	checks = append(checks, evaluateIdentityReadiness(onboardStrict, onboardSPIFFESocket, onboardSPIFFEID))
 	checks = append(checks, evaluateIDPReadiness(doc, onboardStrict, onboardIDPProvider))
-	checks = append(checks, evaluateCredentialSequestrationReadiness(doc, onboardStrict, resolveOnboardCredentialConfig()))
+	credentialCfg := resolveOnboardCredentialConfig()
+	checks = append(checks, evaluateCredentialSequestrationReadiness(doc, onboardStrict, &credentialCfg))
 
 	report := onboardReport{
 		Strict:     onboardStrict,
@@ -292,8 +319,8 @@ func evaluateHITLReadiness(doc *policy.Doc, slackWebhook, pagerdutyKey string) o
 		return onboardCheck{
 			ID:      "hitl",
 			Title:   "HITL",
-			Status:  onboardStatusWarn,
-			Details: "Current policy has no defer effects. HITL workflow is currently inactive.",
+			Status:  onboardStatusPass,
+			Details: "Current policy has no defer effects. HITL workflow is not required by policy.",
 		}
 	}
 	missing := onboardMissingDeferBackends(doc, slackWebhook, pagerdutyKey)
@@ -314,8 +341,8 @@ func evaluateHITLReadiness(doc *policy.Doc, slackWebhook, pagerdutyKey string) o
 	}
 }
 
-func evaluateIdentityReadiness(strict bool, spiffeSocket string) onboardCheck {
-	provider := resolveOnboardWorkloadProvider(spiffeSocket)
+func evaluateIdentityReadiness(strict bool, spiffeSocket, spiffeID string) onboardCheck {
+	provider := resolveOnboardWorkloadProvider(spiffeSocket, spiffeID)
 	if provider == nil {
 		if strict {
 			return onboardCheck{
@@ -323,7 +350,7 @@ func evaluateIdentityReadiness(strict bool, spiffeSocket string) onboardCheck {
 				Title:       "Identity",
 				Status:      onboardStatusFail,
 				Details:     "No workload identity provider detected.",
-				Remediation: "Configure SPIFFE socket or supported cloud workload identity before strict runtime.",
+				Remediation: "Configure SPIFFE workload identity (--spiffe-socket and optional --spiffe-id) or supported cloud workload identity before strict runtime.",
 			}
 		}
 		return onboardCheck{
@@ -410,8 +437,8 @@ func evaluateIDPReadiness(doc *policy.Doc, strict bool, idpProvider string) onbo
 		return onboardCheck{
 			ID:      "idp",
 			Title:   "IdP",
-			Status:  onboardStatusWarn,
-			Details: "Policy does not currently require principal/delegation claim verification.",
+			Status:  onboardStatusPass,
+			Details: "Policy does not require principal/delegation claim verification.",
 		}
 	}
 	provider := strings.ToLower(strings.TrimSpace(idpProvider))
@@ -469,7 +496,7 @@ func evaluateIDPReadiness(doc *policy.Doc, strict bool, idpProvider string) onbo
 	}
 }
 
-func evaluateCredentialSequestrationReadiness(doc *policy.Doc, strict bool, cfg onboardCredentialConfig) onboardCheck {
+func evaluateCredentialSequestrationReadiness(doc *policy.Doc, strict bool, cfg *onboardCredentialConfig) onboardCheck {
 	if doc == nil {
 		return onboardCheck{
 			ID:      "credential_sequestration",
@@ -482,44 +509,103 @@ func evaluateCredentialSequestrationReadiness(doc *policy.Doc, strict bool, cfg 
 		return onboardCheck{
 			ID:      "credential_sequestration",
 			Title:   "Credential sequestration",
-			Status:  onboardStatusWarn,
-			Details: "Policy tools do not declare credential:required or credential:broker tags.",
+			Status:  onboardStatusPass,
+			Details: "Policy tools do not require credential sequestration for this runtime profile.",
 		}
 	}
-	if onboardHasExternalCredentialSequestrationBackend(cfg) {
+
+	if cfg == nil {
+		cfg = &onboardCredentialConfig{}
+	}
+
+	profile := normalizeOnboardCredentialProfile(onboardCredentialProfile, strict)
+	allowEnvFallback := onboardAllowEnvCredentialFallback(profile)
+	selectedBackend := normalizeOnboardCredentialBackend(onboardCredentialBackend)
+	notes := []string{}
+
+	if selectedBackend == "auto" && !onboardHasExternalCredentialSequestrationBackend(*cfg) && onboardShouldPromptForCredentialBackend() {
+		choice, promptNote, err := promptOnboardCredentialBackend(profile)
+		if err != nil {
+			notes = append(notes, fmt.Sprintf("Interactive backend selection skipped: %v", err))
+		} else {
+			selectedBackend = choice
+			if promptNote != "" {
+				notes = append(notes, promptNote)
+			}
+		}
+	}
+
+	if note, err := onboardApplyCredentialBackendSelection(cfg, selectedBackend, &allowEnvFallback); err != nil {
+		status := onboardStatusWarn
+		if strict {
+			status = onboardStatusFail
+		}
+		details := err.Error()
+		if len(notes) > 0 {
+			details = strings.Join(append(notes, details), " ")
+		}
+		return onboardCheck{
+			ID:          "credential_sequestration",
+			Title:       "Credential sequestration",
+			Status:      status,
+			Details:     details,
+			Remediation: "Choose or configure a backend: local-vault, vault, aws, gcp, azure, 1password, or infisical.",
+		}
+	} else if note != "" {
+		notes = append(notes, note)
+	}
+
+	configuredBackends := onboardDetectedCredentialBackends(*cfg)
+	if len(configuredBackends) > 0 {
+		details := fmt.Sprintf("Credential backend configuration detected for brokered execution: %s.", strings.Join(configuredBackends, ", "))
+		if len(notes) > 0 {
+			details = strings.Join(append(notes, details), " ")
+		}
 		return onboardCheck{
 			ID:      "credential_sequestration",
 			Title:   "Credential sequestration",
 			Status:  onboardStatusPass,
-			Details: "External credential backend configuration detected for brokered execution.",
+			Details: details,
 		}
 	}
-	if onboardAllowEnvCredentialFallback() {
-		return onboardCheck{
-			ID:      "credential_sequestration",
-			Title:   "Credential sequestration",
-			Status:  onboardStatusWarn,
-			Details: "Using built-in env credential broker fallback. Configure Vault/AWS/GCP/Azure/1Password/Infisical for stronger external sequestration.",
+
+	if allowEnvFallback {
+		details := "Using env credential broker fallback. Configure Vault/AWS/GCP/Azure/1Password/Infisical for centralized key governance in production."
+		if len(notes) > 0 {
+			details = strings.Join(append(notes, details), " ")
 		}
-	}
-	if !onboardHasCredentialSequestrationBackend(cfg) {
-		if strict {
+		if strict && profile == "production" {
 			return onboardCheck{
 				ID:          "credential_sequestration",
 				Title:       "Credential sequestration",
 				Status:      onboardStatusFail,
-				Details:     "Policy requires brokered credentials but no credential backend is configured.",
-				Remediation: "Configure Vault/AWS/GCP/Azure/1Password/Infisical backend via flags or env vars.",
+				Details:     details,
+				Remediation: "Set a credential backend and disable env fallback (unset FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK or set to false).",
 			}
 		}
 		return onboardCheck{
 			ID:      "credential_sequestration",
 			Title:   "Credential sequestration",
 			Status:  onboardStatusWarn,
-			Details: "Policy requires brokered credentials but no credential backend is configured.",
+			Details: details,
 		}
 	}
-	return onboardCheck{ID: "credential_sequestration", Title: "Credential sequestration", Status: onboardStatusPass, Details: "Credential backend configuration detected for brokered execution."}
+
+	if strict {
+		return onboardCheck{
+			ID:          "credential_sequestration",
+			Title:       "Credential sequestration",
+			Status:      onboardStatusFail,
+			Details:     "Policy requires brokered credentials but no credential backend is configured.",
+			Remediation: "Configure Vault/AWS/GCP/Azure/1Password/Infisical backend via flags or env vars.",
+		}
+	}
+	return onboardCheck{
+		ID:      "credential_sequestration",
+		Title:   "Credential sequestration",
+		Status:  onboardStatusWarn,
+		Details: "Policy requires brokered credentials but no credential backend is configured.",
+	}
 }
 
 func resolveOnboardPolicyPath(rawPath, cwd string) (string, error) {
@@ -543,12 +629,20 @@ func absolutize(cwd, path string) string {
 	return filepath.Clean(filepath.Join(cwd, path))
 }
 
-func resolveOnboardWorkloadProvider(spiffeSocket string) principal.WorkloadProvider {
+func resolveOnboardWorkloadProvider(spiffeSocket, spiffeID string) principal.WorkloadProvider {
 	if v := strings.TrimSpace(spiffeSocket); v != "" {
 		return principal.NewSPIFFEProvider(v)
 	}
 	if v := strings.TrimSpace(os.Getenv("FARAMESH_SPIFFE_SOCKET_PATH")); v != "" {
 		return principal.NewSPIFFEProvider(v)
+	}
+	if v := strings.TrimSpace(spiffeID); v != "" {
+		_ = v
+		return principal.NewSPIFFEProvider("env://spiffe-id")
+	}
+	if v := strings.TrimSpace(os.Getenv("FARAMESH_SPIFFE_ID")); v != "" {
+		_ = v
+		return principal.NewSPIFFEProvider("env://spiffe-id")
 	}
 	return principal.DetectWorkloadProvider()
 }
@@ -622,23 +716,206 @@ func onboardHasExternalCredentialSequestrationBackend(cfg onboardCredentialConfi
 	return false
 }
 
-func onboardAllowEnvCredentialFallback() bool {
+func validateOnboardCredentialInputs(profile, backend string) error {
+	if p := normalizeOnboardCredentialProfile(profile, false); p == "" {
+		return fmt.Errorf("invalid --credential-profile %q (expected production|development|auto)", profile)
+	}
+	if b := normalizeOnboardCredentialBackend(backend); b == "" {
+		return fmt.Errorf("invalid --credential-backend %q (expected auto|local-vault|vault|aws|gcp|azure|1password|infisical|env)", backend)
+	}
+	return nil
+}
+
+func normalizeOnboardCredentialProfile(raw string, strict bool) string {
+	p := strings.ToLower(strings.TrimSpace(raw))
+	switch p {
+	case "", "auto":
+		if strict {
+			return "production"
+		}
+		return "development"
+	case "production", "development":
+		return p
+	default:
+		return ""
+	}
+}
+
+func normalizeOnboardCredentialBackend(raw string) string {
+	b := strings.ToLower(strings.TrimSpace(raw))
+	switch b {
+	case "", "auto", "local-vault", "vault", "aws", "gcp", "azure", "1password", "infisical", "env":
+		if b == "" {
+			return "auto"
+		}
+		return b
+	default:
+		return ""
+	}
+}
+
+func onboardShouldPromptForCredentialBackend() bool {
+	if !onboardInteractive || onboardJSON {
+		return false
+	}
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
+func promptOnboardCredentialBackend(profile string) (backend string, note string, err error) {
+	profileLabel := profile
+	if profileLabel != "" {
+		profileLabel = strings.ToUpper(profileLabel[:1]) + profileLabel[1:]
+	}
+	fmt.Println("Credential backend setup is required for brokered tool calls.")
+	fmt.Printf("Credential profile: %s\n", profileLabel)
+	fmt.Println("Choose backend:")
+	fmt.Println("  1) local-vault  (Faramesh-managed local Vault path)")
+	fmt.Println("  2) vault        (existing HashiCorp Vault integration)")
+	fmt.Println("  3) aws          (AWS Secrets Manager)")
+	fmt.Println("  4) gcp          (GCP Secret Manager)")
+	fmt.Println("  5) azure        (Azure Key Vault)")
+	fmt.Println("  6) 1password    (1Password Connect)")
+	fmt.Println("  7) infisical    (Infisical)")
+	if profile == "development" {
+		fmt.Println("  8) env          (development-only fallback)")
+	}
+	fmt.Println("Press Enter to keep current auto-detection.")
+	fmt.Print("Selection: ")
+
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "auto", "", err
+	}
+	choice := strings.ToLower(strings.TrimSpace(line))
+	if choice == "" {
+		return "auto", "Using auto backend detection.", nil
+	}
+
+	aliases := map[string]string{
+		"1":          "local-vault",
+		"2":          "vault",
+		"3":          "aws",
+		"4":          "gcp",
+		"5":          "azure",
+		"6":          "1password",
+		"7":          "infisical",
+		"8":          "env",
+		"local":      "local-vault",
+		"localvault": "local-vault",
+	}
+	if normalized, ok := aliases[choice]; ok {
+		choice = normalized
+	}
+
+	if choice == "env" && profile != "development" {
+		return "auto", "", fmt.Errorf("env backend is allowed only with --credential-profile development")
+	}
+	if normalizeOnboardCredentialBackend(choice) == "" {
+		return "auto", "", fmt.Errorf("unsupported selection %q", choice)
+	}
+	return choice, fmt.Sprintf("Selected backend via interactive prompt: %s.", choice), nil
+}
+
+func onboardApplyCredentialBackendSelection(cfg *onboardCredentialConfig, backend string, allowEnvFallback *bool) (string, error) {
+	if cfg == nil {
+		return "", nil
+	}
+	if backend == "" {
+		backend = "auto"
+	}
+	if allowEnvFallback == nil {
+		f := false
+		allowEnvFallback = &f
+	}
+
+	switch backend {
+	case "auto":
+		return "", nil
+	case "local-vault":
+		if strings.TrimSpace(cfg.VaultAddr) == "" {
+			cfg.VaultAddr = defaultLocalVaultAddr
+		}
+		return "Local Vault profile selected. Use `faramesh credential vault up` to bootstrap and keep secrets in one governed backend.", nil
+	case "vault":
+		if strings.TrimSpace(cfg.VaultAddr) == "" {
+			return "", fmt.Errorf("vault backend selected but no Vault address is configured (--vault-addr, VAULT_ADDR, or FARAMESH_CREDENTIAL_VAULT_ADDR)")
+		}
+		return "Vault backend selected.", nil
+	case "aws":
+		if strings.TrimSpace(cfg.AWSRegion) == "" {
+			return "", fmt.Errorf("aws backend selected but no region is configured (--aws-secrets-region or FARAMESH_CREDENTIAL_AWS_REGION)")
+		}
+		return "AWS Secrets Manager backend selected.", nil
+	case "gcp":
+		if strings.TrimSpace(cfg.GCPProject) == "" {
+			return "", fmt.Errorf("gcp backend selected but no project is configured (--gcp-secrets-project or FARAMESH_CREDENTIAL_GCP_PROJECT)")
+		}
+		return "GCP Secret Manager backend selected.", nil
+	case "azure":
+		if strings.TrimSpace(cfg.AzureVaultURL) == "" {
+			return "", fmt.Errorf("azure backend selected but no vault URL is configured (--azure-vault-url or FARAMESH_CREDENTIAL_AZURE_VAULT_URL)")
+		}
+		return "Azure Key Vault backend selected.", nil
+	case "1password":
+		if strings.TrimSpace(cfg.OnePasswordHost) == "" || strings.TrimSpace(cfg.OnePasswordTok) == "" {
+			return "", fmt.Errorf("1password backend selected but host/token are missing (FARAMESH_CREDENTIAL_1PASSWORD_HOST and FARAMESH_CREDENTIAL_1PASSWORD_TOKEN)")
+		}
+		return "1Password backend selected.", nil
+	case "infisical":
+		if strings.TrimSpace(cfg.InfisicalHost) == "" || strings.TrimSpace(cfg.InfisicalTok) == "" {
+			return "", fmt.Errorf("infisical backend selected but host/token are missing (FARAMESH_CREDENTIAL_INFISICAL_HOST and FARAMESH_CREDENTIAL_INFISICAL_TOKEN)")
+		}
+		return "Infisical backend selected.", nil
+	case "env":
+		*allowEnvFallback = true
+		return "Env fallback selected. Restrict this to development-only runs.", nil
+	default:
+		return "", fmt.Errorf("unsupported credential backend %q", backend)
+	}
+}
+
+func onboardDetectedCredentialBackends(cfg onboardCredentialConfig) []string {
+	backends := make([]string, 0, 6)
+	if strings.TrimSpace(cfg.VaultAddr) != "" {
+		backends = append(backends, "vault")
+	}
+	if strings.TrimSpace(cfg.AWSRegion) != "" {
+		backends = append(backends, "aws_secrets_manager")
+	}
+	if strings.TrimSpace(cfg.GCPProject) != "" {
+		backends = append(backends, "gcp_secret_manager")
+	}
+	if strings.TrimSpace(cfg.AzureVaultURL) != "" {
+		backends = append(backends, "azure_key_vault")
+	}
+	if strings.TrimSpace(cfg.OnePasswordHost) != "" && strings.TrimSpace(cfg.OnePasswordTok) != "" {
+		backends = append(backends, "1password")
+	}
+	if strings.TrimSpace(cfg.InfisicalHost) != "" && strings.TrimSpace(cfg.InfisicalTok) != "" {
+		backends = append(backends, "infisical")
+	}
+	return backends
+}
+
+func onboardAllowEnvCredentialFallback(profile string) bool {
+	defaultAllow := profile == "development"
 	raw := strings.TrimSpace(os.Getenv("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK"))
 	if raw == "" {
-		return true
+		return defaultAllow
 	}
 	parsed, err := strconv.ParseBool(raw)
 	if err != nil {
-		return true
+		return defaultAllow
 	}
 	return parsed
 }
 
-func onboardHasCredentialSequestrationBackend(cfg onboardCredentialConfig) bool {
+func onboardHasCredentialSequestrationBackend(cfg onboardCredentialConfig, allowEnvFallback bool) bool {
 	if onboardHasExternalCredentialSequestrationBackend(cfg) {
 		return true
 	}
-	return onboardAllowEnvCredentialFallback()
+	return allowEnvFallback
 }
 
 func onboardPolicyRequiresIDPProvider(doc *policy.Doc) bool {

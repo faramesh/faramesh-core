@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -81,6 +83,13 @@ func runRunE(_ *cobra.Command, args []string) error {
 	}
 	if len(args) == 0 {
 		return fmt.Errorf("missing command: use faramesh run -- <command> [args...], or faramesh run --json for detection only")
+	}
+
+	if det.Framework == "" {
+		det.Framework = inferFrameworkFromCommand(args)
+	}
+	if det.AgentHarness == "" {
+		det.AgentHarness = inferHarnessFromCommand(args)
 	}
 
 	policyPath := strings.TrimSpace(runPolicy)
@@ -221,6 +230,46 @@ func inferAgentID(det *runtimeenv.DetectedEnvironment, cwd string, childArgs []s
 	return "agent"
 }
 
+func inferFrameworkFromCommand(args []string) string {
+	for i, arg := range args {
+		trimmed := strings.TrimSpace(strings.ToLower(arg))
+		if trimmed == "" {
+			continue
+		}
+
+		if trimmed == "-m" && i+1 < len(args) {
+			module := strings.TrimSpace(strings.ToLower(args[i+1]))
+			switch {
+			case strings.HasPrefix(module, "deepagents"):
+				return "deepagents"
+			case strings.Contains(module, "langgraph"):
+				return "langgraph"
+			case strings.Contains(module, "langchain"):
+				return "langchain"
+			}
+		}
+
+		switch {
+		case strings.Contains(trimmed, "deepagents"):
+			return "deepagents"
+		case strings.Contains(trimmed, "langgraph"):
+			return "langgraph"
+		case strings.Contains(trimmed, "langchain"):
+			return "langchain"
+		}
+	}
+
+	return ""
+}
+
+func inferHarnessFromCommand(args []string) string {
+	framework := inferFrameworkFromCommand(args)
+	if framework == "" {
+		return ""
+	}
+	return framework
+}
+
 func sanitizeAgentID(raw string) string {
 	raw = strings.ToLower(strings.TrimSpace(raw))
 	if raw == "" {
@@ -314,29 +363,42 @@ func applyEnforcementStack(det *runtimeenv.DetectedEnvironment, env []string, cw
 		}
 
 	case "darwin":
-		// macOS: proxy env vars for network interception (no entitlement needed).
-		proxyVars := sandbox.ProxyEnvVars(18443)
-		env = mergeEnv(env, proxyVars)
-		r.proxyEnv = true
-		if os.Geteuid() == 0 {
-			r.proxyEnvMethod = "PF + proxy env vars"
+		// macOS: inject proxy env vars only when a local Faramesh proxy listener is reachable.
+		// This avoids breaking outbound model calls when no proxy adapter is running.
+		if proxyReady(18443) {
+			proxyVars := sandbox.ProxyEnvVars(18443)
+			env = mergeEnv(env, proxyVars)
+			r.proxyEnv = true
+			if os.Geteuid() == 0 {
+				r.proxyEnvMethod = "PF + proxy env vars"
+			} else {
+				r.proxyEnvMethod = "proxy env vars (HTTP_PROXY/HTTPS_PROXY)"
+			}
 		} else {
-			r.proxyEnvMethod = "proxy env vars (HTTP_PROXY/HTTPS_PROXY)"
+			r.proxyEnvMethod = "proxy listener not detected; env injection skipped"
 		}
 
 	case "windows":
-		// Windows: proxy env vars. WinDivert kernel interception with admin.
-		proxyVars := sandbox.ProxyEnvVars(18443)
-		env = mergeEnv(env, proxyVars)
-		r.proxyEnv = true
-		r.proxyEnvMethod = "proxy env vars (WinDivert available with admin)"
+		// Windows: inject proxy env vars only when listener is available.
+		if proxyReady(18443) {
+			proxyVars := sandbox.ProxyEnvVars(18443)
+			env = mergeEnv(env, proxyVars)
+			r.proxyEnv = true
+			r.proxyEnvMethod = "proxy env vars (WinDivert available with admin)"
+		} else {
+			r.proxyEnvMethod = "proxy listener not detected; env injection skipped"
+		}
 
 	default:
-		// Unknown OS — proxy env vars as universal fallback.
-		proxyVars := sandbox.ProxyEnvVars(18443)
-		env = mergeEnv(env, proxyVars)
-		r.proxyEnv = true
-		r.proxyEnvMethod = "proxy env vars"
+		// Unknown OS — use proxy env vars only when listener is available.
+		if proxyReady(18443) {
+			proxyVars := sandbox.ProxyEnvVars(18443)
+			env = mergeEnv(env, proxyVars)
+			r.proxyEnv = true
+			r.proxyEnvMethod = "proxy env vars"
+		} else {
+			r.proxyEnvMethod = "proxy listener not detected; env injection skipped"
+		}
 	}
 
 	// Compute trust level based on what succeeded.
@@ -450,6 +512,8 @@ func printEnforcementReport(det *runtimeenv.DetectedEnvironment, r *enforcementR
 	}
 	if r.proxyEnv {
 		green.Fprintf(os.Stderr, "  ✓ Network interception (%s)\n", r.proxyEnvMethod)
+	} else if r.proxyEnvMethod != "" {
+		yellow.Fprintf(os.Stderr, "  ○ Network interception (%s)\n", r.proxyEnvMethod)
 	}
 
 	fmt.Fprintln(os.Stderr)
@@ -500,6 +564,16 @@ func looksLikePythonCommand(args []string) bool {
 		}
 	}
 	return false
+}
+
+func proxyReady(port int) bool {
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func resolvePythonSDKPath(cwd string) (string, bool) {
