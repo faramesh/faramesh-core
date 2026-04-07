@@ -141,6 +141,23 @@ var credentialHealthCmd = &cobra.Command{
 	},
 }
 
+// ── credential map ──────────────────────────────────────────────────────────
+
+var credentialMapCmd = &cobra.Command{
+	Use:   "map",
+	Short: "Show policy-to-broker routing map",
+	Args:  cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		data, err := credentialSocketRequestWithHTTPFallback("routing_map", map[string]any{}, "GET", "/api/v1/credential/map")
+		if err != nil {
+			return err
+		}
+		printHeader("Credential Broker Routing")
+		printJSON(data)
+		return nil
+	},
+}
+
 // ── credential revoke ───────────────────────────────────────────────────────
 
 var credentialRevokeCmd = &cobra.Command{
@@ -200,6 +217,7 @@ func init() {
 	credentialCmd.AddCommand(credentialInspectCmd)
 	credentialCmd.AddCommand(credentialRotateCmd)
 	credentialCmd.AddCommand(credentialHealthCmd)
+	credentialCmd.AddCommand(credentialMapCmd)
 	credentialCmd.AddCommand(credentialRevokeCmd)
 	credentialCmd.AddCommand(credentialAuditCmd)
 	credentialCmd.AddCommand(credentialVaultCmd)
