@@ -67,4 +67,4 @@ This keeps delegated MCP calls inside governance.
 
 Use power-user spec:
 
-- `../../power-users/frameworks/DEEP_AGENTS_TECHNICAL_GUIDE.md`
+- [DEEP_AGENTS_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/DEEP_AGENTS_TECHNICAL_GUIDE.md)

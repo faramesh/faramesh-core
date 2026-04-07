@@ -4,7 +4,7 @@ This is the full technical specification for Faramesh MCP governance.
 
 For fast setup, use:
 
-- `docs/guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md`
+- [MCP_INTERCEPTION_GOVERNANCE_PLAN.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md)
 
 ## Scope
 

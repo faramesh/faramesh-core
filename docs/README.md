@@ -17,10 +17,10 @@ If you need deep internals, use:
 
 ## Core pages
 
-1. [Repository README](../README.md)
-2. [NPM CLI README](../npm/README.md)
-3. [Node SDK README](../sdk/node/README.md)
-4. [Python SDK README](../sdk/python/README.md)
+1. [Repository README](https://github.com/faramesh/faramesh-core/blob/main/README.md)
+2. [NPM CLI README](https://github.com/faramesh/faramesh-core/blob/main/npm/README.md)
+3. [Node SDK README](https://github.com/faramesh/faramesh-core/blob/main/sdk/node/README.md)
+4. [Python SDK README](https://github.com/faramesh/faramesh-core/blob/main/sdk/python/README.md)
 
 ## Guides
 
@@ -49,4 +49,4 @@ If you need deep internals, use:
 
 ## License
 
-Faramesh Core is licensed under the MIT License. See [LICENSE](../LICENSE).
+Faramesh Core is licensed under the MIT License. See [LICENSE](https://github.com/faramesh/faramesh-core/blob/main/LICENSE).

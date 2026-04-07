@@ -12,15 +12,15 @@ Use these when you need architecture internals, patch surfaces, and production h
 
 ## Technical Framework Specs
 
-1. `LANGCHAIN_TECHNICAL_GUIDE.md`
-2. `LANGGRAPH_TECHNICAL_GUIDE.md`
-3. `DEEP_AGENTS_TECHNICAL_GUIDE.md`
+1. [LANGCHAIN_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/LANGCHAIN_TECHNICAL_GUIDE.md)
+2. [LANGGRAPH_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/LANGGRAPH_TECHNICAL_GUIDE.md)
+3. [DEEP_AGENTS_TECHNICAL_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/frameworks/DEEP_AGENTS_TECHNICAL_GUIDE.md)
 
 ## Pair with
 
-1. `../mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md`
-2. `../FEATURES_TECHNICAL_REFERENCE.md`
+1. [MCP_INTERCEPTION_GOVERNANCE_SPEC.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
+2. [FEATURES_TECHNICAL_REFERENCE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/FEATURES_TECHNICAL_REFERENCE.md)
 
 For simple usage guides:
 
-- `../../guides/frameworks/README.md`
+- [Framework Quick Guides Hub](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/frameworks/README.md)

@@ -4,7 +4,7 @@ This guide is for teams that want to run MCP governance fast in real environment
 
 If you want the full protocol details, edge-case behavior, and hardening internals, use the power-user spec:
 
-- `docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md`
+- [MCP_INTERCEPTION_GOVERNANCE_SPEC.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
 
 ## What This Gives You
 
@@ -119,4 +119,4 @@ Use the advanced spec if you need:
 
 Power-user spec:
 
-- `docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md`
+- [MCP_INTERCEPTION_GOVERNANCE_SPEC.md](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
