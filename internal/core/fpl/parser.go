@@ -15,6 +15,12 @@ type Rule struct {
 	Condition string
 	Notify    string
 	Reason    string
+	Host      string
+	Port      string
+	Method    string
+	Path      string
+	Query     map[string]string
+	Headers   map[string]string
 }
 
 // ── Full Structured FPL AST ────────────────────────────────────────────────
@@ -394,11 +400,90 @@ func (p *parser) parseFlatRule() (*Rule, error) {
 				return nil, err
 			}
 			rule.Reason = v
+		case "host":
+			p.next()
+			v, err := p.consumeFlatRuleClauseValue()
+			if err != nil {
+				return nil, err
+			}
+			rule.Host = strings.TrimSpace(v)
+		case "port":
+			p.next()
+			v, err := p.consumeFlatRuleClauseValue()
+			if err != nil {
+				return nil, err
+			}
+			rule.Port = strings.TrimSpace(v)
+		case "method":
+			p.next()
+			v, err := p.consumeFlatRuleClauseValue()
+			if err != nil {
+				return nil, err
+			}
+			rule.Method = strings.TrimSpace(v)
+		case "path":
+			p.next()
+			v, err := p.consumeFlatRuleClauseValue()
+			if err != nil {
+				return nil, err
+			}
+			rule.Path = strings.TrimSpace(v)
+		case "query":
+			p.next()
+			v, err := p.consumeFlatRuleClauseValue()
+			if err != nil {
+				return nil, err
+			}
+			k, qv, err := parseFlatRuleKeyValue(v)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: query clause: %w", p.peek().line, err)
+			}
+			if rule.Query == nil {
+				rule.Query = make(map[string]string)
+			}
+			rule.Query[k] = qv
+		case "header", "headers":
+			p.next()
+			v, err := p.consumeFlatRuleClauseValue()
+			if err != nil {
+				return nil, err
+			}
+			k, hv, err := parseFlatRuleKeyValue(v)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: header clause: %w", p.peek().line, err)
+			}
+			if rule.Headers == nil {
+				rule.Headers = make(map[string]string)
+			}
+			rule.Headers[k] = hv
 		default:
 			return rule, nil
 		}
 	}
 	return rule, nil
+}
+
+func (p *parser) consumeFlatRuleClauseValue() (string, error) {
+	if p.peek().kind == tkColon {
+		p.next()
+	}
+	return p.stringOrIdent()
+}
+
+func parseFlatRuleKeyValue(raw string) (string, string, error) {
+	parts := strings.SplitN(strings.TrimSpace(raw), "=", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("expected key=value")
+	}
+	key := strings.TrimSpace(parts[0])
+	value := strings.TrimSpace(parts[1])
+	if key == "" {
+		return "", "", fmt.Errorf("empty key")
+	}
+	if value == "" {
+		return "", "", fmt.Errorf("empty value")
+	}
+	return key, value, nil
 }
 
 func (p *parser) consumeUntilKeyword() (string, error) {
@@ -409,7 +494,7 @@ func (p *parser) consumeUntilKeyword() (string, error) {
 		if t.kind == tkEOF || t.kind == tkLBrace || t.kind == tkRBrace {
 			break
 		}
-		if t.kind == tkIdent && (t.val == "notify" || t.val == "reason") {
+		if t.kind == tkIdent && isFlatRuleClauseKeyword(t.val) {
 			break
 		}
 		if t.kind == tkIdent && isEffectKeyword(t.val) && t.line != startLine {
@@ -432,6 +517,15 @@ func (p *parser) consumeUntilKeyword() (string, error) {
 		parts = append(parts, val)
 	}
 	return strings.Join(parts, " "), nil
+}
+
+func isFlatRuleClauseKeyword(v string) bool {
+	switch v {
+	case "notify", "reason", "host", "port", "method", "path", "query", "header", "headers":
+		return true
+	default:
+		return false
+	}
 }
 
 func isTopLevelKeyword(s string) bool {
