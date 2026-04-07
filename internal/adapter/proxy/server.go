@@ -502,10 +502,19 @@ func (s *Server) handleDeferStatus(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"token": token, "status": string(status)})
 }
 
+// maxRateLimiters caps the number of per-IP rate limiters to prevent memory
+// exhaustion from a large number of distinct source IPs.
+const maxRateLimiters = 10000
+
 func (s *Server) allowIP(ip string) bool {
 	s.rlMu.Lock()
 	limiter, ok := s.rl[ip]
 	if !ok {
+		if len(s.rl) >= maxRateLimiters {
+			// Evict all entries to bound memory. This is a simple reset;
+			// legitimate clients will simply get a fresh limiter.
+			s.rl = make(map[string]*rate.Limiter)
+		}
 		limiter = rate.NewLimiter(rate.Limit(30), 60)
 		s.rl[ip] = limiter
 	}

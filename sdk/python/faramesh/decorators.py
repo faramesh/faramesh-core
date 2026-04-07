@@ -56,8 +56,8 @@ def guarded_action(tool: str, operation: str, client: Optional[ExecutionGovernor
     Example:
         ```python
         @guarded_action(tool="shell", operation="run")
-        def run_command(cmd: str) -> str:
-            return subprocess.run(cmd, shell=True, capture_output=True).stdout.decode()
+        def run_command(cmd: list[str]) -> str:
+            return subprocess.run(cmd, capture_output=True, check=True).stdout.decode()
         ```
     """
 

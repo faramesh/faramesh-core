@@ -88,7 +88,12 @@ func NewSender(cfg policy.WebhookConfig) *Sender {
 	}
 	s := &Sender{
 		cfg: cfg,
-		client: &http.Client{Timeout: timeout},
+		client: &http.Client{
+			Timeout: timeout,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 		queue:  make(chan Event, 256),
 		done:   make(chan struct{}),
 	}

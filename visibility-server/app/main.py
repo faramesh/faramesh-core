@@ -76,11 +76,16 @@ RUNTIME = StreamRuntime()
 
 
 class ResolutionBody(BaseModel):
+    token: str
+    reason: str | None = None
+
+
+class DeferResolutionBody(BaseModel):
     reason: str | None = None
 
 
 class ApprovalBody(BaseModel):
-    token: str | None = None
+    token: str
     approve: bool
     reason: str | None = None
 
@@ -267,7 +272,7 @@ def get_action(call_id: str) -> dict[str, Any]:
     return action
 
 
-def _resolve_action_defer_token(call_id: str) -> str:
+def _resolve_action_defer_token(call_id: str, provided_token: str) -> str:
     action = STORE.get_action(call_id)
     if action is None:
         raise HTTPException(status_code=404, detail="action not found")
@@ -275,6 +280,10 @@ def _resolve_action_defer_token(call_id: str) -> str:
     token = str(action.get("defer_token") or "").strip()
     if not token:
         raise HTTPException(status_code=409, detail="action has no defer token")
+
+    cleaned = provided_token.strip()
+    if not cleaned or cleaned != token:
+        raise HTTPException(status_code=403, detail="invalid approval token")
 
     state = str(action.get("state") or "")
     if state != "pending":
@@ -319,9 +328,9 @@ def approve_v1_action(call_id: str, body: ApprovalBody) -> dict[str, Any]:
     if not token:
         raise HTTPException(status_code=409, detail="action has no approval token")
 
-    provided_token = str(body.token or "").strip()
-    if provided_token and provided_token != token:
-        raise HTTPException(status_code=409, detail="approval token mismatch")
+    provided_token = body.token.strip()
+    if not provided_token or provided_token != token:
+        raise HTTPException(status_code=403, detail="invalid approval token")
 
     if str(action.get("status") or "") != "pending_approval":
         raise HTTPException(status_code=409, detail="action is not pending approval")
@@ -338,7 +347,7 @@ def approve_v1_action(call_id: str, body: ApprovalBody) -> dict[str, Any]:
 
 @app.post("/actions/{call_id:path}/approve")
 def approve_action(call_id: str, body: ResolutionBody) -> dict[str, Any]:
-    token = _resolve_action_defer_token(call_id)
+    token = _resolve_action_defer_token(call_id, body.token)
     reason = (body.reason or "approved via visibility server").strip() or "approved via visibility server"
     result = _resolve_defer(token, approved=True, reason=reason)
     return {"ok": True, "result": result, "call_id": call_id}
@@ -346,7 +355,7 @@ def approve_action(call_id: str, body: ResolutionBody) -> dict[str, Any]:
 
 @app.post("/actions/{call_id:path}/deny")
 def deny_action(call_id: str, body: ResolutionBody) -> dict[str, Any]:
-    token = _resolve_action_defer_token(call_id)
+    token = _resolve_action_defer_token(call_id, body.token)
     reason = (body.reason or "denied via visibility server").strip() or "denied via visibility server"
     result = _resolve_defer(token, approved=False, reason=reason)
     return {"ok": True, "result": result, "call_id": call_id}
@@ -359,14 +368,14 @@ def pending_defers() -> dict[str, Any]:
 
 
 @app.post("/defers/{token}/approve")
-def approve_defer(token: str, body: ResolutionBody) -> dict[str, Any]:
+def approve_defer(token: str, body: DeferResolutionBody) -> dict[str, Any]:
     reason = (body.reason or "approved via visibility server").strip() or "approved via visibility server"
     result = _resolve_defer(token, approved=True, reason=reason)
     return {"ok": True, "result": result}
 
 
 @app.post("/defers/{token}/deny")
-def deny_defer(token: str, body: ResolutionBody) -> dict[str, Any]:
+def deny_defer(token: str, body: DeferResolutionBody) -> dict[str, Any]:
     reason = (body.reason or "denied via visibility server").strip() or "denied via visibility server"
     result = _resolve_defer(token, approved=False, reason=reason)
     return {"ok": True, "result": result}
