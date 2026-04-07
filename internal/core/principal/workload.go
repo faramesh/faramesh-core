@@ -36,6 +36,10 @@ func DetectWorkloadProvider() WorkloadProvider {
 	if socketPath := strings.TrimSpace(os.Getenv("FARAMESH_SPIFFE_SOCKET_PATH")); socketPath != "" {
 		return NewSPIFFEProvider(socketPath)
 	}
+	if spiffeID := strings.TrimSpace(os.Getenv("FARAMESH_SPIFFE_ID")); spiffeID != "" {
+		_ = spiffeID
+		return NewSPIFFEProvider("env://spiffe-id")
+	}
 	// Check environment variables in priority order.
 	if os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE") != "" || os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") != "" {
 		return &AWSWorkloadProvider{}

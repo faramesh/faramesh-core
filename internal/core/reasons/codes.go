@@ -180,6 +180,17 @@ const (
 	// Policy source codes
 	PolicyValidationFailed = "POLICY_VALIDATION_FAILED"
 	PolicySourceDegraded   = "POLICY_SOURCE_DEGRADED"
+
+	// Network hardening / inference routing codes
+	NetworkSSRFBlock             = "NETWORK_SSRF_BLOCK"
+	NetworkControlPlanePortBlock = "NETWORK_CONTROL_PLANE_PORT_BLOCK"
+	NetworkIdentityUnresolved    = "NETWORK_IDENTITY_UNRESOLVED"
+	NetworkPolicyNoMatch         = "NETWORK_POLICY_NO_MATCH"
+	NetworkL7Deny                = "NETWORK_L7_DENY"
+	NetworkL7AuditViolation      = "NETWORK_L7_AUDIT_VIOLATION"
+	InferenceRouteNotFound       = "INFERENCE_ROUTE_NOT_FOUND"
+	InferenceAuthInjectionFailed = "INFERENCE_AUTH_INJECTION_FAILED"
+	InferenceModelRewriteApplied = "INFERENCE_MODEL_REWRITE_APPLIED"
 )
 
 var canonical = map[string]struct{}{
@@ -327,6 +338,16 @@ var canonical = map[string]struct{}{
 
 	PolicyValidationFailed: {},
 	PolicySourceDegraded:   {},
+
+	NetworkSSRFBlock:             {},
+	NetworkControlPlanePortBlock: {},
+	NetworkIdentityUnresolved:    {},
+	NetworkPolicyNoMatch:         {},
+	NetworkL7Deny:                {},
+	NetworkL7AuditViolation:      {},
+	InferenceRouteNotFound:       {},
+	InferenceAuthInjectionFailed: {},
+	InferenceModelRewriteApplied: {},
 }
 
 // CanonicalCodes returns all canonical reason codes in deterministic order.
