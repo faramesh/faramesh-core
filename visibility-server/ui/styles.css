@@ -1,0 +1,354 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap");
+
+:root {
+  --bg: #07131f;
+  --panel: rgba(12, 27, 41, 0.76);
+  --panel-border: rgba(130, 170, 200, 0.2);
+  --text: #e8f5ff;
+  --muted: #8fb4cb;
+  --accent: #2dd4bf;
+  --danger: #fb7185;
+  --ok: #34d399;
+  --warning: #fbbf24;
+  --shadow: 0 20px 45px rgba(1, 7, 12, 0.45);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(1200px 800px at -20% 10%, #11314a 0%, transparent 60%),
+    radial-gradient(900px 700px at 120% -10%, #1d2f4d 0%, transparent 62%),
+    linear-gradient(160deg, #03101a 0%, #0a1826 52%, #08131e 100%);
+  color: var(--text);
+  font-family: "Space Grotesk", sans-serif;
+}
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(rgba(143, 180, 203, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(143, 180, 203, 0.04) 1px, transparent 1px);
+  background-size: 34px 34px;
+  opacity: 0.5;
+}
+
+.shell {
+  position: relative;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1.5rem 1rem 2rem;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 1rem;
+}
+
+.kicker {
+  margin: 0;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+}
+
+h1 {
+  margin: 0.2rem 0;
+  font-size: clamp(1.45rem, 2.5vw, 2.25rem);
+}
+
+.subtitle {
+  margin: 0;
+  color: var(--muted);
+  max-width: 64ch;
+}
+
+.health {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  padding: 0.9rem;
+  min-width: 280px;
+  box-shadow: var(--shadow);
+}
+
+.pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1px solid var(--panel-border);
+}
+
+.pill.ok {
+  background: rgba(52, 211, 153, 0.18);
+  border-color: rgba(52, 211, 153, 0.5);
+}
+
+.pill.warn {
+  background: rgba(251, 191, 36, 0.2);
+  border-color: rgba(251, 191, 36, 0.55);
+}
+
+.pill.bad {
+  background: rgba(251, 113, 133, 0.2);
+  border-color: rgba(251, 113, 133, 0.55);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(250px, 320px) 1fr;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.panel {
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 0.9rem;
+  box-shadow: var(--shadow);
+}
+
+.panel.wide {
+  min-width: 0;
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.65rem;
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.count {
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  padding: 0.12rem 0.55rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.list {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.defer-card {
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.08);
+  border-radius: 10px;
+  padding: 0.65rem;
+}
+
+.defer-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.defer-actions {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.btn {
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-weight: 600;
+  font-family: "Space Grotesk", sans-serif;
+  cursor: pointer;
+  background: rgba(143, 180, 203, 0.14);
+  color: var(--text);
+  padding: 0.4rem 0.65rem;
+}
+
+.btn:hover {
+  filter: brightness(1.1);
+}
+
+.btn.approve {
+  border-color: rgba(52, 211, 153, 0.5);
+  background: rgba(52, 211, 153, 0.18);
+}
+
+.btn.deny {
+  border-color: rgba(251, 113, 133, 0.55);
+  background: rgba(251, 113, 133, 0.2);
+}
+
+.btn.ghost {
+  margin-top: 0.45rem;
+  border-color: var(--panel-border);
+  background: rgba(143, 180, 203, 0.08);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+th,
+td {
+  text-align: left;
+  border-bottom: 1px solid rgba(130, 170, 200, 0.2);
+  padding: 0.44rem 0.25rem;
+  font-size: 0.88rem;
+}
+
+th {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+tr[data-call-id] {
+  cursor: pointer;
+}
+
+tr[data-call-id]:hover {
+  background: rgba(45, 212, 191, 0.09);
+}
+
+tr[data-call-id].selected {
+  background: rgba(45, 212, 191, 0.16);
+}
+
+.state {
+  border-radius: 999px;
+  padding: 0.12rem 0.5rem;
+  font-size: 0.74rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border: 1px solid var(--panel-border);
+}
+
+.state.pending {
+  border-color: rgba(251, 191, 36, 0.6);
+  background: rgba(251, 191, 36, 0.2);
+}
+
+.state.approved,
+.state.executing,
+.state.succeeded {
+  border-color: rgba(52, 211, 153, 0.55);
+  background: rgba(52, 211, 153, 0.2);
+}
+
+.state.denied,
+.state.failed {
+  border-color: rgba(251, 113, 133, 0.55);
+  background: rgba(251, 113, 133, 0.2);
+}
+
+.timeline-panel {
+  margin-bottom: 1rem;
+}
+
+.action-detail {
+  border: 1px solid rgba(130, 170, 200, 0.2);
+  background: rgba(5, 14, 22, 0.35);
+  border-radius: 10px;
+  padding: 0.7rem;
+  margin-bottom: 0.7rem;
+}
+
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem 0.9rem;
+  margin-top: 0.55rem;
+}
+
+.detail-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.16rem;
+}
+
+.timeline {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.timeline-item {
+  border-left: 3px solid rgba(130, 170, 200, 0.3);
+  padding: 0.4rem 0.6rem;
+  background: rgba(5, 14, 22, 0.4);
+}
+
+.timeline-head {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.timeline-body {
+  margin-top: 0.25rem;
+  font-size: 0.86rem;
+}
+
+.mono {
+  font-family: "IBM Plex Mono", monospace;
+}
+
+.output {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #daf0ff;
+  white-space: pre-wrap;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+@media (max-width: 960px) {
+  .topbar {
+    flex-direction: column;
+  }
+
+  .health {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .action-grid {
+    grid-template-columns: 1fr;
+  }
+}

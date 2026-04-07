@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script src="/app/config.js"></script>
+  <meta charset="UTF-8" />
+  <title>Faramesh – Agent Action Console</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #f6f5f3;
+      --bg-elevated: #ffffff;
+      --border-subtle: #e1dfdc;
+      --text-main: #1f1f1f;
+      --text-muted: #7a7a7a;
+      --accent: #2563eb;
+      --accent-soft: #e3ecff;
+      --danger: #dc2626;
+      --danger-soft: #fee2e2;
+      --success: #16a34a;
+      --success-soft: #dcfce7;
+      --radius: 10px;
+      --shadow-soft: 0 10px 30px rgba(15, 23, 42, 0.05);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+        "Segoe UI", sans-serif;
+      background: radial-gradient(circle at top left, #fdfcf9 0, #f4f2ee 60%, #ece8e0 100%);
+      color: var(--text-main);
+    }
+
+    .app {
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* Sidebar */
+
+    .sidebar {
+      width: 260px;
+      padding: 20px 18px;
+      border-right: 1px solid var(--border-subtle);
+      background: rgba(255, 255, 255, 0.9);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      align-self: flex-start;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 18px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .brand-logo {
+      width: 26px;
+      height: 26px;
+      border-radius: 7px;
+      background: conic-gradient(from 170deg, #0f172a, #1e3a8a, #4f46e5, #0f172a);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #f9fafb;
+      font-size: 16px;
+      font-weight: 600;
+      box-shadow: 0 8px 20px rgba(31, 41, 55, 0.35);
+    }
+
+    .brand-text {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .brand-text .title {
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .brand-text .subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .sidebar-section {
+      margin-bottom: 18px;
+    }
+
+    .sidebar-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .sidebar-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: #faf8f5;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .pill-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: var(--success);
+    }
+
+    .sidebar-select,
+    .sidebar-input {
+      width: 100%;
+      padding: 7px 9px;
+      border-radius: 7px;
+      border: 1px solid var(--border-subtle);
+      background: #fbfaf8;
+      font-size: 13px;
+      color: var(--text-main);
+    }
+
+    .sidebar-input::placeholder {
+      color: #b0aba4;
+    }
+
+    .sidebar-select:focus,
+    .sidebar-input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.2);
+      background: #ffffff;
+    }
+
+    .sidebar-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.4;
+    }
+
+    /* Main */
+
+    .main {
+      flex: 1;
+      padding: 22px 26px 30px;
+    }
+
+    .main-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+
+    .main-title {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tag {
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      border: 1px solid rgba(37, 99, 235, 0.25);
+    }
+
+    .main-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .btn {
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      background: #f7f3ec;
+      padding: 6px 11px;
+      font-size: 12px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-main);
+    }
+
+    .btn-icon {
+      font-size: 13px;
+    }
+
+    .btn-primary {
+      background: #111827;
+      color: #f9fafb;
+      border-color: #111827;
+    }
+
+    .btn:hover {
+      filter: brightness(0.97);
+    }
+
+    .btn-primary:hover {
+      filter: brightness(1.05);
+    }
+
+    .pill-group {
+      display: flex;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+
+    .pill-group span {
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(148, 163, 184, 0.12);
+      border: 1px solid rgba(148, 163, 184, 0.35);
+    }
+
+    /* Layout: table + detail */
+
+    .content-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .card {
+      background: var(--bg-elevated);
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      box-shadow: var(--shadow-soft);
+      padding: 12px 12px 8px;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .card-subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .chip-count {
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+      background: #fbfaf7;
+    }
+
+    .actions-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 4px;
+      font-size: 12px;
+    }
+
+    .actions-table thead {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+    }
+
+    .actions-table th,
+    .actions-table td {
+      padding: 6px 6px;
+      text-align: left;
+    }
+
+    .actions-table tbody tr {
+      cursor: pointer;
+    }
+
+    .actions-table tbody tr:hover {
+      background: #f5f2ec;
+    }
+
+    .actions-table tbody tr.selected {
+      background: #e8f0ff;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 11px;
+      align-items: center;
+      gap: 4px;
+      border: 1px solid transparent;
+    }
+
+    .status-pill.pending {
+      background: #f3f4ff;
+      border-color: #c7d2fe;
+      color: #4338ca;
+    }
+
+    .status-pill.allowed {
+      background: var(--success-soft);
+      border-color: #4ade80;
+      color: var(--success);
+    }
+
+    .status-pill.denied {
+      background: var(--danger-soft);
+      border-color: #fecaca;
+      color: var(--danger);
+    }
+
+    .status-pill.approval {
+      background: #fef3c7;
+      border-color: #facc15;
+      color: #92400e;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: currentColor;
+    }
+
+    .risk-pill {
+      display: inline-flex;
+      padding: 3px 6px;
+      border-radius: 999px;
+      font-size: 11px;
+      border: 1px solid rgba(148, 163, 184, 0.5);
+      color: var(--text-muted);
+    }
+
+    .risk-pill.high {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: #b91c1c;
+    }
+
+    .risk-pill.medium {
+      background: #fffbeb;
+      border-color: #facc15;
+      color: #92400e;
+    }
+
+    .risk-pill.low {
+      background: #ecfdf3;
+      border-color: #bbf7d0;
+      color: #166534;
+    }
+
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+
+    .detail-title {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .detail-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+
+    .detail-section {
+      margin-bottom: 8px;
+    }
+
+    .detail-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .detail-code {
+      font-family: ui-monospace, Menlo, SFMono-Regular, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+      font-size: 11px;
+      background: #f4f3f0;
+      border-radius: 7px;
+      padding: 8px 9px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      max-height: 180px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .detail-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .btn-approve {
+      background: var(--success);
+      border-color: var(--success);
+      color: #f9fafb;
+    }
+
+    .btn-deny {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: #f9fafb;
+    }
+
+    .badge-approval-token {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px dashed rgba(148, 163, 184, 0.8);
+      color: var(--text-muted);
+      background: #f9fafb;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      padding: 9px 12px;
+      border-radius: 10px;
+      font-size: 12px;
+      background: #111827;
+      color: #f9fafb;
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.35);
+      display: none;
+      align-items: center;
+      gap: 8px;
+      z-index: 50;
+    }
+
+    .toast.show {
+      display: inline-flex;
+      animation: fadein 0.15s ease-out;
+    }
+
+    .toast.error {
+      background: #b91c1c;
+    }
+
+    @keyframes fadein {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @media (max-width: 900px) {
+      .app {
+        flex-direction: column;
+      }
+      .sidebar {
+        width: 100%;
+        position: static;
+        border-right: none;
+        border-bottom: 1px solid var(--border-subtle);
+      }
+      .content-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-logo">F</div>
+        <div class="brand-text">
+          <div class="title">Faramesh</div>
+          <div class="subtitle">Agent control surface</div>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-label">Cluster</div>
+        <div class="sidebar-pill">
+          <span class="pill-dot"></span>
+          <span id="clusterUrl">Local dev</span>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-label">Filter by status</div>
+        <select id="statusFilter" class="sidebar-select">
+          <option value="all">All actions</option>
+          <option value="pending_approval">Pending approval</option>
+          <option value="pending_decision">Pending decision</option>
+          <option value="allowed">Allowed</option>
+          <option value="approved">Approved</option>
+          <option value="denied">Denied</option>
+          <option value="executing">Executing</option>
+          <option value="succeeded">Succeeded</option>
+          <option value="failed">Failed</option>
+          <option value="timeout">Timeout</option>
+        </select>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-label">Filter by agent</div>
+        <input
+          id="agentFilter"
+          class="sidebar-input"
+          placeholder="Agent ID..."
+        />
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-label">Filter by tool</div>
+        <input
+          id="toolFilter"
+          class="sidebar-input"
+          placeholder="Tool name..."
+        />
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-label">Search</div>
+        <input
+          id="searchInput"
+          class="sidebar-input"
+          placeholder="Filter by tool, op, agent…"
+        />
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-label">Limit</div>
+        <select id="limitSelect" class="sidebar-select">
+          <option value="20">Last 20</option>
+          <option value="50" selected>Last 50</option>
+          <option value="100">Last 100</option>
+        </select>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-label">Notes</div>
+        <div class="sidebar-meta">
+          • Green = auto-allowed<br />
+          • Amber = requires human<br />
+          • Red = blocked at gate<br /><br />
+          Only actions with
+          <strong>pending approval</strong> will show approve / deny buttons.
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-label">Runtime & vault</div>
+        <div id="runtimeInfo" class="sidebar-meta" style="white-space: pre-line;">Loading runtime...</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="main-header">
+        <div>
+          <div class="main-title">
+            Agent actions
+            <span class="tag">governor v0</span>
+          </div>
+          <div class="pill-group">
+            <span id="summaryCount">0 actions</span>
+            <span id="summaryPending">0 pending approvals</span>
+          </div>
+        </div>
+        <div class="main-actions">
+          <button id="refreshBtn" class="btn">
+            <span class="btn-icon">⟳</span> Refresh
+          </button>
+          <button id="autoRefreshBtn" class="btn">
+            <span class="btn-icon">⏱</span> Auto-refresh: off
+          </button>
+          <button id="openDocsBtn" class="btn btn-primary">
+            <span class="btn-icon">↗</span> Open Swagger
+          </button>
+        </div>
+      </header>
+
+      <div class="content-grid">
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">
+                Inbox
+              </div>
+              <div class="card-subtitle">Latest agent actions intercepted by Faramesh</div>
+            </div>
+            <span id="tableCount" class="chip-count">0</span>
+          </div>
+
+          <table class="actions-table">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Tool / Operation</th>
+                <th>Agent</th>
+                <th>Risk</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="actionsTableBody">
+              <!-- rows injected via JS -->
+            </tbody>
+          </table>
+        </section>
+
+        <section class="card">
+          <div class="detail-header">
+            <div>
+              <div class="detail-title">
+                Action details
+              </div>
+              <div id="detailMeta" class="detail-meta">
+                Select an action on the left to inspect and approve / deny.
+              </div>
+            </div>
+            <div id="detailStatusBadge"></div>
+          </div>
+
+          <div id="detailContent" style="display: none;">
+            <div class="detail-section">
+              <div class="detail-label">Tool & operation</div>
+              <div id="detailTool"></div>
+            </div>
+
+            <div class="detail-section">
+              <div class="detail-label">Agent</div>
+              <div id="detailAgent"></div>
+            </div>
+
+            <div class="detail-section">
+              <div class="detail-label">Risk & decision</div>
+              <div id="detailRiskDecision"></div>
+            </div>
+
+            <div class="detail-section">
+              <div class="detail-label">Params</div>
+              <pre id="detailParams" class="detail-code"></pre>
+            </div>
+
+            <div class="detail-section">
+              <div class="detail-label">Context</div>
+              <pre id="detailContext" class="detail-code"></pre>
+            </div>
+
+            <div class="detail-section">
+              <div class="detail-label">Approval token</div>
+              <div id="detailApproval">
+                <!-- filled via JS -->
+              </div>
+            </div>
+
+            <div id="detailActions" class="detail-actions">
+              <!-- approve / deny buttons -->
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div id="toast" class="toast">
+    <span id="toastIcon">✔</span>
+    <span id="toastText">Saved</span>
+  </div>
+
+  <script>
+    const BASE_URL = window.FARAMESH_CONFIG?.API_BASE || window.location.origin;
+
+
+    let actions = [];
+    let filtered = [];
+    let selectedId = null;
+    let autoRefreshTimer = null;
+    let autoRefreshEnabled = false;
+
+    const el = (id) => document.getElementById(id);
+
+    async function fetchRuntime() {
+      try {
+        const res = await fetch(`${BASE_URL}/v1/runtime`);
+        if (!res.ok) throw new Error("Failed to fetch runtime");
+        const runtime = await res.json();
+
+        const whoami = runtime.identity?.whoami || {};
+        const trust =
+          runtime.identity?.trust?.trust_level || whoami.trust_level || "unknown";
+        const spiffe = whoami.spiffe_id || "-";
+        const workload = whoami.workload || "-";
+        const vaultHealthy = runtime.vault?.health?.healthy === true;
+        const credentialCount = Number(runtime.vault?.count || 0);
+        const policyVersion = runtime.daemon_status?.policy_version || "-";
+
+        el("runtimeInfo").textContent = [
+          `Trust: ${trust}`,
+          `SPIFFE: ${spiffe}`,
+          `Workload: ${workload}`,
+          `Vault: ${vaultHealthy ? "healthy" : "degraded"} (${credentialCount} creds)`,
+          `Policy: ${policyVersion}`,
+        ].join("\n");
+      } catch (err) {
+        console.error(err);
+        el("runtimeInfo").textContent = "Runtime unavailable";
+      }
+    }
+
+    function showToast(message, isError = false) {
+      const toast = el("toast");
+      const icon = el("toastIcon");
+      const text = el("toastText");
+      toast.className = "toast show" + (isError ? " error" : "");
+      icon.textContent = isError ? "⚠" : "✔";
+      text.textContent = message;
+      setTimeout(() => {
+        toast.className = "toast";
+      }, 2000);
+    }
+
+    function statusPill(status) {
+      const span = document.createElement("span");
+      span.className = "status-pill";
+
+      const dot = document.createElement("span");
+      dot.className = "status-dot";
+      span.appendChild(dot);
+
+      const label = document.createElement("span");
+
+      const s = status || "unknown";
+      if (s === "pending_approval") {
+        span.classList.add("approval");
+        label.textContent = "Pending approval";
+      } else if (s === "allowed" || s === "approved") {
+        span.classList.add("allowed");
+        label.textContent = "Allowed";
+      } else if (s === "denied") {
+        span.classList.add("denied");
+        label.textContent = "Denied";
+      } else if (s === "executing") {
+        span.classList.add("pending");
+        label.textContent = "Executing";
+      } else if (s === "succeeded") {
+        span.classList.add("allowed");
+        label.textContent = "Succeeded";
+      } else if (s === "failed") {
+        span.classList.add("denied");
+        label.textContent = "Failed";
+      } else if (s === "timeout") {
+        span.classList.add("denied");
+        span.style.backgroundColor = "#f97316";
+        label.textContent = "Timeout";
+      } else if (s === "pending_decision") {
+        span.classList.add("pending");
+        label.textContent = "Pending decision";
+      } else {
+        span.classList.add("pending");
+        label.textContent = s;
+      }
+
+      span.appendChild(label);
+      return span;
+    }
+
+    function riskClass(risk) {
+      if (!risk) return "";
+      const r = risk.toLowerCase();
+      if (r === "high") return "high";
+      if (r === "medium" || r === "med") return "medium";
+      return "low";
+    }
+
+    function renderTable() {
+      const tbody = el("actionsTableBody");
+      tbody.innerHTML = "";
+
+      filtered.forEach((a) => {
+        const tr = document.createElement("tr");
+        tr.dataset.id = a.id;
+        if (a.id === selectedId) tr.classList.add("selected");
+
+        const statusTd = document.createElement("td");
+        statusTd.appendChild(statusPill(a.status));
+        tr.appendChild(statusTd);
+
+        const toolTd = document.createElement("td");
+        const toolSpan = document.createElement("div");
+        toolSpan.textContent = `${a.tool || "unknown"} · ${a.operation || "-"}`;
+        toolSpan.style.fontWeight = "500";
+        toolSpan.style.fontSize = "12px";
+
+        const reasonSpan = document.createElement("div");
+        reasonSpan.textContent = a.reason || "";
+        reasonSpan.style.fontSize = "11px";
+        reasonSpan.style.color = "#6b7280";
+
+        toolTd.appendChild(toolSpan);
+        if (a.reason) toolTd.appendChild(reasonSpan);
+        tr.appendChild(toolTd);
+
+        const agentTd = document.createElement("td");
+        agentTd.textContent = a.agent_id || "-";
+        tr.appendChild(agentTd);
+
+        const riskTd = document.createElement("td");
+        const riskSpan = document.createElement("span");
+        riskSpan.className = "risk-pill " + riskClass(a.risk_level || "");
+        riskSpan.textContent = a.risk_level || "unknown";
+        riskTd.appendChild(riskSpan);
+        tr.appendChild(riskTd);
+
+        const createdTd = document.createElement("td");
+        createdTd.textContent = a.created_at
+          ? new Date(a.created_at).toLocaleTimeString()
+          : "-";
+        tr.appendChild(createdTd);
+
+        tr.addEventListener("click", () => {
+          selectedId = a.id;
+          renderTable();
+          renderDetail(a);
+        });
+
+        tbody.appendChild(tr);
+      });
+
+      el("tableCount").textContent = filtered.length + " shown";
+      el("summaryCount").textContent = actions.length + " actions";
+      const pendingCount = actions.filter(
+        (a) => a.status === "pending_approval"
+      ).length;
+      el("summaryPending").textContent = pendingCount + " pending approvals";
+    }
+
+    function renderDetail(action) {
+      if (!action) {
+        el("detailContent").style.display = "none";
+        el("detailMeta").textContent =
+          "Select an action on the left to inspect and approve / deny.";
+        el("detailStatusBadge").innerHTML = "";
+        return;
+      }
+
+      el("detailContent").style.display = "block";
+      el("detailMeta").textContent = `Action ${action.id.slice(
+        0,
+        8
+      )} · ${action.status}`;
+
+      const badge = statusPill(action.status);
+      el("detailStatusBadge").innerHTML = "";
+      el("detailStatusBadge").appendChild(badge);
+
+      el("detailTool").textContent = `${action.tool || "unknown"} · ${
+        action.operation || "-"
+      }`;
+      el("detailAgent").textContent = action.agent_id || "-";
+
+      const riskSpan = document.createElement("span");
+      riskSpan.className = "risk-pill " + riskClass(action.risk_level || "");
+      riskSpan.textContent = action.risk_level || "unknown";
+
+      const decisionSpan = document.createElement("span");
+      decisionSpan.style.marginLeft = "6px";
+      decisionSpan.style.fontSize = "11px";
+      decisionSpan.style.color = "#6b7280";
+      decisionSpan.textContent = action.decision
+        ? `decision: ${action.decision}`
+        : "no decision recorded";
+
+      const rd = el("detailRiskDecision");
+      rd.innerHTML = "";
+      rd.appendChild(riskSpan);
+      rd.appendChild(decisionSpan);
+
+      el("detailParams").textContent = JSON.stringify(
+        action.params || {},
+        null,
+        2
+      );
+      el("detailContext").textContent = JSON.stringify(
+        action.context || {},
+        null,
+        2
+      );
+
+      const approvalDiv = el("detailApproval");
+      approvalDiv.innerHTML = "";
+      if (action.approval_token) {
+        const badge = document.createElement("span");
+        badge.className = "badge-approval-token";
+        badge.textContent = action.approval_token;
+        approvalDiv.appendChild(badge);
+      } else {
+        approvalDiv.textContent =
+          action.status === "pending_approval"
+            ? "Awaiting token issuance."
+            : "No approval token (auto decision or already resolved).";
+      }
+
+      const actionsDiv = el("detailActions");
+      actionsDiv.innerHTML = "";
+      if (action.status === "pending_approval" && action.approval_token) {
+        const approveBtn = document.createElement("button");
+        approveBtn.className = "btn btn-approve";
+        approveBtn.textContent = "Approve · allow";
+        approveBtn.onclick = () => performApproval(action, true);
+
+        const denyBtn = document.createElement("button");
+        denyBtn.className = "btn btn-deny";
+        denyBtn.textContent = "Deny";
+        denyBtn.onclick = () => performApproval(action, false);
+
+        actionsDiv.appendChild(approveBtn);
+        actionsDiv.appendChild(denyBtn);
+      } else {
+        const span = document.createElement("span");
+        span.style.fontSize = "11px";
+        span.style.color = "#6b7280";
+        span.textContent = "No manual action available for this status.";
+        actionsDiv.appendChild(span);
+      }
+    }
+
+    async function fetchActions() {
+      const limit = parseInt(el("limitSelect").value || "50", 10);
+      try {
+        const res = await fetch(
+          `${BASE_URL}/v1/actions?limit=${encodeURIComponent(limit)}`
+        );
+        if (!res.ok) throw new Error("Failed to fetch actions");
+        actions = await res.json();
+        applyFilters();
+        fetchRuntime();
+      } catch (err) {
+        console.error(err);
+        showToast("Failed to load actions", true);
+      }
+    }
+
+    function applyFilters() {
+      const statusFilter = el("statusFilter").value;
+      const agentFilter = el("agentFilter").value.toLowerCase().trim();
+      const toolFilter = el("toolFilter").value.toLowerCase().trim();
+      const query = el("searchInput").value.toLowerCase().trim();
+
+      filtered = actions.filter((a) => {
+        if (statusFilter !== "all" && a.status !== statusFilter) return false;
+        if (agentFilter && !(a.agent_id || "").toLowerCase().includes(agentFilter)) return false;
+        if (toolFilter && !(a.tool || "").toLowerCase().includes(toolFilter)) return false;
+        if (!query) return true;
+
+        const haystack = [
+          a.tool || "",
+          a.operation || "",
+          a.agent_id || "",
+          a.reason || "",
+          a.risk_level || "",
+        ]
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(query);
+      });
+
+      renderTable();
+
+      if (selectedId) {
+        const current = actions.find((a) => a.id === selectedId);
+        renderDetail(current || null);
+      } else {
+        renderDetail(null);
+      }
+    }
+
+    async function performApproval(action, approve) {
+      try {
+        const body = {
+          token: action.approval_token,
+          approve: approve,
+        };
+        const res = await fetch(
+          `${BASE_URL}/v1/actions/${encodeURIComponent(action.id)}/approval`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }
+        );
+        if (!res.ok) {
+          const t = await res.text();
+          throw new Error(t || "Approval failed");
+        }
+        const updated = await res.json();
+        showToast(approve ? "Action approved" : "Action denied");
+
+        const idx = actions.findIndex((a) => a.id === action.id);
+        if (idx !== -1) actions[idx] = updated;
+        selectedId = updated.id;
+        applyFilters();
+      } catch (err) {
+        console.error(err);
+        showToast("Approval error", true);
+      }
+    }
+
+    function toggleAutoRefresh() {
+      autoRefreshEnabled = !autoRefreshEnabled;
+      const btn = el("autoRefreshBtn");
+      if (autoRefreshEnabled) {
+        btn.textContent = "⏱ Auto-refresh: on (5s)";
+        autoRefreshTimer = setInterval(fetchActions, 5000);
+      } else {
+        btn.textContent = "⏱ Auto-refresh: off";
+        if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+      }
+    }
+
+    // Hook up events
+    el("statusFilter").addEventListener("change", applyFilters);
+    el("agentFilter").addEventListener("input", applyFilters);
+    el("toolFilter").addEventListener("input", applyFilters);
+    el("limitSelect").addEventListener("change", fetchActions);
+    el("searchInput").addEventListener("input", () => {
+      applyFilters();
+    });
+    el("refreshBtn").addEventListener("click", fetchActions);
+    el("autoRefreshBtn").addEventListener("click", toggleAutoRefresh);
+    el("openDocsBtn").addEventListener("click", () => {
+      window.open(`${BASE_URL}/docs`, "_blank");
+    });
+
+    // Cleanup on page unload
+    window.addEventListener("beforeunload", () => {
+      if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+    });
+
+    // Initial load
+    el("clusterUrl").textContent = `Local dev · ${BASE_URL}`;
+    fetchActions();
+    fetchRuntime();
+  </script>
+</body>
+</html>
