@@ -63,7 +63,6 @@ tamper-evident decision evidence for audit and compliance.
 - [Policy Packs](#policy-packs)
 - [Corpus Contracts and CI Gates](#corpus-contracts-and-ci-gates)
 - [Repository Map](#repository-map)
-- [Documentation Hub](#documentation-hub)
 - [CLI Reference](#cli-reference)
 - [Architecture](#architecture)
 - [SDKs](#sdks)
@@ -93,6 +92,8 @@ brew install faramesh/tap/faramesh
 
 # npm package
 npx @faramesh/cli@latest setup flow
+
+# Released from GitHub Actions via npm trusted publishing (OIDC); no long-lived npm publish token is needed.
 
 # Go toolchain
 go install github.com/faramesh/faramesh-core/cmd/faramesh@latest
@@ -505,57 +506,6 @@ faramesh-core/
 ├── packs/                # Policy packs
 └── docs/                 # Product and architecture documentation
 ```
-
-## Documentation Hub
-
-Start here if you want to move fast (quick-user path):
-
-- [Guides Index (Quick Usage)](docs/guides/README.md)
-- [Simple Docs Start Here](docs/simple/00_START_HERE.md)
-- [All Features Quick Guide](docs/guides/FEATURES_QUICK_GUIDE.md)
-- [Framework Quick Guides (LangChain / LangGraph / Deep Agents)](docs/guides/frameworks/README.md)
-
-Advanced path (deep technical docs):
-
-- [Power-User Docs Index](docs/power-users/README.md)
-- [All Features Power-User Technical Reference](docs/power-users/FEATURES_TECHNICAL_REFERENCE.md)
-- [Framework Power-User Technical Guides](docs/power-users/frameworks/README.md)
-- [MCP Power-User Spec (Full Technical Details)](docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
-
-More docs and references:
-
-- [Docs Index](docs/README.md)
-- [30-Second Real Agent Guide](docs/guides/REAL_AGENT_TEST_GUIDE.md)
-- [Network Hardening Canary Runbook](docs/guides/NETWORK_HARDENING_CANARY_RUNBOOK.md)
-- [Network Hardening Progressive Enforce Runbook](docs/guides/NETWORK_HARDENING_PROGRESSIVE_ENFORCE_RUNBOOK.md)
-- [Chain Exfil Hardening Playbook](docs/guides/CHAIN_EXFIL_HARDENING_PLAYBOOK.md)
-- [FPL Docs in Repo](docs/fpl/README.md)
-- [Deployment References](deploy/README.md)
-- [FPL Language Repo](https://github.com/faramesh/fpl-lang)
-
-## MCP Documentation Outline
-
-Use this map to choose the right MCP docs path.
-
-### Fast Path (Most Teams)
-
-- [MCP Quick Guide](docs/guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md)
-- Covers:
-  - how to run `faramesh mcp wrap -- <server>`
-  - how to run MCP HTTP gateway with `faramesh serve --mcp-proxy-port --mcp-target`
-  - production command example with key hardening flags
-  - fast troubleshooting and validation commands
-
-### Power-User Path (Advanced Operators)
-
-- [MCP Power-User Spec](docs/power-users/mcp/MCP_INTERCEPTION_GOVERNANCE_SPEC.md)
-- Covers:
-  - transport and JSON-RPC behavior details
-  - edge auth mode behavior (`off|bearer|mtls|bearer_or_mtls`)
-  - strict `MCP-Protocol-Version` enforcement rules
-  - session TTL/idle lifecycle behavior
-  - SSE replay (`Last-Event-ID`) cache and boundaries
-  - implementation and test breakdown by file
 
 ## CLI Reference
 
