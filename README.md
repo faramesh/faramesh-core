@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>Pre-execution governance engine for AI agents.</strong><br />
-  One binary. One command. Every framework.
+  One binary. Real governance workflow. Every framework.
 </p>
 
 <p align="center">
@@ -37,7 +37,7 @@ tamper-evident decision evidence for audit and compliance.
 
 <p align="center">
   <a href="#install"><img src="https://img.shields.io/badge/Install-Start%20Here-111111?style=flat-square" alt="Install" /></a>
-  <a href="#quick-start"><img src="https://img.shields.io/badge/Quick%20Start-One%20Command-111111?style=flat-square" alt="Quick Start" /></a>
+  <a href="#quick-start"><img src="https://img.shields.io/badge/Quick%20Start-Real%20Usage%20Flow-111111?style=flat-square" alt="Quick Start" /></a>
   <a href="#fpl--faramesh-policy-language"><img src="https://img.shields.io/badge/FPL-Policy%20Language-111111?style=flat-square" alt="FPL" /></a>
   <a href="#supported-frameworks"><img src="https://img.shields.io/badge/Frameworks-13%20Auto--Patched-111111?style=flat-square" alt="Frameworks" /></a>
   <a href="#architecture"><img src="https://img.shields.io/badge/Architecture-Overview-111111?style=flat-square" alt="Architecture" /></a>
@@ -525,20 +525,6 @@ More docs and references:
 - [FPL Docs in Repo](docs/fpl/README.md)
 - [Deployment References](deploy/README.md)
 - [FPL Language Repo](https://github.com/faramesh/fpl-lang)
-
-## All-Features Documentation Outline
-
-Every major Faramesh feature has two documentation tracks:
-
-- Quick track (simple language, fast usage): [All Features Quick Guide](docs/guides/FEATURES_QUICK_GUIDE.md)
-- Power-user track (full technical breakdown): [All Features Power-User Technical Reference](docs/power-users/FEATURES_TECHNICAL_REFERENCE.md)
-
-Dedicated framework tracks:
-
-- Quick framework guides: [docs/guides/frameworks/README.md](docs/guides/frameworks/README.md)
-- Power-user framework specs: [docs/power-users/frameworks/README.md](docs/power-users/frameworks/README.md)
-
-When a new feature is added, both tracks should be updated.
 
 ## MCP Documentation Outline
 
