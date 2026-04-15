@@ -7,7 +7,7 @@ This runbook gives you a **right-now, reproducible** way to test governance agai
 Use the minimal-interaction wizard:
 
 ```bash
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd /path/to/faramesh-core
 make govern-wizard
 ```
 
@@ -35,7 +35,7 @@ This validates a **specific end-to-end integration path**. It does **not** by it
 Run from `faramesh-core`.
 
 ```bash
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd /path/to/faramesh-core
 ```
 
 Required tools:
@@ -51,7 +51,7 @@ command -v vault
 This is the quickest verified path.
 
 ```bash
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd /path/to/faramesh-core
 export FARAMESH_LANGCHAIN_REAL_IDP_PROVIDER=default
 make langchain-real
 ```
@@ -65,7 +65,7 @@ langchain real-stack governance passed
 ## Path B: Run The Same Scenario In FPL Mode
 
 ```bash
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd /path/to/faramesh-core
 make langchain-real-fpl
 ```
 
@@ -86,7 +86,7 @@ Default paths from the real-stack harness:
 Quick checks:
 
 ```bash
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd /path/to/faramesh-core
 
 tail -n 200 .tmp/langchain-real/agent_output.log
 tail -n 200 .tmp/langchain-real/daemon.log
@@ -95,7 +95,7 @@ tail -n 200 .tmp/langchain-real/daemon.log
 Query DPR evidence:
 
 ```bash
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd /path/to/faramesh-core
 python3 - <<'PY'
 import sqlite3
 
@@ -122,7 +122,7 @@ PY
 Leak sentinel check (should return no matches):
 
 ```bash
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd /path/to/faramesh-core
 SECRET_SENTINEL="vault-real-credential"
 rg -a -n --fixed-strings "$SECRET_SENTINEL" \
   .tmp/langchain-real/agent_output.log \
@@ -137,7 +137,7 @@ Use this when you want to run your own Python agent file now.
 ### 1) Build + prep strict artifacts
 
 ```bash
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd /path/to/faramesh-core
 
 RUN_DIR="$PWD/.tmp/real-agent-manual"
 BIN="$RUN_DIR/faramesh"
@@ -158,7 +158,7 @@ go build -o "$BIN" ./cmd/faramesh
 ### 2) Start daemon (strict preflight)
 
 ```bash
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd /path/to/faramesh-core
 
 RUN_DIR="$PWD/.tmp/real-agent-manual"
 BIN="$RUN_DIR/faramesh"
@@ -190,7 +190,7 @@ Open a second terminal for the agent run.
 ### 3) Verify daemon is reachable
 
 ```bash
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd /path/to/faramesh-core
 RUN_DIR="$PWD/.tmp/real-agent-manual"
 BIN="$RUN_DIR/faramesh"
 SOCKET="$RUN_DIR/faramesh.sock"
@@ -202,7 +202,7 @@ SOCKET="$RUN_DIR/faramesh.sock"
 ### 4) Run your real agent under Faramesh governance
 
 ```bash
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd /path/to/faramesh-core
 RUN_DIR="$PWD/.tmp/real-agent-manual"
 BIN="$RUN_DIR/faramesh"
 SOCKET="$RUN_DIR/faramesh.sock"
