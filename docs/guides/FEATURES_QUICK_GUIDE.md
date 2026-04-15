@@ -20,6 +20,24 @@ What this gives you:
 2. You can see live allow/block/defer decisions.
 3. You know your policy file is valid before rollout.
 
+## Observe-first rollout (recommended)
+
+```bash
+faramesh discover --source ./
+faramesh attach --agent-id my-agent --cmd "python agent.py"
+faramesh coverage --agent-id my-agent
+faramesh gaps --agent-id my-agent
+faramesh suggest --agent-id my-agent
+```
+
+When using policy packs, promote safely:
+
+```bash
+faramesh pack status faramesh/<pack>
+faramesh pack shadow faramesh/<pack>
+faramesh pack enforce faramesh/<pack>
+```
+
 ## How to use this page
 
 Use the table below like a menu:
