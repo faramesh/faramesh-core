@@ -42,6 +42,7 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/callbacks"
 	"github.com/faramesh/faramesh-core/internal/core/credential"
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
+	deferbackends "github.com/faramesh/faramesh-core/internal/core/defer/backends"
 	"github.com/faramesh/faramesh-core/internal/core/degraded"
 	"github.com/faramesh/faramesh-core/internal/core/dpr"
 	"github.com/faramesh/faramesh-core/internal/core/jobs"
@@ -52,6 +53,8 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/principal"
 	principalidp "github.com/faramesh/faramesh-core/internal/core/principal/idp"
 	"github.com/faramesh/faramesh-core/internal/core/session"
+	"github.com/faramesh/faramesh-core/internal/core/standing"
+	"github.com/faramesh/faramesh-core/internal/core/toolinventory"
 	"github.com/faramesh/faramesh-core/internal/core/webhook"
 	"github.com/faramesh/faramesh-core/internal/reprobuild"
 	"github.com/faramesh/faramesh-core/internal/sbom"
@@ -104,9 +107,22 @@ type Config struct {
 	MCPSSEReplayEnabled         bool
 	MCPSSEReplayMaxEvents       int
 	MCPSSEReplayMaxAge          time.Duration
+	OTLPEnabled                 bool
+	OTLPEndpoint                string
+	OTLPProtocol                string
+	OTLPInsecure                bool
+	OTLPServiceName             string
+	OTLPServiceVersion          string
+	OTLPTracesEnabled           bool
+	OTLPMetricsEnabled          bool
+	OTLPLogsEnabled             bool
 	MetricsPort                 int
 	DPRDSN                      string
 	RedisURL                    string
+	DeferBackend                string
+	DeferRedisPrefix            string
+	RuntimeMode                 core.RuntimeMode
+	RequireGovernanceBootstrap  bool
 	DPRHMACKey                  string
 	TLSCertFile                 string
 	TLSKeyFile                  string
@@ -114,6 +130,9 @@ type Config struct {
 	TLSAuto                     bool
 	PagerDutyRoutingKey         string
 	PolicyAdminToken            string
+	// StandingAdminToken authenticates standing_grant_* SDK messages. If empty,
+	// serve resolves it from FARAMESH_STANDING_ADMIN_TOKEN or falls back to PolicyAdminToken.
+	StandingAdminToken string
 	EnableEBPF                  bool
 	EBPFObjectPath              string
 	EBPFAttachTracepoints       bool
@@ -155,6 +174,7 @@ type Daemon struct {
 	wal                  dpr.Writer
 	store                dpr.StoreBackend
 	dprQueue             jobs.DPRQueue
+	toolInventory        *toolinventory.Store
 	syncer               *cloud.Syncer
 	proxy                *proxy.Server
 	grpc                 *gatewaydaemon.Server
@@ -162,6 +182,7 @@ type Daemon struct {
 	mcpGateway           *mcp.HTTPGateway
 	metricsSrv           *http.Server
 	sessBackend          session.Backend
+	deferBackend         deferbackends.Backend
 	fleetRedis           *redis.Client
 	fleetInstanceID      string
 	fleetPolicySubCancel context.CancelFunc
@@ -200,8 +221,27 @@ func New(cfg Config) (*Daemon, error) {
 		cfg.SocketPath = sdk.SocketPath
 	}
 	cfg.NetworkHardeningMode = strings.ToLower(strings.TrimSpace(cfg.NetworkHardeningMode))
+	cfg.DeferBackend = strings.ToLower(strings.TrimSpace(cfg.DeferBackend))
+	cfg.RuntimeMode = core.RuntimeMode(strings.ToLower(strings.TrimSpace(string(cfg.RuntimeMode))))
 	if cfg.NetworkHardeningMode == "" {
 		cfg.NetworkHardeningMode = string(proxy.HardeningModeOff)
+	}
+	if cfg.DeferBackend == "" {
+		cfg.DeferBackend = "memory"
+	}
+	if cfg.DeferBackend != "memory" && cfg.DeferBackend != "redis" {
+		return nil, fmt.Errorf("invalid defer backend %q (supported: memory|redis)", cfg.DeferBackend)
+	}
+	if cfg.DeferBackend == "redis" && strings.TrimSpace(cfg.RedisURL) == "" {
+		return nil, fmt.Errorf("defer backend %q requires --redis-url", cfg.DeferBackend)
+	}
+	if cfg.RuntimeMode == "" {
+		cfg.RuntimeMode = core.RuntimeModeEnforce
+	}
+	if cfg.RuntimeMode != core.RuntimeModeEnforce &&
+		cfg.RuntimeMode != core.RuntimeModeShadow &&
+		cfg.RuntimeMode != core.RuntimeModeAudit {
+		return nil, fmt.Errorf("invalid runtime mode %q (supported: enforce|shadow|audit)", cfg.RuntimeMode)
 	}
 	if cfg.ProxyForward {
 		cfg.ProxyConnect = true
@@ -290,6 +330,13 @@ func (d *Daemon) handleSignal(sig os.Signal) bool {
 		d.log.Info("SIGHUP received — reloading policy", zap.String("path", d.cfg.PolicyPath))
 		if err := d.reloadPolicy(); err != nil {
 			d.log.Error("policy reload failed — continuing with current policy", zap.Error(err))
+		}
+		if w, ok := d.wal.(*dpr.WAL); ok {
+			if err := w.Compact(); err != nil {
+				d.log.Error("SIGHUP WAL compaction failed", zap.Error(err))
+			} else {
+				d.log.Info("SIGHUP WAL compaction completed")
+			}
 		}
 		return false
 	case isChaosDegradedSignal(sig):
@@ -451,6 +498,19 @@ func (d *Daemon) start() error {
 	if err != nil {
 		return err
 	}
+	if err := observe.InitOTLP(context.Background(), observe.OTLPConfig{
+		Enabled:        d.cfg.OTLPEnabled,
+		Endpoint:       d.cfg.OTLPEndpoint,
+		Protocol:       d.cfg.OTLPProtocol,
+		Insecure:       d.cfg.OTLPInsecure,
+		ServiceName:    d.cfg.OTLPServiceName,
+		ServiceVersion: coalesceString(d.cfg.OTLPServiceVersion, version),
+		TracesEnabled:  d.cfg.OTLPTracesEnabled,
+		MetricsEnabled: d.cfg.OTLPMetricsEnabled,
+		LogsEnabled:    d.cfg.OTLPLogsEnabled,
+	}); err != nil {
+		return fmt.Errorf("init OTLP telemetry: %w", err)
+	}
 	d.log.Info("policy loaded",
 		zap.String("version", version),
 		zap.String("agent_id", doc.AgentID),
@@ -473,6 +533,8 @@ func (d *Daemon) start() error {
 	if err != nil {
 		d.log.Warn("failed to open DPR SQLite store; audit queries will be unavailable",
 			zap.Error(err))
+	} else {
+		warnOnDPRReconciliationDrift(d.log, wal, sqliteStore)
 	}
 
 	// Optional PostgreSQL mirror for DPR writes.
@@ -494,6 +556,17 @@ func (d *Daemon) start() error {
 		}
 	}
 	d.store = store
+
+	toolInventoryPath := filepath.Join(d.cfg.DataDir, "faramesh-tool-inventory.db")
+	toolInventoryStore, invErr := toolinventory.OpenStore(toolInventoryPath)
+	if invErr != nil {
+		d.log.Warn("failed to open tool inventory store; observed-tool catalog will be unavailable", zap.Error(invErr))
+	} else {
+		d.toolInventory = toolInventoryStore
+		if err := d.seedToolInventory(store); err != nil {
+			d.log.Warn("failed to seed tool inventory from DPR history", zap.Error(err))
+		}
+	}
 
 	// Optional async DPR queue:
 	// - river:// DSN attempts River-backed queue
@@ -518,14 +591,9 @@ func (d *Daemon) start() error {
 	}
 
 	// Build pipeline.
-	hmacKey := []byte(d.cfg.DPRHMACKey)
-	if len(hmacKey) == 0 {
-		buf := make([]byte, 32)
-		if _, err := rand.Read(buf); err == nil {
-			hmacKey = buf
-			d.log.Warn("using ephemeral DPR HMAC key; configure --dpr-hmac-key for stable signatures",
-				zap.String("ephemeral_key_prefix", hex.EncodeToString(buf[:4])))
-		}
+	hmacKey, err := d.loadOrCreateDPRHMACKey()
+	if err != nil {
+		return fmt.Errorf("load DPR HMAC key: %w", err)
 	}
 
 	sessionManager := session.NewManager()
@@ -559,6 +627,12 @@ func (d *Daemon) start() error {
 		d.webhooks = webhook.NewSender(*doc.Webhooks)
 	}
 
+	standingPath := filepath.Join(d.cfg.DataDir, "faramesh-standing-grants.db")
+	standingReg, err := standing.OpenRegistryStore(standingPath)
+	if err != nil {
+		return fmt.Errorf("open standing grants store: %w", err)
+	}
+
 	d.degraded = degraded.NewManager()
 	redisAvailable := d.cfg.RedisURL == "" || d.sessBackend != nil
 	postgresAvailable := d.cfg.DPRDSN == "" || d.store != nil
@@ -570,6 +644,21 @@ func (d *Daemon) start() error {
 	wf := deferwork.NewWorkflow(d.cfg.SlackWebhook)
 	wf.SetLogger(d.log)
 	wf.SetPagerDutyRoutingKey(d.cfg.PagerDutyRoutingKey)
+	wf.SetApprovalHMACKey(hmacKey)
+	if d.cfg.DeferBackend == "redis" {
+		if d.fleetRedis == nil {
+			return fmt.Errorf("redis defer backend requires initialized redis client")
+		}
+		d.deferBackend = deferbackends.NewRedisBackend(deferbackends.RedisConfig{
+			Client: d.fleetRedis,
+			Prefix: d.cfg.DeferRedisPrefix,
+		})
+		wf.SetBackend(d.deferBackend)
+		d.log.Info("redis defer backend enabled",
+			zap.String("defer_backend", d.cfg.DeferBackend),
+			zap.String("defer_redis_prefix", strings.TrimSpace(d.cfg.DeferRedisPrefix)),
+		)
+	}
 	if doc.DeferPriority != nil {
 		wf.SetTriage(buildTriageFromPolicy(doc.DeferPriority))
 	}
@@ -631,6 +720,11 @@ func (d *Daemon) start() error {
 		)
 	}
 
+	var bootstrap *core.BootstrapEnforcer
+	if d.cfg.RequireGovernanceBootstrap {
+		bootstrap = core.NewBootstrapEnforcer(true)
+	}
+
 	pipeline := core.NewPipeline(core.Config{
 		Engine:                  d.engine,
 		WAL:                     wal,
@@ -638,6 +732,7 @@ func (d *Daemon) start() error {
 		DPRQueue:                dprQueue,
 		Sessions:                sessionManager,
 		SessionGovernor:         sessionGovernor,
+		Standing:                standingReg,
 		Defers:                  wf,
 		Webhooks:                d.webhooks,
 		Degraded:                d.degraded,
@@ -653,6 +748,9 @@ func (d *Daemon) start() error {
 		IntentClassifier:        intentClassifier,
 		Provenance:              provenanceTracker,
 		PhaseManager:            buildPhaseManagerFromPolicy(doc),
+		RuntimeMode:             d.cfg.RuntimeMode,
+		Bootstrap:               bootstrap,
+		ToolInventory:           d.toolInventory,
 		PolicySourceType:        d.policySourceType,
 		PolicySourceID:          d.policySourceID,
 		StrictModelVerification: d.cfg.StrictPreflight,
@@ -680,6 +778,12 @@ func (d *Daemon) start() error {
 	// Start SDK socket server.
 	server := sdk.NewServer(pipeline, d.log)
 	server.SetPrincipalResolver(principalResolver)
+	server.SetStandingAdminToken(strings.TrimSpace(d.cfg.StandingAdminToken))
+	if strings.TrimSpace(d.cfg.StandingAdminToken) != "" {
+		d.log.Info("standing grant admin authentication enabled (SDK standing_grant_* requires admin_token)")
+	} else {
+		d.log.Warn("standing grant SDK APIs are disabled until --standing-admin-token, FARAMESH_STANDING_ADMIN_TOKEN, or --policy-admin-token is set")
+	}
 	if err := server.Listen(d.cfg.SocketPath); err != nil {
 		return fmt.Errorf("start SDK server: %w", err)
 	}
@@ -776,6 +880,7 @@ func (d *Daemon) start() error {
 	if d.cfg.MetricsPort > 0 {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", observe.Default.Handler())
+		mux.HandleFunc("/healthz", d.handleHealthz)
 		d.metricsSrv = &http.Server{Addr: fmt.Sprintf(":%d", d.cfg.MetricsPort), Handler: mux}
 		go func() {
 			if err := d.metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -788,6 +893,146 @@ func (d *Daemon) start() error {
 	d.bootstrapEBPF()
 
 	return nil
+}
+
+func (d *Daemon) loadOrCreateDPRHMACKey() ([]byte, error) {
+	if explicit := []byte(d.cfg.DPRHMACKey); len(explicit) > 0 {
+		return explicit, nil
+	}
+
+	keyPath := filepath.Join(d.cfg.DataDir, "faramesh.hmac.key")
+	if existing, err := os.ReadFile(keyPath); err == nil {
+		if len(existing) == 0 {
+			return nil, fmt.Errorf("persisted DPR HMAC key file is empty: %s", keyPath)
+		}
+		d.log.Info("loaded persisted DPR HMAC key", zap.String("path", keyPath))
+		return existing, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(keyPath, buf, 0o600); err != nil {
+		return nil, err
+	}
+	d.log.Info("generated and persisted DPR HMAC key",
+		zap.String("path", keyPath),
+		zap.String("key_prefix", hex.EncodeToString(buf[:4])))
+	return buf, nil
+}
+
+func (d *Daemon) handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	type backendStatus struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	type healthResponse struct {
+		OK            bool            `json:"ok"`
+		PolicyLoaded  bool            `json:"policy_loaded"`
+		WALOpen       bool            `json:"wal_open"`
+		PipelineReady bool            `json:"pipeline_ready"`
+		Backends      []backendStatus `json:"backends"`
+	}
+
+	backends := []backendStatus{
+		{Name: "sqlite_dpr", Status: backendHealth(d.store != nil)},
+		{Name: "session_backend", Status: backendHealth(d.sessBackend != nil)},
+		{Name: "fleet_redis", Status: backendHealth(d.fleetRedis != nil)},
+	}
+	resp := healthResponse{
+		PolicyLoaded:  d.engine != nil && d.engine.Get() != nil,
+		WALOpen:       d.wal != nil,
+		PipelineReady: d.pipeline != nil,
+		Backends:      backends,
+	}
+	resp.OK = resp.PolicyLoaded && resp.WALOpen && resp.PipelineReady
+
+	status := http.StatusOK
+	if !resp.OK {
+		status = http.StatusServiceUnavailable
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func backendHealth(ok bool) string {
+	if ok {
+		return "ok"
+	}
+	return "unavailable"
+}
+
+type dprAgentCheckpoint struct {
+	count    int
+	lastHash string
+}
+
+func warnOnDPRReconciliationDrift(log *zap.Logger, wal *dpr.WAL, store *dpr.Store) {
+	if log == nil || wal == nil || store == nil {
+		return
+	}
+
+	walState, totalRecords, err := collectWALCheckpoints(wal)
+	if err != nil {
+		log.Warn("unable to reconcile WAL against SQLite on startup", zap.Error(err))
+		return
+	}
+	if len(walState) == 0 {
+		return
+	}
+
+	var drifted []string
+	for agentID, state := range walState {
+		lastHash, err := store.LastHash(agentID)
+		if err != nil {
+			drifted = append(drifted, fmt.Sprintf("%s: sqlite lookup failed (%v)", agentID, err))
+			continue
+		}
+		if lastHash == "" {
+			drifted = append(drifted, fmt.Sprintf("%s: sqlite missing %d WAL record(s)", agentID, state.count))
+			continue
+		}
+		if lastHash != state.lastHash {
+			drifted = append(drifted, fmt.Sprintf("%s: sqlite last hash does not match WAL tail", agentID))
+		}
+	}
+	if len(drifted) == 0 {
+		return
+	}
+
+	sort.Strings(drifted)
+	exampleCount := len(drifted)
+	if exampleCount > 5 {
+		drifted = append(drifted[:5], fmt.Sprintf("... %d more", exampleCount-5))
+	}
+	log.Warn("DPR SQLite store is not fully reconciled with WAL; query results may lag until backlog drains",
+		zap.Int("wal_records", totalRecords),
+		zap.Int("drifted_agents", exampleCount),
+		zap.Strings("examples", drifted))
+}
+
+func collectWALCheckpoints(wal *dpr.WAL) (map[string]dprAgentCheckpoint, int, error) {
+	checkpoints := make(map[string]dprAgentCheckpoint)
+	total := 0
+	err := wal.ReplayValidated(func(rec *dpr.Record) error {
+		if rec == nil {
+			return nil
+		}
+		total++
+		state := checkpoints[rec.AgentID]
+		state.count++
+		state.lastHash = rec.RecordHash
+		checkpoints[rec.AgentID] = state
+		return nil
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return checkpoints, total, nil
 }
 
 func buildIntentClassifier(cfg Config) (core.IntentClassifier, string, time.Duration) {
@@ -1306,11 +1551,12 @@ func buildTriageFromPolicy(cfg *policy.DeferPriorityConfig) *deferwork.Triage {
 			return
 		}
 		out.Rules = append(out.Rules, deferwork.TriageRule{
-			ToolPattern: pattern,
-			Priority:    priority,
-			SLA:         time.Duration(tier.SLASeconds) * time.Second,
-			AutoDeny:    tier.AutoDenyAfterSecs > 0,
-			EscalateTo:  strings.ToLower(strings.TrimSpace(tier.Channel)),
+			ToolPattern:   pattern,
+			Priority:      priority,
+			SLA:           time.Duration(tier.SLASeconds) * time.Second,
+			AutoDeny:      tier.AutoDenyAfterSecs > 0,
+			AutoDenyAfter: time.Duration(tier.AutoDenyAfterSecs) * time.Second,
+			EscalateTo:    strings.ToLower(strings.TrimSpace(tier.Channel)),
 		})
 	}
 	addRule(cfg.Critical, deferwork.PriorityCritical)
@@ -1503,6 +1749,26 @@ func parseBoolEnvDefault(key string, fallback bool) bool {
 	return v
 }
 
+func (d *Daemon) seedToolInventory(store dpr.StoreBackend) error {
+	if d == nil || d.toolInventory == nil || store == nil {
+		return nil
+	}
+	agents, err := store.KnownAgents()
+	if err != nil {
+		return err
+	}
+	for _, agentID := range agents {
+		records, err := store.RecentByAgent(agentID, 100000)
+		if err != nil {
+			return err
+		}
+		if err := d.toolInventory.SeedFromDPRRecords(records); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (d *Daemon) stop() error {
 	if d.policyPollCancel != nil {
 		d.policyPollCancel()
@@ -1531,6 +1797,9 @@ func (d *Daemon) stop() error {
 	if d.metricsSrv != nil {
 		_ = d.metricsSrv.Close()
 	}
+	if d.pipeline != nil {
+		_ = d.pipeline.CloseStandingPersistence()
+	}
 	if d.wal != nil {
 		_ = d.wal.Close()
 	}
@@ -1540,8 +1809,14 @@ func (d *Daemon) stop() error {
 	if d.store != nil {
 		_ = d.store.Close()
 	}
+	if d.toolInventory != nil {
+		_ = d.toolInventory.Close()
+	}
 	if d.sessBackend != nil {
 		_ = d.sessBackend.Close()
+	}
+	if d.deferBackend != nil {
+		_ = d.deferBackend.Close()
 	}
 	if d.dailyCostStore != nil {
 		_ = d.dailyCostStore.Close()
@@ -1555,8 +1830,20 @@ func (d *Daemon) stop() error {
 	if d.ebpfAdapter != nil {
 		_ = d.ebpfAdapter.Close()
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	observe.ShutdownOTLP(ctx)
+	cancel()
 	d.log.Info("daemon stopped cleanly")
 	return nil
+}
+
+func coalesceString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func (d *Daemon) registerFleetInstance(agentID string) error {

@@ -1,6 +1,8 @@
 # Faramesh Node.js SDK
 
-Production-ready Node.js client for the Faramesh Execution Governor API.
+Node.js client for the Faramesh Execution Governor API.
+
+**Production use:** pin `@faramesh/sdk` to an **exact semver** in `package-lock.json`, run your own integration tests against the governed daemon and MCP surfaces you ship, and keep `faramesh audit verify` / corpus-style checks in CI for any autopatch path. Coverage is still somewhat narrower than the Python SDK, but the HTTP client, gate/replay helpers, streaming events, LangChain helpers, and the **legacy `ExecutionGovernorClient`** class (Python parity) are covered by tests.
 
 For AI governance and AI agent execution control architecture details, see:
 
@@ -52,6 +54,24 @@ if (action.status === 'pending_approval') {
   console.log(`Action approved: ${approved.status}`);
 }
 ```
+
+### Legacy class API (Python `ExecutionGovernorClient`)
+
+Use module-level `configure` / `submitAction` in new code. For drop-in parity with older Python patterns:
+
+```typescript
+import { ExecutionGovernorClient } from '@faramesh/sdk';
+
+const client = new ExecutionGovernorClient({
+  baseUrl: 'http://localhost:8000',
+  token: 'your-token',
+  agentId: 'my-agent',
+});
+
+const action = await client.submitAction('http', 'get', { url: 'https://example.com' });
+```
+
+`GovernorConfig` and `GovernorError` are compatibility aliases matching the Python SDK names. `getActiveConfig()` (also exported as `get_active_config` for Python-style imports) returns the resolved global configuration snapshot.
 
 ## Using CommonJS
 
@@ -480,4 +500,4 @@ The built files will be in `dist/`.
 
 ## License
 
-Elastic License 2.0
+MIT License

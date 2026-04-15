@@ -52,7 +52,8 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/faramesh/faramesh-core/internal/core"
-	"github.com/google/uuid"
+	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
+	"github.com/faramesh/faramesh-core/internal/core/observe"
 )
 
 // MCPMessage is a JSON-RPC 2.0 message used by the MCP protocol.
@@ -76,6 +77,29 @@ type MCPError struct {
 type toolCallParams struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
+}
+
+type deferStatusParams struct {
+	Token string `json:"defer_token"`
+}
+
+type deferResolveParams struct {
+	Token      string `json:"defer_token"`
+	Approved   bool   `json:"approved"`
+	ApproverID string `json:"approver_id"`
+	Reason     string `json:"reason"`
+}
+
+// mcpGovernedCallIDForEval returns the CallID the pipeline should see for a
+// tools/call retry after an approved DEFER. Resume validation only runs when
+// CallID ends with "-resume", so approved retries must use that suffix while
+// still correlating to the original stable MCP call id for token derivation.
+func mcpGovernedCallIDForEval(p *core.Pipeline, baseCallID, toolName string) string {
+	tok := core.DeterministicDeferToken(baseCallID, toolName)
+	if st, pending := p.DeferWorkflow().Status(tok); !pending && st == deferwork.StatusApproved {
+		return baseCallID + "-resume"
+	}
+	return baseCallID
 }
 
 // StdioGateway wraps a subprocess MCP server (stdio transport) with governance.
@@ -139,6 +163,11 @@ func (g *StdioGateway) ProcessRequest(msg MCPMessage) (MCPMessage, error) {
 		return MCPMessage{}, err
 	}
 	kind := classifyMCPMessage(msg)
+	if kind == mcpMessageRequest {
+		if handled, out, err := g.handleLocalControl(msg); handled || err != nil {
+			return out, err
+		}
+	}
 	if kind == mcpMessageRequest && msg.Method == "tools/call" {
 		return g.handleToolCall(msg)
 	}
@@ -176,6 +205,53 @@ func (g *StdioGateway) ProcessStdioLine(line []byte) ([]byte, error) {
 		return nil, nil
 	}
 	return json.Marshal(out)
+}
+
+func (g *StdioGateway) handleLocalControl(msg MCPMessage) (bool, MCPMessage, error) {
+	wf := g.pipeline.DeferWorkflow()
+	if wf == nil {
+		return false, MCPMessage{}, nil
+	}
+	switch strings.TrimSpace(msg.Method) {
+	case "faramesh/defer/status":
+		var params deferStatusParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			return true, errorResponse(msg.ID, -32602, "invalid params: "+err.Error()), nil
+		}
+		token := strings.TrimSpace(params.Token)
+		if token == "" {
+			return true, errorResponse(msg.ID, -32602, "missing defer_token"), nil
+		}
+		status, pending := wf.Status(token)
+		result, _ := json.Marshal(map[string]any{
+			"defer_token": token,
+			"status":      string(status),
+			"pending":     pending,
+		})
+		return true, MCPMessage{JSONRPC: "2.0", ID: msg.ID, Result: result}, nil
+	case "faramesh/defer/resolve":
+		var params deferResolveParams
+		if err := json.Unmarshal(msg.Params, &params); err != nil {
+			return true, errorResponse(msg.ID, -32602, "invalid params: "+err.Error()), nil
+		}
+		token := strings.TrimSpace(params.Token)
+		if token == "" {
+			return true, errorResponse(msg.ID, -32602, "missing defer_token"), nil
+		}
+		if err := wf.Resolve(token, params.Approved, strings.TrimSpace(params.ApproverID), strings.TrimSpace(params.Reason)); err != nil {
+			return true, errorResponse(msg.ID, -32004, "Faramesh: defer resolve failed: "+err.Error()), nil
+		}
+		status, pending := wf.Status(token)
+		result, _ := json.Marshal(map[string]any{
+			"ok":          true,
+			"defer_token": token,
+			"status":      string(status),
+			"pending":     pending,
+		})
+		return true, MCPMessage{JSONRPC: "2.0", ID: msg.ID, Result: result}, nil
+	default:
+		return false, MCPMessage{}, nil
+	}
 }
 
 func (g *StdioGateway) processStdioBatch(body []byte) ([]byte, error) {
@@ -217,8 +293,9 @@ func (g *StdioGateway) handleToolCall(msg MCPMessage) (MCPMessage, error) {
 		return errorResponse(msg.ID, -32602, "invalid params: "+err.Error()), nil
 	}
 
+	baseCallID := stableMCPToolCallID(g.agentID, g.agentID+"-mcp", msg.ID, params.Name)
 	car := core.CanonicalActionRequest{
-		CallID:           uuid.New().String(),
+		CallID:           mcpGovernedCallIDForEval(g.pipeline, baseCallID, params.Name),
 		AgentID:          g.agentID,
 		SessionID:        g.agentID + "-mcp",
 		ToolID:           params.Name,
@@ -818,6 +895,16 @@ func (g *HTTPGateway) doUpstreamRequest(r *http.Request, body []byte) (statusCod
 // When the client sends Accept: text/event-stream, streamable HTTP servers may return long-lived
 // SSE responses. For tools/call requests, JSON-RPC result payloads in SSE data lines are post-scanned.
 func (g *HTTPGateway) forwardMCPStream(w http.ResponseWriter, r *http.Request, body []byte, toolID, sessionID string) {
+	start := time.Now()
+	statusCode := 0
+	ctx, span := observe.StartOTLPSpan(r.Context(), "faramesh.mcp.forward_stream")
+	defer func() {
+		if statusCode > 0 {
+			observe.RecordMCPStreamOTLP(ctx, toolID, statusCode, time.Since(start))
+		}
+		observe.EndOTLPSpan(span, nil)
+	}()
+
 	streamClient := &http.Client{
 		Timeout:   0,
 		Transport: g.client.Transport,
@@ -833,6 +920,7 @@ func (g *HTTPGateway) forwardMCPStream(w http.ResponseWriter, r *http.Request, b
 
 	proxyReq, err := http.NewRequestWithContext(r.Context(), r.Method, g.upstreamURL(r), bytes.NewReader(body))
 	if err != nil {
+		statusCode = http.StatusInternalServerError
 		g.log.Error("failed to build upstream request", zap.Error(err))
 		http.Error(w, `{"error":"internal server error"}`, http.StatusInternalServerError)
 		return
@@ -848,12 +936,15 @@ func (g *HTTPGateway) forwardMCPStream(w http.ResponseWriter, r *http.Request, b
 	proxyReq.ContentLength = int64(len(body))
 	resp, err := streamClient.Do(proxyReq)
 	if err != nil {
+		statusCode = http.StatusBadGateway
 		g.log.Error("upstream MCP server error", zap.Error(err))
 		http.Error(w, `{"error":"upstream service unavailable"}`, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+	statusCode = resp.StatusCode
 	if err := g.validateProtocolVersionResponse(resp.Header, r.Method); err != nil {
+		statusCode = http.StatusBadGateway
 		g.log.Warn("upstream MCP protocol version validation failed", zap.Error(err))
 		http.Error(w, `{"error":"upstream protocol version mismatch"}`, http.StatusBadGateway)
 		return
@@ -981,8 +1072,9 @@ func (g *HTTPGateway) interceptToolsCall(msg MCPMessage, sessionID string) (resp
 		return nil, false, "", err
 	}
 	scopedAgentID := fmt.Sprintf("%s#mcp-%s", g.agentID, stableSessionSuffix(sessionID))
+	baseCallID := stableMCPToolCallID(scopedAgentID, sessionID, msg.ID, params.Name)
 	car := core.CanonicalActionRequest{
-		CallID:           uuid.New().String(),
+		CallID:           mcpGovernedCallIDForEval(g.pipeline, baseCallID, params.Name),
 		AgentID:          scopedAgentID,
 		SessionID:        sessionID,
 		ToolID:           params.Name,
@@ -1453,6 +1545,13 @@ func (g *HTTPGateway) sessionIDForRequest(r *http.Request) string {
 func stableSessionSuffix(seed string) string {
 	h := sha256.Sum256([]byte(seed))
 	return hex.EncodeToString(h[:8])
+}
+
+func stableMCPToolCallID(agentID, sessionID string, requestID any, toolName string) string {
+	rawID, _ := json.Marshal(requestID)
+	seed := strings.TrimSpace(agentID) + "|" + strings.TrimSpace(sessionID) + "|" + strings.TrimSpace(toolName) + "|" + string(rawID)
+	h := sha256.Sum256([]byte(seed))
+	return "mcp-" + hex.EncodeToString(h[:16])
 }
 
 func hostOnly(hostPort string) string {

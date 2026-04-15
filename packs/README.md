@@ -1,6 +1,6 @@
 # Seed policy packs (open repo)
 
-Illustrative **YAML** policies for `faramesh policy validate`, demos, and Hub-style distribution tests.
+Illustrative **YAML** policies (with optional **`policy.fpl`** sidecars on embedded `faramesh-*` catalog packs) for `faramesh policy validate`, demos, and Hub-style distribution tests.
 These are **starting points** — tune `rules`, `budget`, and `tools` for production.
 
 | Pack | Intent |
@@ -11,4 +11,4 @@ These are **starting points** — tune `rules`, `budget`, and `tools` for produc
 | `ai-safety` | Webhook and HTTP posture for LLM agents |
 | `startup-default` | Deny-by-default with narrow permits |
 
-Validation: `go test ./packs/...` from `faramesh-core` (see `packs/validate_test.go`).
+Validation: `make packs-verify` (or `go test ./packs/...`) from `faramesh-core` — **`validate_test.go`** validates **every** on-disk `policy.yaml` **and** compiles **every** `policy.fpl` in each pack directory; **`catalog_bundled_test.go`** asserts every **embedded** bundled pack `Lookup`s, validates YAML, requires **non-empty `PolicyFPL`**, installs via `hub.WritePackToDiskWithMode`; **`bundled_fpl_compile_test.go`** runs **`fpl.ParseDocument` + `fpl.CompileDocument`** on each embedded sidecar).

@@ -124,6 +124,7 @@ func (r *Router) ResolveRoute(toolID string) RouteResolution {
 }
 
 // Resolve finds the appropriate broker for a tool call.
+// Uses longest-match semantics consistent with ResolveRoute.
 func (r *Router) Resolve(toolID string) Broker {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -134,13 +135,27 @@ func (r *Router) Resolve(toolID string) Broker {
 			return b
 		}
 	}
-	// Glob match.
+	// Longest glob match (deterministic, consistent with ResolveRoute).
+	bestPattern := ""
+	var bestBroker Broker
 	for pattern, name := range r.routes {
-		if matchToolPattern(pattern, toolID) {
-			if b, ok := r.backends[name]; ok {
-				return b
-			}
+		if pattern == toolID {
+			continue
 		}
+		if !matchToolPattern(pattern, toolID) {
+			continue
+		}
+		b, ok := r.backends[name]
+		if !ok {
+			continue
+		}
+		if len(pattern) > len(bestPattern) {
+			bestPattern = pattern
+			bestBroker = b
+		}
+	}
+	if bestBroker != nil {
+		return bestBroker
 	}
 	return r.fallback
 }

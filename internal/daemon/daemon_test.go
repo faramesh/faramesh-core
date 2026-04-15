@@ -22,6 +22,7 @@ import (
 
 	adapterebpf "github.com/faramesh/faramesh-core/internal/adapter/ebpf"
 	"github.com/faramesh/faramesh-core/internal/artifactverify"
+	"github.com/faramesh/faramesh-core/internal/core"
 	"github.com/faramesh/faramesh-core/internal/core/degraded"
 	"github.com/faramesh/faramesh-core/internal/core/dpr"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
@@ -30,6 +31,22 @@ import (
 	principalidp "github.com/faramesh/faramesh-core/internal/core/principal/idp"
 	"github.com/faramesh/faramesh-core/internal/reprobuild"
 )
+
+func testDPRRecord(agentID, recordID, prevHash string) *dpr.Record {
+	rec := &dpr.Record{
+		SchemaVersion:  dpr.SchemaVersion,
+		RecordID:       recordID,
+		PrevRecordHash: prevHash,
+		AgentID:        agentID,
+		SessionID:      "sess-" + agentID,
+		ToolID:         "tool/run",
+		Effect:         "PERMIT",
+		PolicyVersion:  "test-policy",
+		CreatedAt:      time.Now().UTC(),
+	}
+	rec.ComputeHash()
+	return rec
+}
 
 func TestFleetPolicyReloadPublishConsumeApplyFlow(t *testing.T) {
 	mr, err := miniredis.Run()
@@ -227,6 +244,153 @@ default_effect: permit
 	}
 	if d.lastPolicyHash == initialHash {
 		t.Fatalf("expected policy hash to change after reload")
+	}
+}
+
+func TestWarnOnDPRReconciliationDriftWarnsWhenSQLiteLagsWAL(t *testing.T) {
+	dir := t.TempDir()
+	wal, err := dpr.OpenWAL(filepath.Join(dir, "faramesh.wal"))
+	if err != nil {
+		t.Fatalf("open wal: %v", err)
+	}
+	defer wal.Close()
+
+	store, err := dpr.OpenStore(filepath.Join(dir, "faramesh.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	r1 := testDPRRecord("agent-a", "r1", dpr.GenesisPrevHash("agent-a"))
+	if err := wal.Write(r1); err != nil {
+		t.Fatalf("write wal r1: %v", err)
+	}
+	if err := store.Save(r1); err != nil {
+		t.Fatalf("save store r1: %v", err)
+	}
+
+	r2 := testDPRRecord("agent-a", "r2", r1.RecordHash)
+	if err := wal.Write(r2); err != nil {
+		t.Fatalf("write wal r2: %v", err)
+	}
+
+	coreObs, logs := observer.New(zapcore.WarnLevel)
+	logger := zap.New(coreObs)
+	warnOnDPRReconciliationDrift(logger, wal, store)
+
+	entries := logs.FilterMessage("DPR SQLite store is not fully reconciled with WAL; query results may lag until backlog drains").All()
+	if len(entries) != 1 {
+		t.Fatalf("expected one reconciliation warning, got %d", len(entries))
+	}
+	ctx := entries[0].ContextMap()
+	if got, _ := ctx["wal_records"].(int64); got != 2 {
+		t.Fatalf("wal_records=%v want 2", ctx["wal_records"])
+	}
+	if got, _ := ctx["drifted_agents"].(int64); got != 1 {
+		t.Fatalf("drifted_agents=%v want 1", ctx["drifted_agents"])
+	}
+	examples, _ := ctx["examples"].([]interface{})
+	if len(examples) == 0 || !strings.Contains(examples[0].(string), "agent-a") {
+		t.Fatalf("expected examples to mention agent-a, got %#v", ctx["examples"])
+	}
+}
+
+func TestWarnOnDPRReconciliationDriftSilentWhenSQLiteMatchesWAL(t *testing.T) {
+	dir := t.TempDir()
+	wal, err := dpr.OpenWAL(filepath.Join(dir, "faramesh.wal"))
+	if err != nil {
+		t.Fatalf("open wal: %v", err)
+	}
+	defer wal.Close()
+
+	store, err := dpr.OpenStore(filepath.Join(dir, "faramesh.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	r1 := testDPRRecord("agent-a", "r1", dpr.GenesisPrevHash("agent-a"))
+	r2 := testDPRRecord("agent-a", "r2", r1.RecordHash)
+	for _, rec := range []*dpr.Record{r1, r2} {
+		if err := wal.Write(rec); err != nil {
+			t.Fatalf("write wal %s: %v", rec.RecordID, err)
+		}
+		if err := store.Save(rec); err != nil {
+			t.Fatalf("save store %s: %v", rec.RecordID, err)
+		}
+	}
+
+	coreObs, logs := observer.New(zapcore.WarnLevel)
+	logger := zap.New(coreObs)
+	warnOnDPRReconciliationDrift(logger, wal, store)
+
+	if got := logs.FilterMessage("DPR SQLite store is not fully reconciled with WAL; query results may lag until backlog drains").Len(); got != 0 {
+		t.Fatalf("expected no reconciliation warning, got %d", got)
+	}
+}
+
+func TestLoadOrCreateDPRHMACKeyPersistsAcrossRestarts(t *testing.T) {
+	dir := t.TempDir()
+	logger := zap.NewNop()
+
+	d1 := &Daemon{cfg: Config{DataDir: dir}, log: logger}
+	key1, err := d1.loadOrCreateDPRHMACKey()
+	if err != nil {
+		t.Fatalf("loadOrCreateDPRHMACKey first run: %v", err)
+	}
+	if len(key1) == 0 {
+		t.Fatalf("expected generated key")
+	}
+
+	st, err := os.Stat(filepath.Join(dir, "faramesh.hmac.key"))
+	if err != nil {
+		t.Fatalf("stat persisted key: %v", err)
+	}
+	if got := st.Mode().Perm(); got != 0o600 {
+		t.Fatalf("persisted key mode = %v, want 0600", got)
+	}
+
+	d2 := &Daemon{cfg: Config{DataDir: dir}, log: logger}
+	key2, err := d2.loadOrCreateDPRHMACKey()
+	if err != nil {
+		t.Fatalf("loadOrCreateDPRHMACKey second run: %v", err)
+	}
+	if string(key1) != string(key2) {
+		t.Fatalf("expected persisted key to survive restart")
+	}
+}
+
+func TestHandleHealthzReportsReadiness(t *testing.T) {
+	d := &Daemon{
+		engine:   policy.NewAtomicEngine(&policy.Engine{}),
+		wal:      &dpr.NullWAL{},
+		pipeline: core.NewPipeline(core.Config{}),
+		store:    &dpr.Store{},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	d.handleHealthz(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if ok, _ := body["ok"].(bool); !ok {
+		t.Fatalf("expected ok=true, got %#v", body)
+	}
+}
+
+func TestHandleHealthzFailsWhenPipelineUnavailable(t *testing.T) {
+	d := &Daemon{}
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rec := httptest.NewRecorder()
+	d.handleHealthz(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
 	}
 }
 
@@ -753,6 +917,49 @@ func TestNewProxyForwardImpliesConnect(t *testing.T) {
 	}
 	if !d.cfg.ProxyConnect {
 		t.Fatal("expected ProxyConnect to be enabled when ProxyForward is true")
+	}
+}
+
+func TestNewDefaultsToMemoryDeferBackend(t *testing.T) {
+	d, err := New(Config{Log: zap.NewNop()})
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	if d.cfg.DeferBackend != "memory" {
+		t.Fatalf("defer backend = %q, want memory", d.cfg.DeferBackend)
+	}
+}
+
+func TestNewRejectsRedisDeferBackendWithoutRedisURL(t *testing.T) {
+	_, err := New(Config{
+		DeferBackend: "redis",
+		Log:          zap.NewNop(),
+	})
+	if err == nil {
+		t.Fatal("expected redis defer backend validation error")
+	}
+	if !strings.Contains(err.Error(), "requires --redis-url") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewDefaultsToEnforceRuntimeMode(t *testing.T) {
+	d, err := New(Config{Log: zap.NewNop()})
+	if err != nil {
+		t.Fatalf("new daemon: %v", err)
+	}
+	if d.cfg.RuntimeMode != core.RuntimeModeEnforce {
+		t.Fatalf("runtime mode = %q, want enforce", d.cfg.RuntimeMode)
+	}
+}
+
+func TestNewRejectsInvalidRuntimeMode(t *testing.T) {
+	_, err := New(Config{RuntimeMode: core.RuntimeMode("observe"), Log: zap.NewNop()})
+	if err == nil {
+		t.Fatal("expected invalid runtime mode error")
+	}
+	if !strings.Contains(err.Error(), "invalid runtime mode") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

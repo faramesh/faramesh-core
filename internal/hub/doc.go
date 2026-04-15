@@ -3,6 +3,10 @@
 // It targets a small versioned HTTP JSON API so any compatible registry (self-hosted,
 // future Faramesh Hub, or tests) can be used without proprietary server code in this repo.
 //
+// A **public** browse/publish website (Terraform Registry–style for packs) is **not** implemented
+// here and is **not** the same product as the gated SaaS console in Faramesh-cloud-platform/;
+// expect that UX to live in its **own** repository while this package remains the HTTP client.
+//
 // # Registry API v1 (compatibility contract)
 //
 // Base URL has no trailing slash requirement; clients normalize it.

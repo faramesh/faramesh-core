@@ -17,9 +17,12 @@ faramesh serve \
   --policy /etc/faramesh/policy.yaml \
   --data-dir /var/lib/faramesh \
   --socket /var/run/faramesh.sock \
+  --dpr-hmac-key "$(openssl rand -hex 32)" \
   --metrics-port 9108 \
   --log-level info
 ```
+
+Set a stable `--dpr-hmac-key` from your secret manager or service config. If you omit it, the daemon persists a generated key under the data directory (`faramesh.hmac.key`). See `docs/guides/DPR_HMAC_KEY.md`. Configure `--standing-admin-token` (or reuse `--policy-admin-token`) so `faramesh agent standing-grant` APIs are authenticated.
 
 ## Optional PostgreSQL mirror
 
@@ -50,6 +53,7 @@ source ~/.faramesh/local-vault/vault.env
 faramesh serve \
   --policy /etc/faramesh/policy.fpl \
   --data-dir /var/lib/faramesh \
+  --dpr-hmac-key "$FARAMESH_DPR_HMAC_KEY" \
   --vault-addr "$FARAMESH_CREDENTIAL_VAULT_ADDR" \
   --vault-token "$FARAMESH_CREDENTIAL_VAULT_TOKEN" \
   --vault-mount secret
@@ -70,6 +74,7 @@ faramesh credential vault put stripe/refund \
 faramesh serve \
   --policy /etc/faramesh/policy.fpl \
   --data-dir /var/lib/faramesh \
+  --dpr-hmac-key "$FARAMESH_DPR_HMAC_KEY" \
   --vault-addr https://vault.company.internal:8200 \
   --vault-token "$VAULT_TOKEN" \
   --vault-mount secret
@@ -86,7 +91,7 @@ faramesh credential vault down
 
 ```bash
 curl -sS http://127.0.0.1:9108/metrics | head
-faramesh audit verify /var/lib/faramesh/faramesh.db
+faramesh audit verify /var/lib/faramesh/faramesh.wal
 ```
 
 ## Identity hardening (SPIFFE/SPIRE)

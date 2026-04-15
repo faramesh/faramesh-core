@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -27,7 +28,14 @@ func OpenStore(dbPath string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open DPR SQLite: %w", err)
 	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if err := configureSQLite(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("configure DPR SQLite: %w", err)
+	}
 	if err := migrate(db); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("migrate DPR schema: %w", err)
 	}
 	return &Store{db: db}, nil
@@ -44,7 +52,7 @@ func (s *Store) Save(rec *Record) error {
 	cbErrs := jsonOrNull(rec.CallbackErrors)
 	batchIDs := jsonOrNull(rec.BatchDPRIDs)
 
-	_, err := s.db.Exec(`
+	query := `
 		INSERT OR IGNORE INTO dpr_records (
 			schema_version, fpl_version, car_version,
 			record_id, prev_record_hash, record_hash, hmac_signature,
@@ -62,8 +70,10 @@ func (s *Store) Save(rec *Record) error {
 			callbacks_fired, callback_errors,
 			degraded_mode,
 			batch_approval, batch_size, batch_dpr_ids, resolved_by_batch, batch_approval_id,
+			approval_envelope,
 			created_at
-		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+	args := []any{
 		rec.SchemaVersion, rec.FPLVersion, rec.CARVersion,
 		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig,
 		rec.AgentID, rec.SessionID, rec.ToolID, rec.InterceptAdapter, rec.ExecutionTimeoutMS, rec.PrincipalIDHash,
@@ -80,9 +90,52 @@ func (s *Store) Save(rec *Record) error {
 		cbFired, cbErrs,
 		rec.DegradedMode,
 		rec.BatchApproval, rec.BatchSize, batchIDs, rec.ResolvedByBatch, rec.BatchApprovalID,
+		rec.ApprovalEnvelope,
 		rec.CreatedAt.UTC().Format(time.RFC3339Nano),
-	)
+	}
+	return withSQLiteBusyRetry(func() error {
+		_, err := s.db.Exec(query, args...)
+		return err
+	})
+}
+
+func configureSQLite(db *sql.DB) error {
+	pragmas := []string{
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA busy_timeout = 5000",
+		"PRAGMA synchronous = NORMAL",
+		"PRAGMA foreign_keys = ON",
+	}
+	for _, pragma := range pragmas {
+		if _, err := db.Exec(pragma); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func withSQLiteBusyRetry(fn func() error) error {
+	var err error
+	backoff := 25 * time.Millisecond
+	for attempt := 0; attempt < 8; attempt++ {
+		err = fn()
+		if err == nil || !isSQLiteBusyErr(err) {
+			return err
+		}
+		time.Sleep(backoff)
+		if backoff < 250*time.Millisecond {
+			backoff *= 2
+		}
+	}
 	return err
+}
+
+func isSQLiteBusyErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "sqlite_busy") || strings.Contains(msg, "database is locked")
 }
 
 // ByID returns one DPR record by record_id.
@@ -121,6 +174,7 @@ const dprSelectCols = `schema_version, fpl_version, car_version,
 	callbacks_fired, callback_errors,
 	degraded_mode,
 	batch_approval, batch_size, batch_dpr_ids, resolved_by_batch, batch_approval_id,
+	approval_envelope,
 	created_at`
 
 // RecentByAgent returns the most recent records for an agent, newest first.
@@ -279,6 +333,7 @@ func migrate(db *sql.DB) error {
 		batch_dpr_ids              TEXT DEFAULT '',
 		resolved_by_batch          INTEGER DEFAULT 0,
 		batch_approval_id          TEXT DEFAULT '',
+		approval_envelope          TEXT DEFAULT '',
 		created_at                 TEXT NOT NULL
 	);
 	CREATE INDEX IF NOT EXISTS idx_dpr_agent_time ON dpr_records(agent_id, created_at);
@@ -307,6 +362,7 @@ func migrate(db *sql.DB) error {
 		"callbacks_fired", "callback_errors",
 		"degraded_mode",
 		"batch_approval", "batch_size", "batch_dpr_ids", "resolved_by_batch", "batch_approval_id",
+		"approval_envelope",
 	}
 	for _, col := range v1Cols {
 		defaultVal := "''"
@@ -327,7 +383,7 @@ func scanRecords(rows *sql.Rows) ([]*Record, error) {
 	for rows.Next() {
 		var r Record
 		var createdAt string
-		var argProv, selSnap, custOps, opRes, cbFired, cbErrs, batchIDs sql.NullString
+		var argProv, selSnap, custOps, opRes, cbFired, cbErrs, batchIDs, approvalEnvelope sql.NullString
 		if err := rows.Scan(
 			&r.SchemaVersion, &r.FPLVersion, &r.CARVersion,
 			&r.RecordID, &r.PrevRecordHash, &r.RecordHash, &r.HMACSig,
@@ -345,6 +401,7 @@ func scanRecords(rows *sql.Rows) ([]*Record, error) {
 			&cbFired, &cbErrs,
 			&r.DegradedMode,
 			&r.BatchApproval, &r.BatchSize, &batchIDs, &r.ResolvedByBatch, &r.BatchApprovalID,
+			&approvalEnvelope,
 			&createdAt,
 		); err != nil {
 			return nil, err
@@ -359,6 +416,7 @@ func scanRecords(rows *sql.Rows) ([]*Record, error) {
 		jsonUnmarshal(cbFired, &r.CallbacksFired)
 		jsonUnmarshal(cbErrs, &r.CallbackErrors)
 		jsonUnmarshal(batchIDs, &r.BatchDPRIDs)
+		r.ApprovalEnvelope = approvalEnvelope.String
 		records = append(records, &r)
 	}
 	return records, rows.Err()

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,10 +14,10 @@ import (
 )
 
 type fakeRiverClient struct {
-	lastArgs DPRPersistJobArgs
-	lastOpts *river.InsertOpts
+	lastArgs  DPRPersistJobArgs
+	lastOpts  *river.InsertOpts
 	insertErr error
-	stopped bool
+	stopped   bool
 }
 
 func (f *fakeRiverClient) Insert(_ context.Context, args river.JobArgs, opts *river.InsertOpts) (*rivertype.JobInsertResult, error) {
@@ -50,14 +51,54 @@ type saveCaptureStore struct {
 	err  error
 }
 
-func (s *saveCaptureStore) Save(rec *dpr.Record) error                    { s.last = rec; return s.err }
-func (s *saveCaptureStore) ByID(string) (*dpr.Record, error)              { return nil, nil }
+func (s *saveCaptureStore) Save(rec *dpr.Record) error                       { s.last = rec; return s.err }
+func (s *saveCaptureStore) ByID(string) (*dpr.Record, error)                 { return nil, nil }
 func (s *saveCaptureStore) RecentByAgent(string, int) ([]*dpr.Record, error) { return nil, nil }
-func (s *saveCaptureStore) Recent(int) ([]*dpr.Record, error)             { return nil, nil }
-func (s *saveCaptureStore) LastHash(string) (string, error)               { return "", nil }
-func (s *saveCaptureStore) KnownAgents() ([]string, error)                { return nil, nil }
-func (s *saveCaptureStore) VerifyChain(string) (*dpr.ChainBreak, error)   { return nil, nil }
-func (s *saveCaptureStore) Close() error                                   { return nil }
+func (s *saveCaptureStore) Recent(int) ([]*dpr.Record, error)                { return nil, nil }
+func (s *saveCaptureStore) LastHash(string) (string, error)                  { return "", nil }
+func (s *saveCaptureStore) KnownAgents() ([]string, error)                   { return nil, nil }
+func (s *saveCaptureStore) VerifyChain(string) (*dpr.ChainBreak, error)      { return nil, nil }
+func (s *saveCaptureStore) Close() error                                     { return nil }
+
+type blockingSaveStore struct {
+	mu      sync.Mutex
+	saved   []string
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *blockingSaveStore) Save(rec *dpr.Record) error {
+	if rec == nil {
+		return nil
+	}
+	s.mu.Lock()
+	s.saved = append(s.saved, rec.RecordID)
+	first := len(s.saved) == 1
+	s.mu.Unlock()
+	if first {
+		select {
+		case s.started <- struct{}{}:
+		default:
+		}
+		<-s.release
+	}
+	return nil
+}
+func (s *blockingSaveStore) ByID(string) (*dpr.Record, error) { return nil, nil }
+func (s *blockingSaveStore) RecentByAgent(string, int) ([]*dpr.Record, error) {
+	return nil, nil
+}
+func (s *blockingSaveStore) Recent(int) ([]*dpr.Record, error)           { return nil, nil }
+func (s *blockingSaveStore) LastHash(string) (string, error)             { return "", nil }
+func (s *blockingSaveStore) KnownAgents() ([]string, error)              { return nil, nil }
+func (s *blockingSaveStore) VerifyChain(string) (*dpr.ChainBreak, error) { return nil, nil }
+func (s *blockingSaveStore) Close() error                                { return nil }
+
+func (s *blockingSaveStore) count() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.saved)
+}
 
 func TestRiverPostgresDSN(t *testing.T) {
 	got, err := riverPostgresDSN("river://postgres://user:pass@localhost:5432/db")
@@ -134,5 +175,60 @@ func TestDPRPersistWorkerCallsStoreSave(t *testing.T) {
 	}
 	if store.last == nil || store.last.RecordID != rec.RecordID {
 		t.Fatalf("expected store save call with record")
+	}
+}
+
+func TestInprocDPRQueueCloseDrainsQueuedRecords(t *testing.T) {
+	store := &blockingSaveStore{
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+	q := NewInprocDPRQueue(store, InprocDPRQueueConfig{Buffer: 2})
+
+	if err := q.EnqueueDPR(&dpr.Record{RecordID: "rec-1"}); err != nil {
+		t.Fatalf("enqueue rec-1: %v", err)
+	}
+	if err := q.EnqueueDPR(&dpr.Record{RecordID: "rec-2"}); err != nil {
+		t.Fatalf("enqueue rec-2: %v", err)
+	}
+
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for first save to start")
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		_ = q.Close()
+		close(closed)
+	}()
+
+	select {
+	case <-closed:
+		t.Fatalf("queue close returned before blocked save released")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(store.release)
+
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatalf("queue close did not finish after releasing blocked save")
+	}
+
+	if got := store.count(); got != 2 {
+		t.Fatalf("expected 2 saved records after drain, got %d", got)
+	}
+}
+
+func TestInprocDPRQueueEnqueueAfterClose(t *testing.T) {
+	q := NewInprocDPRQueue(&saveCaptureStore{}, InprocDPRQueueConfig{Buffer: 1})
+	if err := q.Close(); err != nil {
+		t.Fatalf("close failed: %v", err)
+	}
+	if err := q.EnqueueDPR(&dpr.Record{RecordID: "rec-1"}); err == nil {
+		t.Fatalf("expected enqueue-after-close error")
 	}
 }

@@ -1,5 +1,5 @@
 # Faramesh Core — local developer entrypoints (CI: monorepo `.github/workflows/faramesh-core-release-gate.yml`).
-.PHONY: all build build-release compile clean test test-race vet sbom docker verify-reproducible release install setup setup-status setup-stop benchmark-latency langchain-single langchain-real langchain-real-fpl langgraph-real langgraph-real-fpl burst-rate-harness defer-timeout-resume-harness linux-interception-harness node-autopatch-harness policy-roundtrip-harness langchain-wizard govern-wizard
+.PHONY: all build build-release compile clean test test-race vet sbom docker verify-reproducible release install setup setup-status setup-stop benchmark-latency langchain-single langchain-real langchain-real-fpl langgraph-real langgraph-real-fpl burst-rate-harness defer-timeout-resume-harness linux-interception-harness node-autopatch-harness policy-roundtrip-harness corpus-run corpus-matrix corpus-contract corpus-check langchain-wizard govern-wizard packs-verify
 
 all: vet compile test build
 
@@ -23,6 +23,10 @@ test:
 
 test-race:
 	go test ./... -count=1 -race
+
+# On-disk seed dirs: validate every policy.yaml and compile every policy.fpl (see packs/validate_test.go).
+packs-verify:
+	go test ./packs/... -count=1
 
 # participle grammar tags in internal/core/fpl are not valid reflect.StructTag (expected).
 vet:
@@ -125,6 +129,22 @@ node-autopatch-harness:
 # Policy conversion round-trip harness (lossless and lossy classes).
 policy-roundtrip-harness:
 	bash tests/policy_roundtrip_harness.sh
+
+# Run one corpus entry wrapper by path, e.g. `make corpus-run ENTRY=tests/corpus/mcp-servers/mcp-node-sdk`.
+corpus-run:
+	bash scripts/run_corpus_entry.sh "$(ENTRY)"
+
+# Regenerate the committed corpus coverage matrix artifacts.
+corpus-matrix:
+	bash scripts/generate_coverage_matrix.sh
+
+# Validate corpus expected.json contract (replay parity, hook_truth, required fields).
+corpus-contract:
+	python3 scripts/corpus_contract_check.py tests/corpus
+
+# Fail if the committed coverage matrix is stale.
+corpus-check:
+	bash scripts/check_coverage_matrix.sh
 
 # Minimal-interaction installer/wizard for governed LangChain agent runs.
 langchain-wizard:

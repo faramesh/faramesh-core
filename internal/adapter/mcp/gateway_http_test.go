@@ -55,6 +55,24 @@ func testMCPPipelineFromYAML(t *testing.T, yaml string) *core.Pipeline {
 	})
 }
 
+func testMCPPipelineFromYAMLWithHMAC(t *testing.T, yaml string, hmacKey []byte) *core.Pipeline {
+	t.Helper()
+	doc, ver, err := policy.LoadBytes([]byte(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	eng, err := policy.NewEngine(doc, ver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return core.NewPipeline(core.Config{
+		Engine:   policy.NewAtomicEngine(eng),
+		Sessions: session.NewManager(),
+		Defers:   deferwork.NewWorkflow(""),
+		HMACKey:  hmacKey,
+	})
+}
+
 func TestHTTPGateway_toolsCallDenied(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("upstream should not be called on deny")

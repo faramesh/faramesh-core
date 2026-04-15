@@ -116,12 +116,24 @@ func readBoundedBody(body io.Reader, maxBytes int64) ([]byte, bool, error) {
 
 // handleHTTPForward implements a governed HTTP forward proxy for absolute-form request-targets.
 func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	statusCode := 0
+	_, span := observe.StartOTLPSpan(r.Context(), "faramesh.proxy.http_forward")
+	defer func() {
+		if statusCode > 0 {
+			observe.RecordProxyForwardOTLP(r.Context(), r.Method, statusCode, time.Since(start))
+		}
+		observe.EndOTLPSpan(span, nil)
+	}()
+
 	if r.URL == nil || r.URL.Scheme == "" || r.URL.Host == "" {
+		statusCode = http.StatusBadRequest
 		http.Error(w, `{"error":"invalid proxy request"}`, http.StatusBadRequest)
 		return
 	}
 
 	if !s.allowIP(remoteIP(r.RemoteAddr)) {
+		statusCode = http.StatusTooManyRequests
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusTooManyRequests)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -138,6 +150,7 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 
 	host, port := hostPortFromURL(r.URL)
 	if host == "" || port <= 0 {
+		statusCode = http.StatusBadRequest
 		http.Error(w, `{"error":"invalid upstream target"}`, http.StatusBadRequest)
 		return
 	}
@@ -148,6 +161,7 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 		zap.Int("port", port),
 		zap.String("path", r.URL.Path),
 	) {
+		statusCode = http.StatusForbidden
 		return
 	}
 
@@ -157,6 +171,7 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 		zap.Int("port", port),
 		zap.String("path", r.URL.Path),
 	) {
+		statusCode = http.StatusForbidden
 		return
 	}
 	if strings.TrimSpace(dialHost) == "" {
@@ -165,10 +180,12 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 
 	bodyBytes, tooLarge, err := readBoundedBody(r.Body, maxForwardRequestBodyBytes)
 	if err != nil {
+		statusCode = http.StatusBadRequest
 		http.Error(w, `{"error":"failed to read request body"}`, http.StatusBadRequest)
 		return
 	}
 	if tooLarge {
+		statusCode = http.StatusRequestEntityTooLarge
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusRequestEntityTooLarge)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -241,6 +258,7 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 	case core.EffectPermit, core.EffectShadow, core.EffectShadowPermit:
 	default:
 		if decision.Effect == core.EffectDefer {
+			statusCode = http.StatusForbidden
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -250,6 +268,7 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reasonCode := networkPolicyReasonCode(decision)
+		statusCode = http.StatusForbidden
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -286,6 +305,7 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 				zap.String("host", host),
 				zap.String("path", r.URL.Path),
 			) {
+				statusCode = http.StatusForbidden
 				return
 			}
 		}
@@ -295,6 +315,7 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 
 		routedURL, routeErr := buildInferenceUpstreamURL(activeRoute, r.URL)
 		if routeErr != nil {
+			statusCode = http.StatusBadGateway
 			http.Error(w, `{"error":"invalid inference route"}`, http.StatusBadGateway)
 			return
 		}
@@ -312,11 +333,13 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 		}
 		routedURLObj, parseErr := http.NewRequest(http.MethodGet, routedURL, nil)
 		if parseErr != nil || routedURLObj.URL == nil {
+			statusCode = http.StatusBadGateway
 			http.Error(w, `{"error":"invalid inference route"}`, http.StatusBadGateway)
 			return
 		}
 		egressHost, egressPort = hostPortFromURL(routedURLObj.URL)
 		if egressHost == "" || egressPort <= 0 {
+			statusCode = http.StatusBadGateway
 			http.Error(w, `{"error":"invalid inference route target"}`, http.StatusBadGateway)
 			return
 		}
@@ -327,6 +350,7 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 			zap.Int("port", egressPort),
 			zap.String("path", r.URL.Path),
 		) {
+			statusCode = http.StatusForbidden
 			return
 		}
 		if strings.TrimSpace(routeDialHost) != "" {
@@ -341,12 +365,14 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 			zap.String("host", host),
 			zap.String("path", r.URL.Path),
 		) {
+			statusCode = http.StatusForbidden
 			return
 		}
 	}
 
 	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, bytesReader(bodyBytes))
 	if err != nil {
+		statusCode = http.StatusBadRequest
 		http.Error(w, `{"error":"bad upstream request"}`, http.StatusBadRequest)
 		return
 	}
@@ -365,6 +391,7 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 				zap.String("host", host),
 				zap.String("path", r.URL.Path),
 			) {
+				statusCode = http.StatusForbidden
 				return
 			}
 		}
@@ -405,11 +432,13 @@ func (s *Server) handleHTTPForward(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := client.Do(outReq)
 	if err != nil {
+		statusCode = http.StatusBadGateway
 		s.log.Warn("proxy http forward upstream error", zap.Error(err), zap.String("url", targetURL))
 		http.Error(w, `{"error":"upstream unreachable"}`, http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
+	statusCode = resp.StatusCode
 
 	copyResponseHeaders(w, resp.Header)
 	w.WriteHeader(resp.StatusCode)

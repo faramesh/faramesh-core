@@ -1,0 +1,9 @@
+# Optional FPL sidecar; HTTP URL tiering lives in YAML.
+agent network-controls {
+  default deny
+
+  rules {
+    deny! shell/*
+      reason: "network agent must not run shell"
+  }
+}

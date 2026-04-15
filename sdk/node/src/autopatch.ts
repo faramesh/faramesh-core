@@ -15,6 +15,7 @@
  */
 
 import { govern, GovernResult } from './govern';
+import { installLangChainInterceptor } from './langchain';
 
 let installed = false;
 const patchedServers = new WeakSet<object>();
@@ -102,6 +103,15 @@ export function installGlobalHook(): void {
         }
         ServerClass._farameshPatched = true;
       }
+    }
+    if (
+      request === '@langchain/core/tools' ||
+      request === 'langchain/tools' ||
+      request === '@langchain/langgraph' ||
+      request === '@langchain/langgraph/prebuilt' ||
+      request === 'langgraph/prebuilt'
+    ) {
+      installLangChainInterceptor();
     }
     return result;
   };

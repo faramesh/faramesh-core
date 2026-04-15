@@ -109,6 +109,9 @@ type Rule struct {
 	ReasonCode       string `yaml:"reason_code"`
 	IncidentCategory string `yaml:"incident_category"`
 	IncidentSeverity string `yaml:"incident_severity"`
+	// ApprovalsRequired is how many distinct approver_ids must approve before a
+	// defer from this rule completes. 0 or 1 means single approver (default).
+	ApprovalsRequired int `yaml:"approvals_required,omitempty"`
 }
 
 // Match defines the conditions under which a rule fires.
@@ -158,6 +161,11 @@ type Budget struct {
 	SessionUSD float64 `yaml:"session_usd"`
 	// MaxCalls is the maximum total tool calls per session (all tools).
 	MaxCalls int64 `yaml:"max_calls"`
+	// SessionTokens caps reported LLM tokens (cumulative per session) when adapters
+	// supply usage via args (_faramesh.tokens or usage_tokens). 0 disables.
+	SessionTokens int64 `yaml:"session_tokens"`
+	// DailyTokens is the same limit for the current UTC calendar day.
+	DailyTokens int64 `yaml:"daily_tokens"`
 	// OnExceed is the effect when a limit is hit: "deny" or "defer".
 	OnExceed string `yaml:"on_exceed"`
 }

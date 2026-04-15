@@ -1,0 +1,24 @@
+faramesh-version: "1.0"
+agent-id: "infra-agent"
+default_effect: deny
+
+rules:
+  - id: deny-destructive-shell
+    match:
+      tool: "shell/run"
+      when: "args.cmd != nil && args.cmd matches \"rm -rf|DROP TABLE|terraform destroy\""
+    effect: deny
+    reason: "destructive command blocked"
+
+  - id: defer-infra-mutation
+    match:
+      tool: "shell/run"
+      when: "args.cmd != nil && args.cmd matches \"terraform|kubectl|docker\""
+    effect: defer
+    reason: "infrastructure change requires approval"
+
+  - id: permit-readonly-shell
+    match:
+      tool: "shell/run"
+      when: "args.cmd != nil && args.cmd matches \"ls|cat|grep|find|echo|ps|df|uptime\""
+    effect: permit

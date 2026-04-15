@@ -24,18 +24,19 @@ const (
 
 // TriageRule matches a tool pattern to a priority level.
 type TriageRule struct {
-	ToolPattern string        `yaml:"tool_pattern"` // glob pattern
-	Priority    string        `yaml:"priority"`     // critical, high, normal
-	SLA         time.Duration `yaml:"sla"`          // max wait before escalation
-	AutoDeny    bool          `yaml:"auto_deny"`    // deny on SLA breach (vs. escalate)
-	EscalateTo  string        `yaml:"escalate_to"`  // channel name for escalation
+	ToolPattern   string        `yaml:"tool_pattern"` // glob pattern
+	Priority      string        `yaml:"priority"`     // critical, high, normal
+	SLA           time.Duration `yaml:"sla"`          // max wait before escalation
+	AutoDeny      bool          `yaml:"auto_deny"`    // deny on SLA breach (vs. escalate)
+	AutoDenyAfter time.Duration `yaml:"auto_deny_after"`
+	EscalateTo    string        `yaml:"escalate_to"` // channel name for escalation
 }
 
 // TriageConfig holds the triage rules and defaults.
 type TriageConfig struct {
-	Rules          []TriageRule  `yaml:"rules"`
-	DefaultSLA     time.Duration `yaml:"default_sla"`
-	DefaultPriority string      `yaml:"default_priority"`
+	Rules           []TriageRule  `yaml:"rules"`
+	DefaultSLA      time.Duration `yaml:"default_sla"`
+	DefaultPriority string        `yaml:"default_priority"`
 }
 
 // Triage manages DEFER prioritization, SLA enforcement, and auto-escalation.
@@ -48,25 +49,26 @@ type Triage struct {
 
 // TriagedItem is a DEFER item with triage metadata.
 type TriagedItem struct {
-	Token      string    `json:"token"`
-	AgentID    string    `json:"agent_id"`
-	ToolID     string    `json:"tool_id"`
-	Reason     string    `json:"reason"`
-	Priority   string    `json:"priority"`
-	SLA        time.Duration `json:"sla"`
-	CreatedAt  time.Time `json:"created_at"`
-	Deadline   time.Time `json:"deadline"`
-	EscalateAt time.Time `json:"escalate_at"`
-	EscalateTo string    `json:"escalate_to"`
-	AutoDeny   bool      `json:"auto_deny"`
-	Escalated  bool      `json:"escalated"`
+	Token         string        `json:"token"`
+	AgentID       string        `json:"agent_id"`
+	ToolID        string        `json:"tool_id"`
+	Reason        string        `json:"reason"`
+	Priority      string        `json:"priority"`
+	SLA           time.Duration `json:"sla"`
+	CreatedAt     time.Time     `json:"created_at"`
+	Deadline      time.Time     `json:"deadline"`
+	EscalateAt    time.Time     `json:"escalate_at"`
+	EscalateTo    string        `json:"escalate_to"`
+	AutoDeny      bool          `json:"auto_deny"`
+	AutoDenyAfter time.Duration `json:"auto_deny_after"`
+	Escalated     bool          `json:"escalated"`
 }
 
 // EscalationEvent is emitted when a DEFER breaches its SLA.
 type EscalationEvent struct {
-	Item     *TriagedItem
-	Reason   string // "sla_breach"
-	Channel  string // target channel
+	Item    *TriagedItem
+	Reason  string // "sla_breach"
+	Channel string // target channel
 }
 
 // NewTriage creates a new triage manager.
@@ -93,6 +95,7 @@ func (t *Triage) Classify(token, agentID, toolID, reason string) *TriagedItem {
 	priority := cfg.DefaultPriority
 	sla := cfg.DefaultSLA
 	autoDeny := true
+	autoDenyAfter := time.Duration(0)
 	escalateTo := ""
 
 	// Find the first matching rule.
@@ -103,6 +106,7 @@ func (t *Triage) Classify(token, agentID, toolID, reason string) *TriagedItem {
 				sla = rule.SLA
 			}
 			autoDeny = rule.AutoDeny
+			autoDenyAfter = rule.AutoDenyAfter
 			escalateTo = rule.EscalateTo
 			break
 		}
@@ -119,17 +123,18 @@ func (t *Triage) Classify(token, agentID, toolID, reason string) *TriagedItem {
 	}
 
 	item := &TriagedItem{
-		Token:      token,
-		AgentID:    agentID,
-		ToolID:     toolID,
-		Reason:     reason,
-		Priority:   priority,
-		SLA:        sla,
-		CreatedAt:  now,
-		Deadline:   now.Add(sla),
-		EscalateAt: now.Add(sla * 2 / 3), // escalate at 2/3 of SLA
-		EscalateTo: escalateTo,
-		AutoDeny:   autoDeny,
+		Token:         token,
+		AgentID:       agentID,
+		ToolID:        toolID,
+		Reason:        reason,
+		Priority:      priority,
+		SLA:           sla,
+		CreatedAt:     now,
+		Deadline:      now.Add(sla),
+		EscalateAt:    now.Add(sla * 2 / 3), // escalate at 2/3 of SLA
+		EscalateTo:    escalateTo,
+		AutoDeny:      autoDeny,
+		AutoDenyAfter: autoDenyAfter,
 	}
 
 	t.mu.Lock()

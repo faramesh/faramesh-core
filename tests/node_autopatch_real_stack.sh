@@ -21,6 +21,7 @@ BUILDINFO_STDERR_PATH="${FARAMESH_NODE_REAL_BUILDINFO_STDERR:-$RUN_DIR/buildinfo
 NODE_RUN_STDERR_PATH="${FARAMESH_NODE_REAL_RUN_STDERR:-$RUN_DIR/node_run.stderr.log}"
 
 AGENT_ID="${FARAMESH_NODE_REAL_AGENT_ID:-node-autopatch-e2e}"
+DPR_HMAC_KEY="${FARAMESH_NODE_REAL_DPR_HMAC:-node-autopatch-replay-hmac}"
 
 show_debug_file() {
   local path="$1"
@@ -240,6 +241,7 @@ FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" serve \
   --policy "$POLICY_PATH" \
   --socket "$SOCKET_PATH" \
   --data-dir "$DATA_DIR" \
+  --dpr-hmac-key "$DPR_HMAC_KEY" \
   --strict-preflight \
   --integrity-manifest "$INTEGRITY_MANIFEST_PATH" \
   --integrity-base-dir "$ROOT_DIR" \
@@ -456,5 +458,6 @@ if with_record_hash < 3:
 PY
 
 run_cmd "$BIN_PATH" audit verify "$DATA_DIR/faramesh.db"
+run_cmd "$BIN_PATH" policy policy-replay --policy "$POLICY_PATH" --wal "$DATA_DIR/faramesh.wal" --max-divergence 0 --strict-reason-parity --dpr-hmac-key "$DPR_HMAC_KEY"
 
 echo "node autopatch real-stack harness passed"

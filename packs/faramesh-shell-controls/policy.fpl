@@ -1,0 +1,9 @@
+# Optional FPL sidecar; diagnostic vs modification matchers live in YAML.
+agent shell-controls {
+  default deny
+
+  rules {
+    deny! shell/*
+      reason: "destructive shell patterns governed in YAML"
+  }
+}

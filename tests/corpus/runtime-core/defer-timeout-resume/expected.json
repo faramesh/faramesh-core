@@ -1,0 +1,29 @@
+{
+  "status": "wip",
+  "framework": "faramesh-runtime",
+  "pattern": "defer-g3-stress",
+  "coverage_tier": "C",
+  "harness": "tests/defer_timeout_resume_stress_harness.sh",
+  "expected_tools": [
+    {"tool_id": "defer/wait-for-approval", "expected_effect": "defer"}
+  ],
+  "enforcement_surfaces": {
+    "framework_hook": false,
+    "attachable": false,
+    "governable": false,
+    "policy_visible": false,
+    "credential_brokered": false,
+    "shell_governed": false,
+    "network_governed": false,
+    "mcp_governed": false,
+    "audit_complete": false
+  },
+  "known_gaps": [
+    "Go stress tests for late resolve, triage, and daemon wait-for-approval timeouts — not an agent hook_truth / WAL tier-A row"
+  ],
+  "detection": {
+    "framework_detected": false,
+    "framework_name": "n/a",
+    "trust_level": "instrumented"
+  }
+}

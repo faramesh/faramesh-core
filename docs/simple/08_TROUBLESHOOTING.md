@@ -53,7 +53,7 @@ faramesh explain --token dnl_xxxxxxxx
 Run:
 
 ```bash
-faramesh audit verify /path/to/faramesh.db
+faramesh audit verify /path/to/faramesh.wal
 ```
 
 If violations appear, treat as data integrity incident.

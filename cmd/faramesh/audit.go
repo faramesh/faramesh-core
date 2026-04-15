@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -16,7 +17,7 @@ import (
 
 var auditCmd = &cobra.Command{
 	Use:   "audit",
-	Short: "Audit operations: live tail, verify, and explain DPR records",
+	Short: "Audit operations: live tail, verify, compact WAL, and explain DPR records",
 }
 
 var auditTailCmd = &cobra.Command{
@@ -31,10 +32,78 @@ governance decision to the terminal in real time, with color-coded effects.
 }
 
 var auditVerifyCmd = &cobra.Command{
-	Use:   "verify <db-path>",
-	Short: "Verify the SHA256 chain integrity of a DPR SQLite store",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runAuditVerify,
+	Use:   "verify <db-or-wal-path>",
+	Short: "Verify chain integrity of a DPR WAL file or SQLite store",
+	Long: `Verify DPR chain integrity. Accepts either a .wal file (preferred,
+full chain validation with genesis/link/hash checks) or a .db file
+(fallback, per-agent chain link verification from SQLite).
+
+  faramesh audit verify /var/lib/faramesh/faramesh.wal
+  faramesh audit verify /var/lib/faramesh/faramesh.db`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAuditVerify,
+}
+
+var auditCompactCmd = &cobra.Command{
+	Use:   "compact <wal-path>",
+	Short: "Offline compaction of a DPR WAL file (retention + chain rebase + verify)",
+	Long: `Rewrites a binary FWAL file in place using the same retention rules as the
+daemon (recent record cap + age window). Archives the previous file to a
+timestamped .bak sibling, then rewrites retained records with recomputed hash
+chains. After compaction, runs full ReplayValidated to prove integrity.
+
+  faramesh audit compact /var/lib/faramesh/faramesh.wal
+
+Only FWAL binary WAL paths are supported (not SQLite .db). Stop the daemon or
+copy the WAL elsewhere before compacting the live file.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAuditCompact,
+}
+
+var auditWalInspectCmd = &cobra.Command{
+	Use:   "wal-inspect <wal-path>",
+	Short: "Report per-frame version byte counts for a binary FWAL file",
+	Long: `Walks the WAL without decoding DPR JSON and prints how many frames exist
+per header version byte. Use before upgrading WAL readers or when validating
+operator backups.
+
+  faramesh audit wal-inspect /var/lib/faramesh/faramesh.wal`,
+	Args: cobra.ExactArgs(1),
+	RunE: runAuditWalInspect,
+}
+
+func runAuditWalInspect(_ *cobra.Command, args []string) error {
+	st, err := dpr.ScanWALFrameVersions(args[0])
+	if err != nil {
+		return err
+	}
+	color.New(color.FgCyan, color.Bold).Printf("WAL %s\n", st.Path)
+	fmt.Printf("file_size_bytes: %d\n", st.FileSize)
+	fmt.Printf("total_frames: %d\n", st.TotalFrames)
+	if len(st.FramesByVersion) == 0 {
+		fmt.Println("frames_by_version: (empty file)")
+		return nil
+	}
+	fmt.Println("frames_by_version:")
+	for _, v := range sortedVersionBytes(st.FramesByVersion) {
+		fmt.Printf("  version_byte=%d count=%d\n", v, st.FramesByVersion[v])
+	}
+	return nil
+}
+
+func sortedVersionBytes(m map[byte]uint64) []byte {
+	var keys []byte
+	for k := range m {
+		keys = append(keys, k)
+	}
+	for i := 0; i < len(keys); i++ {
+		for j := i + 1; j < len(keys); j++ {
+			if keys[j] < keys[i] {
+				keys[i], keys[j] = keys[j], keys[i]
+			}
+		}
+	}
+	return keys
 }
 
 var (
@@ -47,6 +116,8 @@ func init() {
 	auditTailCmd.Flags().StringVar(&tailSocket, "socket", sdk.SocketPath, "daemon Unix socket path")
 	auditCmd.AddCommand(auditTailCmd)
 	auditCmd.AddCommand(auditVerifyCmd)
+	auditCmd.AddCommand(auditCompactCmd)
+	auditCmd.AddCommand(auditWalInspectCmd)
 }
 
 // runAuditTail connects to the daemon and streams decisions.
@@ -117,11 +188,105 @@ func runAuditTail(cmd *cobra.Command, args []string) error {
 }
 
 func runAuditVerify(cmd *cobra.Command, args []string) error {
-	dbPath := args[0]
-	if _, err := os.Stat(dbPath); err != nil {
-		return fmt.Errorf("database not found: %s", dbPath)
+	path := args[0]
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("file not found: %s", path)
 	}
 
+	bold := color.New(color.Bold)
+	green := color.New(color.FgGreen)
+	red := color.New(color.FgRed)
+
+	if isWALFile(path) {
+		return verifyWAL(path, bold, green, red)
+	}
+	return verifyDB(path, bold, green, red)
+}
+
+func runAuditCompact(cmd *cobra.Command, args []string) error {
+	path := args[0]
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("file not found: %s", path)
+	}
+	if !isWALFile(path) {
+		return fmt.Errorf("compact requires a DPR binary WAL (FWAL-framed records); not recognized: %q", path)
+	}
+
+	bold := color.New(color.Bold)
+	green := color.New(color.FgGreen)
+	red := color.New(color.FgRed)
+
+	wal, err := dpr.OpenWAL(path)
+	if err != nil {
+		return fmt.Errorf("open WAL: %w", err)
+	}
+	defer wal.Close()
+
+	bold.Printf("\nCompacting WAL: %s\n", path)
+	if err := wal.Compact(); err != nil {
+		red.Printf("\n✗ compaction failed: %v\n\n", err)
+		return err
+	}
+
+	n := 0
+	if err := wal.ReplayValidated(func(*dpr.Record) error {
+		n++
+		return nil
+	}); err != nil {
+		red.Printf("\n✗ post-compaction chain validation failed: %v\n\n", err)
+		return fmt.Errorf("post-compaction validation: %w", err)
+	}
+
+	green.Printf("\n✓ WAL compacted and chain integrity verified (%d records retained).\n\n", n)
+	return nil
+}
+
+// walFrameMagicLE matches internal/core/dpr: first 4 bytes of each frame are
+// little-endian uint32(0x4657414c) (ASCII "FWAL" interpreted as LE word).
+const walFrameMagicLE = uint32(0x4657414c)
+
+func isWALFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	var hdr [4]byte
+	if _, err := f.Read(hdr[:]); err != nil {
+		return false
+	}
+	return binary.LittleEndian.Uint32(hdr[:]) == walFrameMagicLE
+}
+
+func verifyWAL(path string, bold, green, red *color.Color) error {
+	wal, err := dpr.OpenWAL(path)
+	if err != nil {
+		return fmt.Errorf("open WAL: %w", err)
+	}
+	defer wal.Close()
+
+	bold.Printf("\nVerifying DPR chain integrity (WAL): %s\n", path)
+	fmt.Println("Mode: full chain validation (genesis + hash + chain links per agent)")
+
+	count := 0
+	err = wal.ReplayValidated(func(rec *dpr.Record) error {
+		count++
+		return nil
+	})
+
+	if err != nil {
+		red.Printf("\n✗ CHAIN VIOLATION: %v\n", err)
+		fmt.Printf("Records verified before failure: %d\n\n", count)
+		os.Exit(1)
+	}
+
+	green.Printf("\n✓ Chain integrity verified. %d records, 0 violations.\n", count)
+	fmt.Println("  Checked: per-frame CRC32, canonical hash, genesis markers, chain links")
+	fmt.Println()
+	return nil
+}
+
+func verifyDB(dbPath string, bold, green, red *color.Color) error {
 	store, err := dpr.OpenStore(dbPath)
 	if err != nil {
 		return fmt.Errorf("open DPR store: %w", err)
@@ -133,11 +298,8 @@ func runAuditVerify(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("read records: %w", err)
 	}
 
-	bold := color.New(color.Bold)
-	green := color.New(color.FgGreen)
-	red := color.New(color.FgRed)
-
-	bold.Printf("\nVerifying DPR chain integrity: %s\n", dbPath)
+	bold.Printf("\nVerifying DPR chain integrity (SQLite): %s\n", dbPath)
+	fmt.Printf("Mode: per-record hash recomputation (use .wal file for full chain validation)\n")
 	fmt.Printf("Records to verify: %d\n\n", len(records))
 
 	violations := 0
@@ -145,15 +307,15 @@ func runAuditVerify(cmd *cobra.Command, args []string) error {
 		expected := rec.RecordHash
 		rec.ComputeHash()
 		if rec.RecordHash != expected {
-			red.Printf("✗ CHAIN VIOLATION record %d: %s\n", i, rec.RecordID)
+			red.Printf("✗ HASH VIOLATION record %d: %s\n", i, rec.RecordID)
 			violations++
 		}
 	}
 
 	if violations == 0 {
-		green.Printf("✓ Chain integrity verified. %d records, 0 violations.\n\n", len(records))
+		green.Printf("✓ Hash integrity verified. %d records, 0 violations.\n\n", len(records))
 	} else {
-		red.Printf("✗ %d chain integrity violation(s) detected.\n\n", violations)
+		red.Printf("✗ %d hash integrity violation(s) detected.\n\n", violations)
 		os.Exit(1)
 	}
 	return nil

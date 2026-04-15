@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"runtime"
 	"syscall"
 	"unsafe"
 )
@@ -13,6 +14,12 @@ import (
 const (
 	// SYS_SECCOMP is not in Go's syscall package; amd64 syscall number.
 	sysSeccomp = 317
+
+	seccompDataArchOffset = 4
+	seccompDataNrOffset   = 0
+
+	auditArchX8664 = 0xc000003e
+	auditArchARM64 = 0xc00000b7
 )
 
 // SeccompProfile is an OCI-compatible seccomp profile derived from policy.
@@ -98,30 +105,32 @@ func InstallSeccompFilter(cfg *SandboxConfig) error {
 // buildBPFFilter generates a classic BPF program that allows only the listed
 // syscall numbers and returns EPERM for everything else.
 func buildBPFFilter(allowed map[uint32]bool) []syscall.SockFilter {
-	// BPF_LD+BPF_W+BPF_ABS: load syscall number from seccomp_data.nr (offset 0)
+	auditArch := currentAuditArch()
+	// Load seccomp_data.arch, reject mismatched syscall-number tables, then load seccomp_data.nr.
 	prog := []syscall.SockFilter{
-		{Code: 0x20, K: 0}, // LD [0] — load arch
-		// We skip arch check for simplicity; production should validate AUDIT_ARCH.
-		{Code: 0x20, K: 0}, // LD [0] — load nr
+		{Code: 0x20, K: seccompDataArchOffset}, // LD [4] — load arch
+		{Code: 0x15, Jt: 1, K: auditArch},      // JEQ auditArch -> continue, else deny
+		{Code: 0x06, K: 0x00050001},            // RET EPERM on arch mismatch
+		{Code: 0x20, K: seccompDataNrOffset},   // LD [0] — load nr
 	}
 
 	for nr := range allowed {
 		// BPF_JMP+BPF_JEQ: if nr == allowed, skip to ALLOW
 		skipToAllow := uint8(len(allowed)) // approximate; recalculated below
 		prog = append(prog, syscall.SockFilter{
-			Code: 0x15,           // JEQ
+			Code: 0x15, // JEQ
 			Jt:   skipToAllow,
 			K:    nr,
 		})
 	}
 	// Default: SECCOMP_RET_ERRNO | EPERM
 	prog = append(prog, syscall.SockFilter{
-		Code: 0x06, // RET
+		Code: 0x06,       // RET
 		K:    0x00050001, // SECCOMP_RET_ERRNO | 1 (EPERM)
 	})
 	// ALLOW: SECCOMP_RET_ALLOW
 	prog = append(prog, syscall.SockFilter{
-		Code: 0x06, // RET
+		Code: 0x06,       // RET
 		K:    0x7fff0000, // SECCOMP_RET_ALLOW
 	})
 
@@ -133,6 +142,15 @@ func buildBPFFilter(allowed map[uint32]bool) []syscall.SockFilter {
 		}
 	}
 	return prog
+}
+
+func currentAuditArch() uint32 {
+	switch runtime.GOARCH {
+	case "arm64":
+		return auditArchARM64
+	default:
+		return auditArchX8664
+	}
 }
 
 // syscallNumber maps a name to a syscall number. This is a subset; production

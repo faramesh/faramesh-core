@@ -40,9 +40,19 @@ faramesh audit tail --agent my-agent
 
 ## Verify chain integrity
 
+For full chain validation (genesis markers, hash chains, and CRC per agent), use the WAL file:
+
+```bash
+faramesh audit verify /var/lib/faramesh/faramesh.wal
+```
+
+If the WAL file is unavailable, you can verify per-record hashes from the SQLite store (this does not check chain links between records):
+
 ```bash
 faramesh audit verify /var/lib/faramesh/faramesh.db
 ```
+
+For programmatic use, `dpr.WAL.ReplayValidated` (package `internal/core/dpr`) applies the same chain rules as `faramesh audit verify` on a `.wal` file.
 
 ## Export metrics to Datadog, Grafana, and New Relic
 

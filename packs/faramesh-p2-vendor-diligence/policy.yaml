@@ -1,0 +1,32 @@
+faramesh-version: "1.0"
+agent-id: "p2-vendor-diligence"
+default_effect: deny
+
+budget:
+  max_calls: 2200
+  on_exceed: defer
+
+rules:
+  - id: permit-risk-lookup
+    match:
+      tool: "vendor/risk_lookup"
+    effect: permit
+    reason: "read-only diligence and scoring lookups"
+
+  - id: permit-doc-pull
+    match:
+      tool: "http/get"
+    effect: permit
+    reason: "fetch vendor documentation and public filings"
+
+  - id: defer-contract-submit
+    match:
+      tool: "vendor/contract_submit"
+    effect: defer
+    reason: "contract submission requires legal approval"
+
+  - id: deny-shell
+    match:
+      tool: "shell/*"
+    effect: deny
+    reason: "procurement agents must not invoke shell"

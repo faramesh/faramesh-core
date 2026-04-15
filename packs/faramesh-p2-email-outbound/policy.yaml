@@ -1,0 +1,45 @@
+faramesh-version: "1.0"
+agent-id: "p2-email-outbound"
+default_effect: deny
+
+budget:
+  max_calls: 2500
+  on_exceed: defer
+
+rules:
+  - id: permit-drafts-and-reads
+    match:
+      tool: "email/draft/*"
+    effect: permit
+    reason: "compose and revise drafts without sending"
+
+  - id: permit-status-reads
+    match:
+      tool: "email/read/*"
+    effect: permit
+    reason: "thread and delivery status for triage"
+
+  - id: permit-esp-analytics
+    match:
+      tool: "http/get"
+      when: "args.url != nil && args.url matches \"https://api.sendgrid|https://api.mailgun|https://api.postmark|http://localhost\""
+    effect: permit
+    reason: "read-only calls to ESP analytics endpoints (tighten host list in production)"
+
+  - id: defer-send
+    match:
+      tool: "email/send/*"
+    effect: defer
+    reason: "any outbound send path requires human approval"
+
+  - id: defer-broadcast
+    match:
+      tool: "email/broadcast/*"
+    effect: defer
+    reason: "broadcast and newsletter sends are high blast-radius"
+
+  - id: deny-shell
+    match:
+      tool: "shell/*"
+    effect: deny
+    reason: "email agents must not invoke shell"

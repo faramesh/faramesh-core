@@ -1,0 +1,9 @@
+# Optional FPL sidecar; URL tiering lives in YAML.
+agent p2-research-agent {
+  default deny
+
+  rules {
+    deny! shell/run
+      reason: "research agents must not run shell"
+  }
+}

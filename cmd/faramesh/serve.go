@@ -12,6 +12,7 @@ import (
 
 	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 	"github.com/faramesh/faramesh-core/internal/cloud"
+	"github.com/faramesh/faramesh-core/internal/core"
 	"github.com/faramesh/faramesh-core/internal/daemon"
 )
 
@@ -62,9 +63,22 @@ var (
 	serveMCPSSEReplayEnabled         bool
 	serveMCPSSEReplayMaxEvents       int
 	serveMCPSSEReplayMaxAge          time.Duration
+	serveOTLPEnabled                 bool
+	serveOTLPEndpoint                string
+	serveOTLPProtocol                string
+	serveOTLPInsecure                bool
+	serveOTLPServiceName             string
+	serveOTLPServiceVersion          string
+	serveOTLPTracesEnabled           bool
+	serveOTLPMetricsEnabled          bool
+	serveOTLPLogsEnabled             bool
 	serveMetricsPort                 int
 	serveDPRDSN                      string
 	serveRedisURL                    string
+	serveDeferBackend                string
+	serveDeferRedisPrefix            string
+	serveRuntimeMode                 string
+	serveRequireGovernanceBootstrap  bool
 	serveDPRHMACKey                  string
 	serveTLSCert                     string
 	serveTLSKey                      string
@@ -72,6 +86,7 @@ var (
 	serveTLSAuto                     bool
 	servePagerDutyRoutingKey         string
 	servePolicyAdminToken            string
+	serveStandingAdminToken          string
 	serveEnableEBPF                  bool
 	serveEBPFObjectPath              string
 	serveEBPFAttachTP                bool
@@ -129,9 +144,22 @@ func init() {
 	serveCmd.Flags().BoolVar(&serveMCPSSEReplayEnabled, "mcp-sse-replay-enabled", false, "enable bounded Last-Event-ID replay cache for MCP SSE streams")
 	serveCmd.Flags().IntVar(&serveMCPSSEReplayMaxEvents, "mcp-sse-replay-max-events", 256, "max cached SSE events per MCP session when replay is enabled")
 	serveCmd.Flags().DurationVar(&serveMCPSSEReplayMaxAge, "mcp-sse-replay-max-age", 10*time.Minute, "max age for cached SSE replay events when replay is enabled")
+	serveCmd.Flags().BoolVar(&serveOTLPEnabled, "otlp-enabled", false, "enable OpenTelemetry OTLP export for traces/logs/metrics")
+	serveCmd.Flags().StringVar(&serveOTLPEndpoint, "otlp-endpoint", "", "OTLP collector endpoint host:port (default grpc=localhost:4317, http=localhost:4318)")
+	serveCmd.Flags().StringVar(&serveOTLPProtocol, "otlp-protocol", "grpc", "OTLP transport protocol: grpc|http")
+	serveCmd.Flags().BoolVar(&serveOTLPInsecure, "otlp-insecure", true, "use insecure OTLP transport (disable for TLS collectors)")
+	serveCmd.Flags().StringVar(&serveOTLPServiceName, "otlp-service-name", "faramesh", "OTLP service.name resource attribute")
+	serveCmd.Flags().StringVar(&serveOTLPServiceVersion, "otlp-service-version", "", "OTLP service.version resource attribute (default: policy version)")
+	serveCmd.Flags().BoolVar(&serveOTLPTracesEnabled, "otlp-traces-enabled", true, "enable OTLP trace export")
+	serveCmd.Flags().BoolVar(&serveOTLPMetricsEnabled, "otlp-metrics-enabled", true, "enable OTLP metric export")
+	serveCmd.Flags().BoolVar(&serveOTLPLogsEnabled, "otlp-logs-enabled", true, "enable OTLP log export")
 	serveCmd.Flags().IntVar(&serveMetricsPort, "metrics-port", 0, "start Prometheus metrics endpoint on this port (0 disables)")
 	serveCmd.Flags().StringVar(&serveDPRDSN, "dpr-dsn", "", "PostgreSQL DSN for mirrored DPR writes")
 	serveCmd.Flags().StringVar(&serveRedisURL, "redis-url", "", "Redis URL for shared session backend (optional)")
+	serveCmd.Flags().StringVar(&serveDeferBackend, "defer-backend", "memory", "DEFER state backend: memory|redis")
+	serveCmd.Flags().StringVar(&serveDeferRedisPrefix, "defer-redis-prefix", "faramesh:defer", "Redis key prefix for DEFER backend state when --defer-backend=redis")
+	serveCmd.Flags().StringVar(&serveRuntimeMode, "mode", "enforce", "daemon runtime mode: enforce|shadow|audit")
+	serveCmd.Flags().BoolVar(&serveRequireGovernanceBootstrap, "require-governance-before-network", false, "deny network-reaching tools until the agent has passed through governance bootstrap")
 	serveCmd.Flags().StringVar(&serveDPRHMACKey, "dpr-hmac-key", "", "HMAC secret for DPR record signatures (default: ephemeral per daemon run)")
 	serveCmd.Flags().StringVar(&serveTLSCert, "tls-cert", "", "TLS certificate PEM for adapter listeners (proxy/gRPC/MCP)")
 	serveCmd.Flags().StringVar(&serveTLSKey, "tls-key", "", "TLS private key PEM for adapter listeners (proxy/gRPC/MCP)")
@@ -139,6 +167,7 @@ func init() {
 	serveCmd.Flags().BoolVar(&serveTLSAuto, "tls-auto", false, "auto-generate an ephemeral self-signed TLS certificate when --tls-cert/--tls-key are not provided")
 	serveCmd.Flags().StringVar(&servePagerDutyRoutingKey, "pagerduty-routing-key", "", "PagerDuty Events v2 routing key for DEFER SLA escalations")
 	serveCmd.Flags().StringVar(&servePolicyAdminToken, "policy-admin-token", "", "admin token required for local programmatic policy push over gRPC")
+	serveCmd.Flags().StringVar(&serveStandingAdminToken, "standing-admin-token", "", "secret required on standing_grant_* SDK messages (or set FARAMESH_STANDING_ADMIN_TOKEN; falls back to policy admin token if set)")
 	serveCmd.Flags().BoolVar(&serveEnableEBPF, "ebpf", false, "enable minimal eBPF adapter bootstrap (also settable via FARAMESH_ENABLE_EBPF=true)")
 	serveCmd.Flags().StringVar(&serveEBPFObjectPath, "ebpf-object", "", "path to compiled eBPF ELF object (.o), required when eBPF is enabled")
 	serveCmd.Flags().BoolVar(&serveEBPFAttachTP, "ebpf-attach-tracepoints", false, "attempt best-effort tracepoint attach for tracepoint programs in the loaded object")
@@ -212,9 +241,22 @@ func runServe(cmd *cobra.Command, args []string) error {
 		MCPSSEReplayEnabled:         serveMCPSSEReplayEnabled,
 		MCPSSEReplayMaxEvents:       serveMCPSSEReplayMaxEvents,
 		MCPSSEReplayMaxAge:          serveMCPSSEReplayMaxAge,
+		OTLPEnabled:                 serveOTLPEnabled,
+		OTLPEndpoint:                strings.TrimSpace(serveOTLPEndpoint),
+		OTLPProtocol:                strings.ToLower(strings.TrimSpace(serveOTLPProtocol)),
+		OTLPInsecure:                serveOTLPInsecure,
+		OTLPServiceName:             strings.TrimSpace(serveOTLPServiceName),
+		OTLPServiceVersion:          strings.TrimSpace(serveOTLPServiceVersion),
+		OTLPTracesEnabled:           serveOTLPTracesEnabled,
+		OTLPMetricsEnabled:          serveOTLPMetricsEnabled,
+		OTLPLogsEnabled:             serveOTLPLogsEnabled,
 		MetricsPort:                 serveMetricsPort,
 		DPRDSN:                      serveDPRDSN,
 		RedisURL:                    serveRedisURL,
+		DeferBackend:                strings.ToLower(strings.TrimSpace(serveDeferBackend)),
+		DeferRedisPrefix:            strings.TrimSpace(serveDeferRedisPrefix),
+		RuntimeMode:                 core.RuntimeMode(strings.ToLower(strings.TrimSpace(serveRuntimeMode))),
+		RequireGovernanceBootstrap:  serveRequireGovernanceBootstrap,
 		DPRHMACKey:                  serveDPRHMACKey,
 		TLSCertFile:                 serveTLSCert,
 		TLSKeyFile:                  serveTLSKey,
@@ -222,6 +264,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		TLSAuto:                     resolveTLSAuto(),
 		PagerDutyRoutingKey:         servePagerDutyRoutingKey,
 		PolicyAdminToken:            resolvePolicyAdminToken(),
+		StandingAdminToken:          resolveStandingAdminToken(),
 		EnableEBPF:                  resolveServeEBPFEnabled(),
 		EBPFObjectPath:              resolveServeEBPFObjectPath(),
 		EBPFAttachTracepoints:       resolveServeEBPFAttachTracepoints(),
@@ -375,6 +418,18 @@ func resolvePolicyAdminToken() string {
 		return strings.TrimSpace(servePolicyAdminToken)
 	}
 	return strings.TrimSpace(os.Getenv("FARAMESH_POLICY_ADMIN_TOKEN"))
+}
+
+// resolveStandingAdminToken authenticates standing_grant_add|revoke|list.
+// Order: --standing-admin-token, FARAMESH_STANDING_ADMIN_TOKEN, then policy admin token.
+func resolveStandingAdminToken() string {
+	if strings.TrimSpace(serveStandingAdminToken) != "" {
+		return strings.TrimSpace(serveStandingAdminToken)
+	}
+	if v := strings.TrimSpace(os.Getenv("FARAMESH_STANDING_ADMIN_TOKEN")); v != "" {
+		return v
+	}
+	return resolvePolicyAdminToken()
 }
 
 func resolveMCPEdgeAuthBearerToken() string {
