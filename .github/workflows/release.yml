@@ -494,43 +494,27 @@ jobs:
     needs: github-release
     permissions:
       contents: read
+      id-token: write
 
     steps:
-      - name: Check npm token
-        id: npm_token
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -n "$NPM_TOKEN" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "NPM_TOKEN not set; skipping npm publish"
-          fi
-
       - uses: actions/checkout@v4
-        if: ${{ steps.npm_token.outputs.available == 'true' }}
 
       - name: Extract version
         id: version
-        if: ${{ steps.npm_token.outputs.available == 'true' }}
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - uses: actions/setup-node@v4
-        if: ${{ steps.npm_token.outputs.available == 'true' }}
         with:
-          node-version: "20"
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
       - name: Set npm package version
-        if: ${{ steps.npm_token.outputs.available == 'true' }}
         run: |
           cd npm
           npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
 
       - name: Check if npm version already exists
         id: npm_exists
-        if: ${{ steps.npm_token.outputs.available == 'true' }}
         run: |
           PKG=$(node -p "require('./npm/package.json').name")
           VER="${{ steps.version.outputs.version }}"
@@ -543,9 +527,7 @@ jobs:
           fi
 
       - name: Publish to npm
-        if: ${{ steps.npm_token.outputs.available == 'true' && steps.npm_exists.outputs.exists == 'false' }}
+        if: ${{ steps.npm_exists.outputs.exists == 'false' }}
         run: |
           cd npm
           npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
