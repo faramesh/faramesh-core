@@ -80,6 +80,21 @@ Faramesh sits between your AI agent and the tools it calls. Every tool call is c
 
 Most "AI governance" tools add a second AI to watch the first. That's probability watching probability. Faramesh uses deterministic rules — code that evaluates the same way every time. No model in the middle. No guessing.
 
+## Shipping Status (2026-04-15)
+
+Recent hardening and productization work now in mainline:
+
+- Observe-first CLI flow: `faramesh discover`, `faramesh attach`, `faramesh coverage`, `faramesh gaps`, `faramesh suggest`.
+- Pack lifecycle controls: `faramesh pack status`, `faramesh pack shadow`, `faramesh pack enforce`.
+- Standing approvals with persisted grants and admin-token authenticated standing-grant operations.
+- Corpus harness + contract checks wired into CI release gates.
+- Node SDK parity improvements: execution governor client + active config retrieval.
+
+Boundary note:
+
+- `faramesh-core` is the OSS runtime, CLI, SDKs, packs, and local adapters.
+- Hosted control-plane artifacts and proprietary API contracts are maintained outside this repository.
+
 ## Install
 
 ```bash
