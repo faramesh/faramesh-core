@@ -38,6 +38,26 @@ Filter by agent:
 faramesh audit tail --agent my-agent
 ```
 
+## Observe-first commands
+
+Use these to baseline before moving from shadow to enforce:
+
+```bash
+faramesh discover --source ./
+faramesh attach --agent-id my-agent --cmd "python agent.py"
+faramesh coverage --agent-id my-agent
+faramesh gaps --agent-id my-agent
+faramesh suggest --agent-id my-agent
+```
+
+If you installed a policy pack, inspect and switch mode directly:
+
+```bash
+faramesh pack status faramesh/<pack>
+faramesh pack shadow faramesh/<pack>
+faramesh pack enforce faramesh/<pack>
+```
+
 ## Verify chain integrity
 
 For full chain validation (genesis markers, hash chains, and CRC per agent), use the WAL file:

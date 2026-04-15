@@ -24,6 +24,15 @@ faramesh serve \
 
 Set a stable `--dpr-hmac-key` from your secret manager or service config. If you omit it, the daemon persists a generated key under the data directory (`faramesh.hmac.key`). See `docs/guides/DPR_HMAC_KEY.md`. Configure `--standing-admin-token` (or reuse `--policy-admin-token`) so `faramesh agent standing-grant` APIs are authenticated.
 
+Recommended rollout pattern for packs:
+
+```bash
+faramesh pack status faramesh/<pack>
+faramesh pack shadow faramesh/<pack>
+# monitor coverage / audit outcomes
+faramesh pack enforce faramesh/<pack>
+```
+
 ## Optional PostgreSQL mirror
 
 ```bash

@@ -4,6 +4,12 @@ These guides are for teams that want to use Faramesh fast.
 
 Language in this folder stays simple and practical. The goal is to help a team go from zero to working governance without digging into deep internals first.
 
+Current focus (2026-04-15):
+
+- Observe-first rollout: discover -> attach -> coverage -> gaps -> suggest.
+- Pack mode lifecycle: shadow first, then enforce.
+- Corpus-backed runtime truth checks in CI.
+
 If you want deep architecture details, protocol internals, and advanced hardening semantics, use:
 
 - [Power-User Docs Hub](https://github.com/faramesh/faramesh-core/blob/main/docs/power-users/README.md)
