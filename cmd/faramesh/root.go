@@ -13,6 +13,7 @@ func init() {
 		gapsCmd,
 		attachCmd,
 		suggestCmd,
+		setupCmd,
 		initCmd,
 		onboardCmd,
 		offboardCmd,
