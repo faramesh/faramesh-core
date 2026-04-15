@@ -56,7 +56,15 @@ binary_supports_subcommand() {
   if [[ -z "$required_subcommand" ]]; then
     return 0
   fi
-  "$bin" help "$required_subcommand" >/dev/null 2>&1
+  local output
+  output="$("$bin" "$required_subcommand" --help 2>&1 || true)"
+  if [[ "$output" == *"unknown command"* ]]; then
+    return 1
+  fi
+  if [[ "$output" == *"Usage:"* || "$output" == *"help for"* ]]; then
+    return 0
+  fi
+  return 1
 }
 
 resolve_faramesh_bin() {
@@ -127,7 +135,8 @@ Usage:
   bash scripts/faramesh_setup.sh [command] [args]
 
 Commands:
-  start|wizard   Start governance wizard (default)
+  flow           One guided flow: install + optional cloud pair + discover/attach/coverage/gaps/suggest + run
+  start|wizard   Start governance wizard
   status         Show wizard runtime status
   stop           Stop wizard runtime
   onboard        Run onboarding preflight with strict defaults
@@ -137,6 +146,8 @@ Commands:
   help           Show this help
 
 Examples:
+  bash scripts/faramesh_setup.sh flow
+  bash scripts/faramesh_setup.sh flow --agent-cmd "python agent.py" --cloud-pair yes
   bash scripts/faramesh_setup.sh
   bash scripts/faramesh_setup.sh start --framework langchain --agent-cmd "python app.py"
   bash scripts/faramesh_setup.sh status
@@ -147,11 +158,33 @@ Examples:
   bash scripts/faramesh_setup.sh install --no-interactive
 
 Recommended flow for existing agent stacks (LangChain, LangGraph, DeepAgents, MCP):
-  1) install:    bash scripts/faramesh_setup.sh install
-  2) govern:     bash scripts/faramesh_setup.sh start
-  3) stop:       bash scripts/faramesh_setup.sh stop
-  4) detach:     bash scripts/faramesh_setup.sh offboard --path <agent-project> --apply
-  5) uninstall:  bash scripts/faramesh_setup.sh uninstall --path <agent-project> --yes
+  1) one-shot:   bash scripts/faramesh_setup.sh flow
+  2) detach:     bash scripts/faramesh_setup.sh offboard --path <agent-project> --apply
+  3) uninstall:  bash scripts/faramesh_setup.sh uninstall --path <agent-project> --yes
+EOF
+}
+
+flow_usage() {
+  cat <<'EOF'
+Usage:
+  bash scripts/faramesh_setup.sh flow [options]
+
+Runs one guided shell flow that can:
+  1) install Faramesh,
+  2) optionally pair with Faramesh Horizon cloud,
+  3) run discover/attach/coverage/gaps/suggest,
+  4) optionally execute your agent under governance with faramesh run.
+
+Options:
+  --project-dir <dir>     Project directory for onboarding commands (default: cwd)
+  --data-dir <dir>        Data directory for attach/coverage/gaps/suggest (default: <project>/.faramesh)
+  --policy-out <file>     Suggested policy output path (default: <project>/suggested-policy.yaml)
+  --agent-cmd <command>   Agent command to run with faramesh run
+  --cloud-pair <mode>     yes|no|auto (default: auto)
+  --run-now <mode>        yes|no|auto (default: auto)
+  --install <mode>        yes|no|auto (default: auto)
+  --yes, -y               Non-interactive mode (accept defaults)
+  -h, --help              Show this help
 EOF
 }
 
@@ -227,6 +260,184 @@ run_offboard() {
   local bin
   bin="$(resolve_faramesh_bin offboard)"
   exec "$bin" offboard "$@"
+}
+
+run_flow() {
+  local assume_yes=0
+  local project_dir="$PWD"
+  local data_dir=""
+  local policy_out=""
+  local agent_cmd=""
+  local cloud_pair_mode="auto"
+  local run_now_mode="auto"
+  local install_mode="auto"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project-dir)
+        project_dir="${2:-}"
+        shift
+        ;;
+      --data-dir)
+        data_dir="${2:-}"
+        shift
+        ;;
+      --policy-out)
+        policy_out="${2:-}"
+        shift
+        ;;
+      --agent-cmd)
+        agent_cmd="${2:-}"
+        shift
+        ;;
+      --cloud-pair)
+        cloud_pair_mode="${2:-}"
+        shift
+        ;;
+      --run-now)
+        run_now_mode="${2:-}"
+        shift
+        ;;
+      --install)
+        install_mode="${2:-}"
+        shift
+        ;;
+      --yes|-y)
+        assume_yes=1
+        ;;
+      -h|--help)
+        flow_usage
+        exit 0
+        ;;
+      *)
+        echo "unknown flow option: $1" >&2
+        flow_usage
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  if [[ ! -d "$project_dir" ]]; then
+    echo "project directory not found: $project_dir" >&2
+    exit 1
+  fi
+
+  if [[ -z "$data_dir" ]]; then
+    data_dir="$project_dir/.faramesh"
+  fi
+  mkdir -p "$data_dir"
+
+  if [[ -z "$policy_out" ]]; then
+    policy_out="$project_dir/suggested-policy.yaml"
+  fi
+
+  cloud_pair_mode="$(normalize_yes_no "$cloud_pair_mode")"
+  if [[ -z "$cloud_pair_mode" ]]; then
+    cloud_pair_mode="auto"
+  fi
+
+  run_now_mode="$(normalize_yes_no "$run_now_mode")"
+  if [[ -z "$run_now_mode" ]]; then
+    run_now_mode="auto"
+  fi
+
+  install_mode="$(normalize_yes_no "$install_mode")"
+  if [[ -z "$install_mode" ]]; then
+    install_mode="auto"
+  fi
+
+  local do_install="no"
+  if [[ "$install_mode" == "yes" ]]; then
+    do_install="yes"
+  elif [[ "$install_mode" == "auto" ]]; then
+    if ! command -v faramesh >/dev/null 2>&1; then
+      do_install="yes"
+    fi
+  fi
+
+  if [[ "$do_install" == "yes" ]]; then
+    echo "[flow] installing faramesh via install.sh"
+    if [[ "$assume_yes" -eq 1 ]]; then
+      bash "$CORE_DIR/install.sh" --no-interactive
+    else
+      bash "$CORE_DIR/install.sh"
+    fi
+  fi
+
+  local bin
+  bin="$(resolve_faramesh_bin discover)"
+
+  local do_cloud_pair="no"
+  if [[ "$cloud_pair_mode" == "yes" ]]; then
+    do_cloud_pair="yes"
+  elif [[ "$cloud_pair_mode" == "auto" && "$assume_yes" -eq 0 ]]; then
+    local ans=""
+    read -r -p "pair with Faramesh Horizon cloud now? [y/N]: " ans || true
+    ans="$(normalize_yes_no "${ans:-no}")"
+    if [[ "$ans" == "yes" ]]; then
+      do_cloud_pair="yes"
+    fi
+  fi
+
+  if [[ "$do_cloud_pair" == "yes" ]]; then
+    echo "[flow] running cloud auth login"
+    "$bin" auth login || echo "cloud login returned non-zero; continuing local flow"
+  fi
+
+  echo "[flow] discover"
+  (cd "$project_dir" && "$bin" discover)
+
+  echo "[flow] attach"
+  (cd "$project_dir" && "$bin" attach --interactive=false --data-dir "$data_dir")
+
+  echo "[flow] coverage"
+  (cd "$project_dir" && "$bin" coverage --data-dir "$data_dir")
+
+  echo "[flow] suggest"
+  (cd "$project_dir" && "$bin" suggest --data-dir "$data_dir" --out "$policy_out")
+
+  echo "[flow] gaps"
+  (cd "$project_dir" && "$bin" gaps --data-dir "$data_dir" --policy "$policy_out")
+
+  local do_run_now="no"
+  if [[ "$run_now_mode" == "yes" ]]; then
+    do_run_now="yes"
+  elif [[ "$run_now_mode" == "auto" && "$assume_yes" -eq 0 ]]; then
+    local run_ans=""
+    read -r -p "run your agent under governance now? [Y/n]: " run_ans || true
+    run_ans="$(normalize_yes_no "${run_ans:-yes}")"
+    if [[ "$run_ans" != "no" ]]; then
+      do_run_now="yes"
+    fi
+  fi
+
+  if [[ "$do_run_now" == "yes" ]]; then
+    if [[ -z "$agent_cmd" && "$assume_yes" -eq 0 ]]; then
+      read -r -p "agent command (example: python agent.py): " agent_cmd || true
+    fi
+
+    if [[ -n "$agent_cmd" ]]; then
+      echo "[flow] run (policy=$policy_out): $agent_cmd"
+      (cd "$project_dir" && "$bin" run --policy "$policy_out" -- bash -lc "$agent_cmd")
+      return 0
+    fi
+  fi
+
+  cat <<EOF
+
+[flow] setup complete.
+
+Suggested policy:
+  $policy_out
+
+Next commands:
+  cd "$project_dir"
+  faramesh run --policy "$policy_out" -- <your-agent-command>
+  faramesh pack search
+  faramesh pack install <pack-ref> --mode shadow
+  faramesh pack enforce <pack-ref>
+EOF
 }
 
 run_uninstall() {
@@ -341,10 +552,15 @@ run_uninstall() {
 }
 
 if [[ $# -eq 0 ]]; then
-  exec bash "$WIZARD_SCRIPT"
+  run_flow
+  exit 0
 fi
 
 case "$1" in
+  flow)
+    shift
+    run_flow "$@"
+    ;;
   start|wizard)
     shift
     exec bash "$WIZARD_SCRIPT" "$@"

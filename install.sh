@@ -310,8 +310,7 @@ fi
 step "Next steps"
 
 printf "  ${BOLD}Source checkout lifecycle (recommended for existing projects):${RESET}\n"
-printf "     ${CYAN}bash scripts/faramesh_setup.sh install${RESET}\n"
-printf "     ${CYAN}bash scripts/faramesh_setup.sh start${RESET}\n"
+printf "     ${CYAN}bash scripts/faramesh_setup.sh flow${RESET}\n"
 printf "\n"
 printf "  ${BOLD}Binary-only quick start:${RESET}\n"
 printf "     ${CYAN}faramesh init${RESET}\n"
