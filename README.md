@@ -49,6 +49,7 @@ tamper-evident decision evidence for audit and compliance.
 - [Faramesh: AI Governance and AI Agent Execution Control](#faramesh-ai-governance-and-ai-agent-execution-control)
 - [What is Faramesh?](#what-is-faramesh)
 - [Install](#install)
+- [Setup Lifecycle (Source Checkout)](#setup-lifecycle-source-checkout)
 - [Quick Start](#quick-start)
 - [FPL - Faramesh Policy Language](#fpl--faramesh-policy-language)
 - [Supported Frameworks](#supported-frameworks)
@@ -60,6 +61,7 @@ tamper-evident decision evidence for audit and compliance.
 - [Latency Benchmarks](#latency-benchmarks)
 - [Cross-Platform Enforcement](#cross-platform-enforcement)
 - [Policy Packs](#policy-packs)
+- [Corpus Contracts and CI Gates](#corpus-contracts-and-ci-gates)
 - [Repository Map](#repository-map)
 - [Documentation Hub](#documentation-hub)
 - [CLI Reference](#cli-reference)
@@ -145,6 +147,12 @@ faramesh discover
 faramesh attach
 ```
 
+Tip: use a deterministic data path when onboarding a repo in CI or scripted environments.
+
+```bash
+faramesh attach --data-dir ./.faramesh
+```
+
 3. Check what is covered and what is still missing.
 
 ```bash
@@ -162,6 +170,15 @@ faramesh suggest --out suggested-policy.yaml
 
 ```bash
 faramesh run -- python agent.py
+```
+
+6. Move to managed pack lifecycle once baseline governance looks clean.
+
+```bash
+faramesh pack search
+faramesh pack install <pack-ref> --mode shadow
+faramesh pack status <pack-ref>
+faramesh pack enforce <pack-ref>
 ```
 
 ```
@@ -425,15 +442,49 @@ These are reference measurements for release engineering, not hard latency guara
 
 ## Policy Packs
 
-Ready-to-use FPL policies in `examples/`:
+Faramesh ships policy packs and a full lifecycle command surface.
 
-| File | Description |
-|------|-------------|
-| [`starter.fpl`](examples/starter.fpl) | General-purpose starter policy — blocks destructive commands, defers large payments |
-| [`payment-bot.fpl`](examples/payment-bot.fpl) | Financial agent with session budgets, phased workflow, and credential brokering |
-| [`infra-bot.fpl`](examples/infra-bot.fpl) | Infrastructure agent with strict sandbox, Terraform governance, and duty delegation |
-| [`customer-support.fpl`](examples/customer-support.fpl) | Support agent with intake/resolve phases, credit limits, and mass-email protection |
-| [`mcp-server.fpl`](examples/mcp-server.fpl) | MCP server wrapper policy for IDE agents (Claude Code, Cursor) |
+Core usage:
+
+```bash
+faramesh pack search
+faramesh pack preview <pack-ref>
+faramesh pack install <pack-ref> --mode shadow
+faramesh pack status <pack-ref>
+faramesh pack enforce <pack-ref>
+faramesh pack diff <pack-ref>
+faramesh pack upgrade <pack-ref>
+```
+
+Bundled pack families in this repository:
+
+- Foundation packs: `faramesh-starter`, `faramesh-coding-agent`, `faramesh-payment-agent`, `faramesh-support-agent`, `faramesh-mcp-server`, `faramesh-shell-controls`, `faramesh-infra-agent`.
+- P2 vertical packs: `faramesh-p2-data-agent`, `faramesh-p2-docs-writer`, `faramesh-p2-marketing-agent`, `faramesh-p2-email-outbound`, `faramesh-p2-customer-success`, `faramesh-p2-network-controls`, `faramesh-p2-ops-release`, `faramesh-p2-research-agent`, `faramesh-p2-vendor-diligence`, `faramesh-p2-webhook-agent`, `faramesh-p2-multi-agent`.
+
+Pack artifacts are written as `policy.yaml` with optional authored `policy.fpl` and normalized `policy.compiled.yaml` where available.
+
+### Pack authoring and validation
+
+```bash
+make packs-verify
+```
+
+This validates all on-disk pack policies and compiles bundled FPL sidecars.
+
+## Corpus Contracts and CI Gates
+
+Faramesh release hardening is anchored by the corpus contract + matrix workflows under `tests/corpus`.
+
+Local commands:
+
+```bash
+make corpus-contract
+make corpus-matrix
+make corpus-check
+make corpus-run ENTRY=tests/corpus/framework-hooks/langchain-governed-smoke
+```
+
+This keeps release gating tied to real runnable harnesses and prevents stale matrix drift.
 
 ## Repository Map
 
@@ -515,7 +566,7 @@ Use this map to choose the right MCP docs path.
 
 ## CLI Reference
 
-See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for all 30+ commands. Key commands:
+See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for all 40+ commands. High-usage commands:
 
 | Command | What it does |
 |---------|-------------|
@@ -525,10 +576,19 @@ See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for all 30
 | `faramesh gaps` | Report uncovered governance surfaces |
 | `faramesh suggest` | Generate a starter policy from observed inventory |
 | `faramesh run -- <cmd>` | Govern an agent with the full enforcement stack |
+| `faramesh pack search` | Search policy packs |
+| `faramesh pack install <pack-ref>` | Install a policy pack |
+| `faramesh pack status <pack-ref>` | Show installed mode and policy artifact paths |
+| `faramesh pack shadow <pack-ref>` | Switch an installed pack to observe-first shadow mode |
+| `faramesh pack enforce <pack-ref>` | Switch an installed pack to enforce mode |
 | `faramesh policy validate <path>` | Validate an FPL or YAML policy |
 | `faramesh policy compile <text>` | Compile natural language to FPL |
+| `faramesh policy simulate` | Simulate a policy decision with deterministic trace output |
+| `faramesh policy backtest` | Replay deterministic policy fixtures and fail on regressions |
 | `faramesh audit tail` | Stream live decisions |
 | `faramesh audit verify <path>` | Verify DPR chain integrity (WAL preferred, SQLite fallback) |
+| `faramesh audit wal-inspect` | Report FWAL frame-version distribution |
+| `faramesh audit export` | Export DPR records for compliance evidence workflows |
 | `faramesh agent approve <token>` | Approve a deferred action |
 | `faramesh agent kill <id>` | Emergency kill switch |
 | `faramesh credential register <name>` | Register a credential with the broker |
