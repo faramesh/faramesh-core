@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -345,6 +346,7 @@ func (sb *SQSBackend) Close() error { return nil }
 // PollingBackend provides an SDK-side polling interface for custom integrations.
 // Instead of push notifications, the SDK polls for pending/resolved items.
 type PollingBackend struct {
+	mu       sync.RWMutex
 	items    map[string]*DeferItem
 	resolved map[string]*DeferResolution
 }
@@ -358,6 +360,8 @@ func NewPollingBackend() *PollingBackend {
 }
 
 func (pb *PollingBackend) Enqueue(_ context.Context, item DeferItem) error {
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
 	pb.items[item.Token] = &item
 	return nil
 }
@@ -370,14 +374,20 @@ func (pb *PollingBackend) WaitForResolution(ctx context.Context, token string) (
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-ticker.C:
+			pb.mu.RLock()
 			if r, ok := pb.resolved[token]; ok {
-				return r, nil
+				res := *r
+				pb.mu.RUnlock()
+				return &res, nil
 			}
+			pb.mu.RUnlock()
 		}
 	}
 }
 
 func (pb *PollingBackend) Resolve(_ context.Context, resolution DeferResolution) error {
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
 	if resolution.ResolvedAt.IsZero() {
 		resolution.ResolvedAt = time.Now().UTC()
 	}
@@ -394,16 +404,22 @@ func (pb *PollingBackend) Resolve(_ context.Context, resolution DeferResolution)
 }
 
 func (pb *PollingBackend) Status(_ context.Context, token string) (*StatusSnapshot, error) {
+	pb.mu.RLock()
+	defer pb.mu.RUnlock()
 	if r, ok := pb.resolved[token]; ok {
-		return &StatusSnapshot{Token: token, State: r.Status, Resolution: r}, nil
+		res := *r
+		return &StatusSnapshot{Token: token, State: r.Status, Resolution: &res}, nil
 	}
 	if item, ok := pb.items[token]; ok {
-		return &StatusSnapshot{Token: token, State: "pending", Item: item}, nil
+		copyItem := *item
+		return &StatusSnapshot{Token: token, State: "pending", Item: &copyItem}, nil
 	}
 	return nil, ErrUnknownToken
 }
 
 func (pb *PollingBackend) List(_ context.Context) ([]DeferItem, error) {
+	pb.mu.RLock()
+	defer pb.mu.RUnlock()
 	items := make([]DeferItem, 0, len(pb.items))
 	for _, item := range pb.items {
 		items = append(items, *item)
