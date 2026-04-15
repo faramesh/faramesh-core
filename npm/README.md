@@ -8,7 +8,7 @@ and policy-as-code enforcement before execution.
 ## Install
 
 ```bash
-npx @faramesh/cli@latest init
+npx @faramesh/cli@latest setup flow
 ```
 
 Or install globally:
@@ -35,7 +35,7 @@ Faramesh sits between your AI agent and the tools it calls. Every tool call is c
 ## Quick start
 
 ```bash
-faramesh run -- python agent.py
+faramesh setup flow
 ```
 
 ## Learn more

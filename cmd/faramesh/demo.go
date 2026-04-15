@@ -166,7 +166,7 @@ func runDemo(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Start governing your agent:\n")
 	bold.Printf("  faramesh serve --policy payment.yaml\n")
 	fmt.Printf("\nAuto-detect your environment:\n")
-	bold.Printf("  faramesh init\n")
+	bold.Printf("  faramesh setup flow\n")
 	fmt.Println()
 
 	return nil

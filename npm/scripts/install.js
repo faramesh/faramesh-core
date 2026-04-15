@@ -72,7 +72,7 @@ async function main() {
     console.log(`Installed faramesh to ${binPath}`);
   } catch (err) {
     console.error(`Failed to download faramesh binary: ${err.message}`);
-    console.error("You can install manually: curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh | bash");
+    console.error("You can install manually: curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh | bash && faramesh setup flow");
     process.exit(1);
   }
 }
