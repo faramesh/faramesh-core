@@ -303,7 +303,7 @@ jobs:
           ### Quick start
           ```bash
           faramesh demo
-          faramesh init
+          faramesh setup flow
           faramesh serve --policy policy.yaml
           ```
 
@@ -416,8 +416,11 @@ jobs:
                 Run the demo to see Faramesh in action:
                   faramesh demo
 
-                Initialize Faramesh in your project:
-                  faramesh init
+                Start the guided setup flow:
+                  faramesh setup flow
+
+                Uninstall from a project and clean up local state:
+                  faramesh setup uninstall --path /path/to/project --yes
 
                 Start the governance daemon:
                   faramesh serve --policy policy.yaml
@@ -428,6 +431,7 @@ jobs:
 
             test do
               assert_match version.to_s, shell_output("#{bin}/faramesh --version")
+              shell_output("#{bin}/faramesh setup --help")
               system bin/"faramesh", "demo"
             end
           end

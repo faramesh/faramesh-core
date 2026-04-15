@@ -14,5 +14,6 @@ class Faramesh < Formula
 
   test do
     assert_match version.to_s, shell_output("#{bin}/faramesh --version")
+    shell_output("#{bin}/faramesh setup --help")
   end
 end

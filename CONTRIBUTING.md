@@ -16,7 +16,7 @@ faramesh-core/
 │   ├── daemon/            # HTTP/gRPC daemon
 │   └── adapter/           # Framework auto-patchers
 ├── examples/              # FPL policy examples
-├── npm/                   # npm package (npx faramesh)
+├── npm/                   # npm package (npx @faramesh/cli)
 ├── docs/                  # Documentation
 ├── tests/                 # Integration and end-to-end tests
 ├── deploy/                # Deployment manifests (Docker, Helm, systemd)

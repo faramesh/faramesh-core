@@ -313,7 +313,7 @@ printf "  ${BOLD}Source checkout lifecycle (recommended for existing projects):$
 printf "     ${CYAN}faramesh setup flow${RESET}\n"
 printf "\n"
 printf "  ${BOLD}Binary-only quick start:${RESET}\n"
-printf "     ${CYAN}faramesh init${RESET}\n"
+printf "     ${CYAN}faramesh setup flow${RESET}\n"
 printf "     ${CYAN}faramesh run -- python agent.py${RESET}\n"
 printf "     ${CYAN}faramesh serve${RESET}\n"
 printf "\n"
