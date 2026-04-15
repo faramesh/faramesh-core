@@ -55,8 +55,8 @@ faramesh serve --policy policy.yaml --grpc-port 19091
 
 Notes:
 
-- The daemon gRPC contract is defined in `api/v1/faramesh.proto`.
-- The current in-repo client keeps JSON codec compatibility for local usage.
+- The daemon adapter keeps a stable local gRPC contract with JSON codec compatibility for local usage.
+- Public OSS runtime clients should target the CLI/adapter surfaces documented in this repository.
 
 ## eBPF adapter
 

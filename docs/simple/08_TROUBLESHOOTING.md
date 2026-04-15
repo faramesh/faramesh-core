@@ -64,6 +64,16 @@ This usually means `--mcp-target` is down/unreachable.
 
 Test target health directly and restart `faramesh serve` with correct target URL.
 
+## Corpus harness fails with "vault CLI is required"
+
+Some real-stack harnesses need local Vault CLI. In environments without Vault (for example minimal CI runners), framework corpus wrappers should fall back to deterministic governed smoke harnesses.
+
+If you run real-stack locally, install Vault CLI first.
+
+## Build fails with missing `github.com/faramesh/faramesh-core/api/v1`
+
+This means code is still importing private control-plane contract packages. OSS runtime code should depend on the local daemon adapter contract in `internal/adapter/daemon`, not private API folders.
+
 ## eBPF not available on macOS
 
 Expected behavior.

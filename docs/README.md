@@ -2,6 +2,13 @@
 
 This index improves navigation across the most important faramesh-core documentation pages and connects related content in fpl-lang.
 
+## Freshness Snapshot
+
+- Last refreshed: 2026-04-15
+- Current command surface includes observe-first flow (`discover`, `attach`, `coverage`, `gaps`, `suggest`) and pack mode lifecycle (`pack status`, `pack shadow`, `pack enforce`).
+- This docs tree tracks OSS runtime behavior in `faramesh-core` only.
+- Hosted control-plane specs and private API contracts are intentionally maintained outside this repository.
+
 ## Priority Path (Quick First)
 
 If you want to start fast, go here first:
