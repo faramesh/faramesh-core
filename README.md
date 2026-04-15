@@ -80,26 +80,6 @@ Faramesh sits between your AI agent and the tools it calls. Every tool call is c
 
 Most "AI governance" tools add a second AI to watch the first. That's probability watching probability. Faramesh uses deterministic rules — code that evaluates the same way every time. No model in the middle. No guessing.
 
-## Current Workflow
-
-Faramesh now has two complementary command paths:
-
-- Observe-first setup and gap discovery: `faramesh discover`, `faramesh attach`, `faramesh coverage`, `faramesh gaps`, `faramesh suggest`.
-- Governed execution path: `faramesh run -- <cmd>`.
-
-`faramesh run -- <cmd>` is still the primary command for running a real agent under enforcement. The observe-first commands are for bootstrapping policy coverage and operational readiness before broad enforcement.
-
-Boundary note:
-
-- `faramesh-core` is the OSS runtime, CLI, SDKs, packs, and local adapters.
-- Hosted control-plane artifacts and proprietary API contracts are maintained outside this repository.
-
-Recommended rollout:
-
-1. Observe: `discover` -> `attach` -> `coverage` -> `gaps` -> `suggest`
-2. Pack mode rollout: `pack shadow` first, then `pack enforce`
-3. Keep `audit tail` and corpus contract gates green before release promotion
-
 ## Install
 
 ```bash
@@ -151,20 +131,36 @@ bash scripts/faramesh_setup.sh uninstall --path /path/to/agent --yes
 
 ## Quick Start
 
-For a new or existing agent project, start with observe-first onboarding:
+Start here for real usage in a new or existing agent project:
+
+1. Discover likely tool surfaces in your codebase.
 
 ```bash
 faramesh discover
+```
+
+2. Attach Faramesh in shadow mode to collect runtime inventory without blocking traffic.
+
+```bash
 faramesh attach
+```
+
+3. Check what is covered and what is still missing.
+
+```bash
 faramesh coverage
 faramesh gaps
+```
+
+4. Generate a starter policy from what was observed.
+
+```bash
 faramesh suggest --out suggested-policy.yaml
 ```
 
-Then run the agent under governance:
+5. Run your actual agent under governance enforcement.
 
 ```bash
-# Govern your agent process with full enforcement
 faramesh run -- python agent.py
 ```
 
