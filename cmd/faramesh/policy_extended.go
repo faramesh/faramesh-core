@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/fatih/color"
@@ -22,6 +23,8 @@ which rules matched, which skipped, and why.
 
   faramesh policy debug policy.yaml --tool stripe/refund --args '{"amount":500}'
   faramesh policy debug policy.yaml --tool shell/exec --args '{"cmd":"ls"}'
+
+For defer rules, the summary includes approvals_required (distinct approver_ids).
 
 Invaluable for debugging complex policies with many rules.`,
 	Args: cobra.ExactArgs(1),
@@ -47,11 +50,25 @@ Use this in CI to detect coverage gaps:
 	RunE: runPolicyCover,
 }
 
+// policy map — budgets, phases, and rule mix (governance map / token budget surface).
+var policyMapCmd = &cobra.Command{
+	Use:   "map <policy.yaml|policy.fpl>",
+	Short: "Print a governance map for a policy (budgets, phases, rules by effect)",
+	Long: `Summarize governance-relevant structure for dashboards and audits: session/daily
+budgets, parallel budget caps, declared phases, and counts of rules by effect.
+
+  faramesh policy map policies/payment.yaml
+
+Output is JSON for stable scripting.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runPolicyMap,
+}
+
 var (
-	debugTool   string
-	debugArgs   string
+	debugTool          string
+	debugArgs          string
 	debugUnsafeRawArgs bool
-	coverTools  string
+	coverTools         string
 )
 
 func init() {
@@ -64,6 +81,57 @@ func init() {
 
 	policyCmd.AddCommand(policyDebugCmd)
 	policyCmd.AddCommand(policyCoverCmd)
+	policyCmd.AddCommand(policyMapCmd)
+}
+
+func runPolicyMap(_ *cobra.Command, args []string) error {
+	policyPath := args[0]
+	doc, _, err := policy.LoadFile(policyPath)
+	if err != nil {
+		return fmt.Errorf("load policy: %w", err)
+	}
+
+	phases := make([]string, 0, len(doc.Phases))
+	for k := range doc.Phases {
+		phases = append(phases, k)
+	}
+	sort.Strings(phases)
+
+	byEffect := make(map[string]int)
+	for _, r := range doc.Rules {
+		eff := strings.ToLower(strings.TrimSpace(r.Effect))
+		if eff == "" {
+			eff = "unspecified"
+		}
+		byEffect[eff]++
+	}
+
+	out := map[string]any{
+		"agent_id":                  doc.AgentID,
+		"default_effect":            doc.DefaultEffect,
+		"phase_names":               phases,
+		"rules_total":               len(doc.Rules),
+		"rules_by_effect":           byEffect,
+		"has_loop_governance":       doc.LoopGovernance != nil,
+		"has_defer_priority":        doc.DeferPriority != nil,
+		"has_orchestrator_manifest": doc.OrchestratorManifest != nil,
+	}
+	if doc.Budget != nil {
+		out["budget"] = doc.Budget
+	}
+	if doc.ParallelBudget != nil {
+		out["parallel_budget"] = doc.ParallelBudget
+	}
+	if doc.LoopGovernance != nil {
+		out["loop_governance"] = doc.LoopGovernance
+	}
+	if doc.DeferPriority != nil {
+		out["defer_priority"] = doc.DeferPriority
+	}
+
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 func runPolicyDebug(cmd *cobra.Command, args []string) error {
@@ -168,6 +236,21 @@ func runPolicyDebug(cmd *cobra.Command, args []string) error {
 		dim.Printf("  (default_effect)")
 	}
 	fmt.Println()
+
+	if strings.EqualFold(result.Effect, "defer") {
+		n := result.ApprovalsRequired
+		if n < 1 {
+			n = 1
+		}
+		if result.ApprovalsRequired > 1 {
+			yellow.Printf("  Defer control: %d distinct approver_id(s) required (approvals_required).\n", n)
+		} else {
+			dim.Printf("  Defer control: single approver (default; set approvals_required on the rule for dual/multi control).\n")
+		}
+	} else if result.ApprovalsRequired > 1 {
+		yellow.Printf("  Note: matched rule sets approvals_required=%d (only applies when effect is defer).\n", result.ApprovalsRequired)
+	}
+
 	fmt.Println()
 	return nil
 }

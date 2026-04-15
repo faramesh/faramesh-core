@@ -13,6 +13,8 @@ package deferwork
 import (
 	"crypto/sha256"
 	"fmt"
+	"sort"
+	"sync"
 	"time"
 )
 
@@ -47,7 +49,7 @@ type DeferContext struct {
 
 // Message represents a conversation message in the DEFER context.
 type Message struct {
-	Role    string `json:"role"`    // user, assistant, system, tool
+	Role    string `json:"role"` // user, assistant, system, tool
 	Content string `json:"content"`
 	ToolID  string `json:"tool_id,omitempty"`
 	At      int64  `json:"at"` // unix timestamp
@@ -75,7 +77,13 @@ func (dc *DeferContext) SetMessageHistory(messages []Message, maxMessages int) {
 // SetSessionStateHash computes and stores a hash of session state.
 func (dc *DeferContext) SetSessionStateHash(state map[string]any) {
 	h := sha256.New()
-	for k, v := range state {
+	keys := make([]string, 0, len(state))
+	for k := range state {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := state[k]
 		fmt.Fprintf(h, "%s=%v|", k, v)
 	}
 	dc.SessionStateHash = fmt.Sprintf("%x", h.Sum(nil))[:16]
@@ -83,11 +91,11 @@ func (dc *DeferContext) SetSessionStateHash(state map[string]any) {
 
 // ValidateContextValidity checks if the context is still valid for resume.
 type ContextValidation struct {
-	Valid           bool     `json:"valid"`
-	Warnings        []string `json:"warnings,omitempty"`
-	PolicyChanged   bool     `json:"policy_changed"`
-	SessionChanged  bool     `json:"session_changed"`
-	Expired         bool     `json:"expired"`
+	Valid          bool     `json:"valid"`
+	Warnings       []string `json:"warnings,omitempty"`
+	PolicyChanged  bool     `json:"policy_changed"`
+	SessionChanged bool     `json:"session_changed"`
+	Expired        bool     `json:"expired"`
 }
 
 // ValidateForResume checks if the DEFER context is still valid.
@@ -126,6 +134,7 @@ func (dc *DeferContext) IsPreAuthorized() bool {
 
 // DeferContextStore manages DEFER contexts.
 type DeferContextStore struct {
+	mu       sync.RWMutex
 	contexts map[string]*DeferContext // token → context
 }
 
@@ -138,21 +147,29 @@ func NewDeferContextStore() *DeferContextStore {
 
 // Store saves a DEFER context.
 func (s *DeferContextStore) Store(ctx *DeferContext) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.contexts[ctx.Token] = ctx
 }
 
 // Get retrieves a DEFER context by token.
 func (s *DeferContextStore) Get(token string) *DeferContext {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	return s.contexts[token]
 }
 
 // Remove deletes a DEFER context.
 func (s *DeferContextStore) Remove(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.contexts, token)
 }
 
 // Cleanup removes contexts older than maxAge.
 func (s *DeferContextStore) Cleanup(maxAge time.Duration) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	cutoff := time.Now().Add(-maxAge)
 	removed := 0
 	for token, ctx := range s.contexts {

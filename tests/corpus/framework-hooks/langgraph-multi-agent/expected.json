@@ -1,0 +1,41 @@
+{
+  "status": "passing",
+  "framework": "langgraph",
+  "pattern": "multi-agent",
+  "coverage_tier": "A",
+  "harness": "tests/langgraph_multi_agent_real_stack.sh",
+  "replay_parity": {
+    "asserted": true,
+    "strict_reason": true,
+    "source": "wal"
+  },
+  "expected_tools": [
+    {"tool_id": "multiagent/invoke_agent", "expected_effect": "permit"},
+    {"tool_id": "multiagent/invoke_agent", "expected_effect": "deny"},
+    {"tool_id": "multiagent/invoke_agent", "expected_effect": "defer"}
+  ],
+  "enforcement_surfaces": {
+    "framework_hook": true,
+    "attachable": true,
+    "governable": true,
+    "policy_visible": true,
+    "credential_brokered": false,
+    "shell_governed": false,
+    "network_governed": false,
+    "mcp_governed": false,
+    "audit_complete": true
+  },
+  "known_gaps": [
+    "row covers LangGraph ToolNode delegation truth, but not a full graph-of-graphs orchestration runtime"
+  ],
+  "detection": {
+    "framework_detected": true,
+    "framework_name": "langgraph",
+    "trust_level": "strong"
+  },
+  "hook_truth": {
+    "interception_layer": "framework_autopatch",
+    "pre_execution_gate": true,
+    "dpr_evidence_expected": true
+  }
+}

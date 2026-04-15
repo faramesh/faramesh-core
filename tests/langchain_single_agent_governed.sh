@@ -140,23 +140,29 @@ import sys
 
 path = sys.argv[1]
 patched = False
+framework_reported = False
+autoload_reported = False
 executed = False
 
 with open(path, "r", encoding="utf-8") as f:
     for line in f:
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            payload = json.loads(line)
-        except Exception:
-            continue
-        if "patched_frameworks" in payload and "langchain" in payload.get("patched_frameworks", []):
-            patched = True
-        if payload.get("tool") == "http/get" and payload.get("result") == "executed":
-            executed = True
+        raw = line.rstrip("\n")
+        if "Framework:   langchain" in raw:
+            framework_reported = True
+        if "Framework auto-patch" in raw:
+            autoload_reported = True
+        line = raw.strip()
+        if line.startswith("{"):
+            try:
+                payload = json.loads(line)
+            except Exception:
+                continue
+            if "patched_frameworks" in payload and "langchain" in payload.get("patched_frameworks", []):
+                patched = True
+            if payload.get("tool") == "http/get" and payload.get("result") == "executed":
+                executed = True
 
-if not patched:
+if not patched and not (framework_reported and autoload_reported):
     print("missing LangChain autopatch evidence")
     raise SystemExit(1)
 if not executed:
@@ -174,8 +180,8 @@ agent_id = sys.argv[2]
 con = sqlite3.connect(db_path)
 cur = con.cursor()
 cur.execute(
-    "select count(*) from dpr_records where agent_id = ? and tool_id = ? and effect = ?",
-    (agent_id, "http/get", "PERMIT"),
+    "select count(*) from dpr_records where agent_id = ? and tool_id like ? and effect = ?",
+    (agent_id, "http/get%", "PERMIT"),
 )
 count = cur.fetchone()[0]
 con.close()
@@ -184,5 +190,8 @@ if count < 1:
     print("missing durable DPR record for governed call")
     raise SystemExit(1)
 PY
+
+"$BIN_PATH" audit verify "$DATA_DIR/faramesh.db"
+"$BIN_PATH" policy policy-replay --policy "$POLICY_PATH" --wal "$DATA_DIR/faramesh.wal" --max-divergence 0 --strict-reason-parity
 
 echo "single-agent LangChain governance smoke passed"

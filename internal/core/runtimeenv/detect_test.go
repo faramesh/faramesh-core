@@ -70,6 +70,68 @@ dependencies = [
 	}
 }
 
+func TestDetectFrameworkFromPyProject_NewFrameworkTokens(t *testing.T) {
+	tests := []struct {
+		name      string
+		deps      []string
+		want      string
+		assertHas []string
+	}{
+		{
+			name:      "google adk",
+			deps:      []string{"google-adk>=1.0"},
+			want:      "google-adk",
+			assertHas: []string{"google-adk"},
+		},
+		{
+			name:      "strands agents builder alias",
+			deps:      []string{"strands-agents-builder>=0.1"},
+			want:      "strands-agents",
+			assertHas: []string{"strands-agents-builder"},
+		},
+		{
+			name:      "bedrock agentcore",
+			deps:      []string{"bedrock-agentcore>=0.3"},
+			want:      "bedrock-agentcore",
+			assertHas: []string{"bedrock-agentcore"},
+		},
+		{
+			name:      "strands agents core",
+			deps:      []string{"strands-agents>=0.2"},
+			want:      "strands-agents",
+			assertHas: []string{"strands-agents"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			var b strings.Builder
+			b.WriteString("[project]\n")
+			b.WriteString("dependencies = [\n")
+			for _, dep := range tt.deps {
+				b.WriteString("  \"" + dep + "\",\n")
+			}
+			b.WriteString("]\n")
+			if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte(b.String()), 0o644); err != nil {
+				t.Fatalf("write pyproject: %v", err)
+			}
+
+			d := DetectEnvironment(dir)
+			if d.Framework != tt.want {
+				t.Fatalf("framework: got %q want %q", d.Framework, tt.want)
+			}
+
+			deps := ScanPythonDeps(dir)
+			for _, pkg := range tt.assertHas {
+				if !deps.Has(pkg) {
+					t.Fatalf("expected dependency set to contain %q", pkg)
+				}
+			}
+		})
+	}
+}
+
 func TestDetectAgentHarness_DeepAgentsMarkerPreferred(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, ".deepagents"), 0o755); err != nil {

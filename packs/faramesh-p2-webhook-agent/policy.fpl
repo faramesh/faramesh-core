@@ -1,0 +1,16 @@
+# Optional FPL sidecar; URL allowlists live in YAML if you tighten this seed.
+agent p2-webhook-agent {
+  default deny
+
+  rules {
+    deny! shell/*
+      reason: "webhook integrators must not invoke shell"
+
+    defer http/post
+      notify: "platform"
+      reason: "outbound webhooks require approval"
+
+    permit http/get
+      reason: "read-only polling"
+  }
+}

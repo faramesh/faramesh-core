@@ -19,14 +19,14 @@ import (
 
 // Batch represents a group of related DEFER items.
 type Batch struct {
-	BatchID     string          `json:"batch_id"`
-	RuleID      string          `json:"rule_id"`
-	ToolPattern string          `json:"tool_pattern"`
-	Items       []*BatchItem    `json:"items"`
-	CreatedAt   time.Time       `json:"created_at"`
-	Deadline    time.Time       `json:"deadline"`
-	Resolved    bool            `json:"resolved"`
-	Decision    string          `json:"decision,omitempty"` // approved, denied, partial
+	BatchID     string       `json:"batch_id"`
+	RuleID      string       `json:"rule_id"`
+	ToolPattern string       `json:"tool_pattern"`
+	Items       []*BatchItem `json:"items"`
+	CreatedAt   time.Time    `json:"created_at"`
+	Deadline    time.Time    `json:"deadline"`
+	Resolved    bool         `json:"resolved"`
+	Decision    string       `json:"decision,omitempty"` // approved, denied, partial
 }
 
 // BatchItem is a single DEFER within a batch.
@@ -41,10 +41,10 @@ type BatchItem struct {
 // BatchManager groups and manages batch approvals.
 type BatchManager struct {
 	mu       sync.RWMutex
-	batches  map[string]*Batch    // batchID → batch
-	tokenMap map[string]string    // token → batchID
+	batches  map[string]*Batch                  // batchID → batch
+	tokenMap map[string]string                  // token → batchID
 	groupBy  func(toolID, ruleID string) string // grouping key function
-	workflow *Workflow            // underlying workflow for resolution
+	workflow *Workflow                          // underlying workflow for resolution
 }
 
 // NewBatchManager creates a new batch manager.
@@ -139,7 +139,7 @@ func (bm *BatchManager) resolveBatch(batchID string, approved bool, resolvedBy s
 			itemApproved = false
 		}
 		reason := fmt.Sprintf("batch:%s by %s", batchID, resolvedBy)
-		if err := bm.workflow.Resolve(item.Token, itemApproved, reason); err != nil {
+		if err := bm.workflow.Resolve(item.Token, itemApproved, resolvedBy, reason); err != nil {
 			// Item may have already expired — continue with others.
 			continue
 		}

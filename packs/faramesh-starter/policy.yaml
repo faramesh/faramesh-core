@@ -1,0 +1,43 @@
+faramesh-version: "1.0"
+agent-id: "starter"
+default_effect: deny
+
+rules:
+  - id: deny-destructive-shell
+    match:
+      tool: "shell/run"
+      when: "args.cmd != nil && args.cmd matches \"rm -rf|DROP TABLE|terraform destroy|shutdown|reboot\""
+    effect: deny
+    reason: "destructive command blocked"
+
+  - id: deny-system-write
+    match:
+      tool: "file/write"
+      when: "args.path != nil && args.path matches \"/etc|/usr|/bin|/sbin|/boot\""
+    effect: deny
+    reason: "system path write blocked"
+
+  - id: defer-payment-transfer
+    match:
+      tool: "payment/transfer"
+      when: "args.amount != nil && args.amount > 500"
+    effect: defer
+    reason: "high-value transfers require approval"
+
+  - id: permit-api
+    match:
+      tool: "api/*"
+      when: "true"
+    effect: permit
+
+  - id: permit-search
+    match:
+      tool: "search/*"
+      when: "true"
+    effect: permit
+
+  - id: permit-file-read
+    match:
+      tool: "file/read/*"
+      when: "true"
+    effect: permit

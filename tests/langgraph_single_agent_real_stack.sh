@@ -18,6 +18,7 @@ SPIFFE_SOCKET_PATH="${FARAMESH_LANGGRAPH_REAL_SPIFFE_SOCKET:-$RUN_DIR/spiffe.soc
 AGENT_OUTPUT_PATH="${FARAMESH_LANGGRAPH_REAL_AGENT_OUTPUT:-$RUN_DIR/agent_output.log}"
 
 AGENT_ID="${FARAMESH_LANGGRAPH_REAL_AGENT_ID:-langgraph-single}"
+DPR_HMAC_KEY="${FARAMESH_LANGGRAPH_REAL_DPR_HMAC:-langgraph-real-replay-hmac}"
 IDP_PROVIDER="${FARAMESH_LANGGRAPH_REAL_IDP_PROVIDER:-default}"
 VAULT_ADDR="${FARAMESH_LANGGRAPH_REAL_VAULT_ADDR:-http://127.0.0.1:18210}"
 VAULT_TOKEN="${FARAMESH_LANGGRAPH_REAL_VAULT_TOKEN:-root}"
@@ -106,6 +107,7 @@ fi
 mkdir -p "$RUN_DIR"
 rm -rf "$DATA_DIR"
 mkdir -p "$DATA_DIR"
+mkdir -p "$RUN_DIR/home"
 rm -f "$SOCKET_PATH" "$DAEMON_LOG" "$VAULT_LOG" "$AGENT_OUTPUT_PATH"
 
 PYTHON_BIN="$(resolve_python)"
@@ -116,7 +118,7 @@ if [[ "$VAULT_ADDR" == https://* ]]; then
   exit 1
 fi
 
-vault server -dev -dev-root-token-id "$VAULT_TOKEN" -dev-listen-address "$VAULT_DEV_LISTEN" >"$VAULT_LOG" 2>&1 &
+HOME="$RUN_DIR/home" vault server -dev -dev-no-store-token -dev-root-token-id "$VAULT_TOKEN" -dev-listen-address "$VAULT_DEV_LISTEN" >"$VAULT_LOG" 2>&1 &
 VAULT_PID=$!
 wait_for_vault
 
@@ -136,6 +138,7 @@ FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" serve \
   --policy "$POLICY_PATH" \
   --socket "$SOCKET_PATH" \
   --data-dir "$DATA_DIR" \
+  --dpr-hmac-key "$DPR_HMAC_KEY" \
   --strict-preflight \
   --idp-provider "$IDP_PROVIDER" \
   --vault-addr "$VAULT_ADDR" \
@@ -247,17 +250,24 @@ def read_counts():
   )
   deny_shell_count = cur.fetchone()[0]
 
-  return http_permit, vault_permit, deny_shell_count
+  cur.execute(
+    "select count(*) from dpr_records where agent_id = ? and tool_id like ? and effect = ?",
+    (agent_id, "payment/refund%", "DEFER"),
+  )
+  defer_count = cur.fetchone()[0]
+
+  return http_permit, vault_permit, deny_shell_count, defer_count
 
 
 deadline = time.time() + 5.0
 http_permit = 0
 vault_permit = 0
 deny_shell_count = 0
+defer_count = 0
 
 while True:
-  http_permit, vault_permit, deny_shell_count = read_counts()
-  if http_permit >= 1 and vault_permit >= 1 and deny_shell_count >= 1:
+  http_permit, vault_permit, deny_shell_count, defer_count = read_counts()
+  if http_permit >= 1 and vault_permit >= 1 and deny_shell_count >= 1 and defer_count >= 2:
     break
   if time.time() >= deadline:
     break
@@ -271,11 +281,16 @@ if vault_permit < 1:
     raise SystemExit("missing vault-brokered PERMIT DPR record for vault/probe")
 if deny_shell_count < 1:
     raise SystemExit("missing DENY DPR record for shell/run adversarial scenario")
+if defer_count < 2:
+    raise SystemExit("missing DEFER DPR records for payment/refund approve/deny scenarios")
 PY
 
 if rg -a -n --fixed-strings "$SECRET_SENTINEL" "$AGENT_OUTPUT_PATH" "$DAEMON_LOG" "$DATA_DIR" >/dev/null; then
   echo "secret sentinel leaked into Faramesh artifacts" >&2
   exit 1
 fi
+
+"$BIN_PATH" audit verify "$DATA_DIR/faramesh.db"
+"$BIN_PATH" policy policy-replay --policy "$POLICY_PATH" --wal "$DATA_DIR/faramesh.wal" --max-divergence 0 --strict-reason-parity --dpr-hmac-key "$DPR_HMAC_KEY"
 
 echo "langgraph real-stack governance passed"

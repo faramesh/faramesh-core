@@ -1,0 +1,29 @@
+{
+  "status": "wip",
+  "framework": "faramesh-cli",
+  "pattern": "policy-yaml-roundtrip",
+  "coverage_tier": "C",
+  "harness": "tests/policy_roundtrip_harness.sh",
+  "expected_tools": [
+    {"tool_id": "http/get", "expected_effect": "permit"}
+  ],
+  "enforcement_surfaces": {
+    "framework_hook": false,
+    "attachable": false,
+    "governable": false,
+    "policy_visible": true,
+    "credential_brokered": false,
+    "shell_governed": false,
+    "network_governed": false,
+    "mcp_governed": false,
+    "audit_complete": false
+  },
+  "known_gaps": [
+    "Policy validate / decompile / policy test only — not an agent stack; hook_truth + WAL replay parity not asserted for this row"
+  ],
+  "detection": {
+    "framework_detected": false,
+    "framework_name": "n/a",
+    "trust_level": "instrumented"
+  }
+}

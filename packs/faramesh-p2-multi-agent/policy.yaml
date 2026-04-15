@@ -1,0 +1,45 @@
+faramesh-version: "1.0"
+agent-id: "p2-multi-agent"
+default_effect: deny
+
+budget:
+  max_calls: 4000
+  on_exceed: defer
+
+rules:
+  - id: permit-search
+    match:
+      tool: "search/*"
+    effect: permit
+    reason: "shared retrieval across sub-agents"
+
+  - id: permit-internal-http
+    match:
+      tool: "http/get"
+      when: "args.url != nil && args.url matches \"https://orchestrator.internal|http://localhost|http://127.0.0.1\""
+    effect: permit
+    reason: "internal coordinator and sandbox reads"
+
+  - id: defer-delegate
+    match:
+      tool: "multi_agent/delegate/*"
+    effect: defer
+    reason: "handoff to another agent surface requires review"
+
+  - id: defer-spawn
+    match:
+      tool: "multi_agent/spawn_worker/*"
+    effect: defer
+    reason: "spawning parallel workers increases cost and blast radius"
+
+  - id: defer-batch-tools
+    match:
+      tool: "mcp/register_tools_batch"
+    effect: defer
+    reason: "bulk tool registration can widen governance surface"
+
+  - id: deny-shell
+    match:
+      tool: "shell/*"
+    effect: deny
+    reason: "orchestrated agents must not invoke shell"

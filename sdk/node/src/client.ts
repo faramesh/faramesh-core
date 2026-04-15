@@ -41,12 +41,14 @@ let globalConfig: ClientConfig | null = null;
  */
 export function configure(options: ClientConfig = {}): void {
   const existingConfig = globalConfig;
+  const snakeAgent = (options as { agent_id?: string }).agent_id;
   globalConfig = {
     baseUrl: options.baseUrl || process.env.FARAMESH_BASE_URL || process.env.FARA_API_BASE || "http://127.0.0.1:8000",
     token: options.token || process.env.FARAMESH_TOKEN || process.env.FARA_AUTH_TOKEN,
     timeoutMs: options.timeoutMs || 30000,
     maxRetries: options.maxRetries || parseInt(process.env.FARAMESH_RETRIES || "3", 10),
     retryBackoffFactor: options.retryBackoffFactor || parseFloat(process.env.FARAMESH_RETRY_BACKOFF || "0.5"),
+    agentId: options.agentId ?? snakeAgent ?? existingConfig?.agentId ?? process.env.FARAMESH_AGENT_ID,
     onRequestStart: options.onRequestStart || existingConfig?.onRequestStart,
     onRequestEnd: options.onRequestEnd || existingConfig?.onRequestEnd,
     onError: options.onError || existingConfig?.onError,
@@ -68,6 +70,11 @@ function getConfig(): ClientConfig {
     configure();
   }
   return globalConfig!;
+}
+
+/** Snapshot of the active global SDK configuration (including defaults resolved from env). */
+export function getActiveConfig(): ClientConfig {
+  return { ...getConfig() };
 }
 
 function createAxiosInstance(config: ClientConfig): AxiosInstance {
@@ -924,6 +931,60 @@ export function onEvents(
   };
 }
 
+/** Pluggable hook for tests (defaults to {@link onEvents}). */
+export const streamEventsDeps = {
+  onEvents: (
+    handler: (event: FarameshEvent) => void,
+    options?: { eventTypes?: string[]; signal?: AbortSignal; actionId?: string }
+  ) => onEvents(handler, options),
+};
+
+/**
+ * Stream events (SSE) with Python `stream_events`-compatible options.
+ * Builds on {@link onEvents}: supports `stopAfter` and `timeoutMs` to auto-close.
+ */
+export function streamEvents(
+  handler: (event: FarameshEvent) => void,
+  options?: {
+    eventTypes?: string[];
+    stopAfter?: number;
+    timeoutMs?: number;
+    actionId?: string;
+    signal?: AbortSignal;
+  }
+): () => void {
+  let count = 0;
+  const closeRef: { fn: () => void } = { fn: () => {} };
+  closeRef.fn = streamEventsDeps.onEvents(
+    (ev) => {
+      handler(ev);
+      if (options?.stopAfter != null && options.stopAfter > 0) {
+        count++;
+        if (count >= options.stopAfter) {
+          closeRef.fn();
+        }
+      }
+    },
+    {
+      eventTypes: options?.eventTypes,
+      actionId: options?.actionId,
+      signal: options?.signal,
+    }
+  );
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (options?.timeoutMs != null && options.timeoutMs > 0) {
+    timer = setTimeout(() => closeRef.fn(), options.timeoutMs);
+  }
+
+  return () => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+    closeRef.fn();
+  };
+}
+
 // Convenience aliases
 export const allow = approveAction;
 export const deny = denyAction;
@@ -975,6 +1036,27 @@ export async function gateDecide(
     context,
   };
   return makeRequest<GateDecision>("POST", "/v1/gate/decide", payload);
+}
+
+/**
+ * Same as {@link gateDecide} but returns the raw JSON object from the API
+ * (Python `gate_decide_dict`).
+ */
+export async function gateDecideDict(
+  agentId: string,
+  tool: string,
+  operation: string,
+  params: Record<string, any> = {},
+  context: Record<string, any> = {}
+): Promise<Record<string, any>> {
+  const payload = {
+    agent_id: agentId,
+    tool,
+    operation,
+    params,
+    context,
+  };
+  return makeRequest<Record<string, any>>("POST", "/v1/gate/decide", payload);
 }
 
 /**

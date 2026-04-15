@@ -447,7 +447,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.pipeline.DeferWorkflow().Resolve(req.DeferToken, req.Approved, req.Reason); err != nil {
+	if err := s.pipeline.DeferWorkflow().Resolve(req.DeferToken, req.Approved, "", req.Reason); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})

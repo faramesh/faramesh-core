@@ -1,0 +1,39 @@
+faramesh-version: "1.0"
+agent-id: "p2-customer-success"
+default_effect: deny
+
+budget:
+  max_calls: 2000
+  on_exceed: defer
+
+rules:
+  - id: permit-read-customer
+    match:
+      tool: "read_customer"
+    effect: permit
+    reason: "read-only account context for CS workflows"
+
+  - id: permit-kb
+    match:
+      tool: "search_kb"
+    effect: permit
+    reason: "knowledge base lookup"
+
+  - id: permit-internal-http
+    match:
+      tool: "http/get"
+      when: "args.url != nil && args.url matches \"https://crm.internal|https://help.internal\""
+    effect: permit
+    reason: "internal CRM and helpdesk reads"
+
+  - id: defer-billing-write
+    match:
+      tool: "billing/write"
+    effect: defer
+    reason: "plan or entitlement changes require approval"
+
+  - id: deny-shell
+    match:
+      tool: "shell/*"
+    effect: deny
+    reason: "customer-success agents must not invoke shell"

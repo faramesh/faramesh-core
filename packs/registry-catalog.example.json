@@ -1,0 +1,16 @@
+{
+  "packs": [
+    {
+      "name": "faramesh/starter",
+      "latest_version": "1.0.0",
+      "description": "Minimal getting-started pack (local policy path; mirrors bundled faramesh-starter).",
+      "trust_tier": "faramesh-verified",
+      "publisher_id": "local-dev",
+      "publisher_display_name": "Local development",
+      "publisher_verified": false,
+      "versions": {
+        "1.0.0": "faramesh-starter/policy.yaml"
+      }
+    }
+  ]
+}

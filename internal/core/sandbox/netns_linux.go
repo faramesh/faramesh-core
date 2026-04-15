@@ -11,9 +11,9 @@ import (
 
 // NetNSConfig configures network namespace isolation for an agent process.
 type NetNSConfig struct {
-	Name          string // namespace name (e.g. "faramesh-agent-1234")
-	ProxyPort     int    // local port the Faramesh proxy listens on
-	RedirectPorts []int  // destination ports to redirect (e.g. 80, 443)
+	Name          string   // namespace name (e.g. "faramesh-agent-1234")
+	ProxyPort     int      // local port the Faramesh proxy listens on
+	RedirectPorts []int    // destination ports to redirect (e.g. 80, 443)
 	AllowedCIDRs  []string // CIDRs exempt from redirect (e.g. daemon socket)
 }
 
@@ -58,18 +58,38 @@ func SetupNetworkNamespace(cfg NetNSConfig) error {
 	if len(ports) == 0 {
 		ports = []int{80, 443, 8080, 8443}
 	}
-	for _, port := range ports {
-		if err := run([]string{
-			"ip", "netns", "exec", ns,
-			"iptables", "-t", "nat", "-A", "OUTPUT",
-			"-p", "tcp", "--dport", strconv.Itoa(port),
-			"-j", "REDIRECT", "--to-port", proxyPort,
-		}); err != nil {
-			return fmt.Errorf("netns redirect port %d: %w", port, err)
+	for _, args := range buildNetNSRedirectRules(ns, cfg.AllowedCIDRs, ports, proxyPort) {
+		if err := run(args); err != nil {
+			return fmt.Errorf("netns redirect rule %q: %w", strings.Join(args, " "), err)
 		}
 	}
 
 	return nil
+}
+
+func buildNetNSRedirectRules(ns string, allowedCIDRs []string, ports []int, proxyPort string) [][]string {
+	rules := make([][]string, 0, len(allowedCIDRs)+len(ports))
+	for _, cidr := range allowedCIDRs {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		rules = append(rules, []string{
+			"ip", "netns", "exec", ns,
+			"iptables", "-t", "nat", "-A", "OUTPUT",
+			"-d", cidr,
+			"-j", "ACCEPT",
+		})
+	}
+	for _, port := range ports {
+		rules = append(rules, []string{
+			"ip", "netns", "exec", ns,
+			"iptables", "-t", "nat", "-A", "OUTPUT",
+			"-p", "tcp", "--dport", strconv.Itoa(port),
+			"-j", "REDIRECT", "--to-port", proxyPort,
+		})
+	}
+	return rules
 }
 
 // CleanupNetworkNamespace removes the namespace and its veth pair.

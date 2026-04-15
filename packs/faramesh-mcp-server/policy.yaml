@@ -1,0 +1,37 @@
+faramesh-version: "1.0"
+agent-id: "mcp-server"
+default_effect: deny
+
+rules:
+  - id: deny-shell
+    match:
+      tool: "shell/*"
+      when: "true"
+    effect: deny
+    reason: "MCP servers should not invoke shell commands"
+
+  - id: deny-system-write
+    match:
+      tool: "file/write"
+      when: "args.path != nil && args.path matches \"/etc|/usr|/var\""
+    effect: deny
+    reason: "system path writes are blocked"
+
+  - id: permit-tools-list
+    match:
+      tool: "tools/list"
+      when: "true"
+    effect: permit
+
+  - id: permit-safe-tools-call
+    match:
+      tool: "tools/call"
+      when: "args.tool_name != nil && args.tool_name matches \"search|read|query\""
+    effect: permit
+
+  - id: defer-destructive-tools-call
+    match:
+      tool: "tools/call"
+      when: "args.tool_name != nil && args.tool_name matches \"delete|drop|destroy\""
+    effect: defer
+    reason: "destructive tool calls require approval"

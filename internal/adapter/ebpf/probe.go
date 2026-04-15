@@ -1,17 +1,23 @@
-// Package ebpf implements the A6 eBPF adapter — kernel-level syscall
-// interception using eBPF on Linux 5.8+. This is the "zero-trust ground
-// truth" adapter that intercepts system calls at the kernel boundary,
-// making it impossible for user-space code to bypass governance.
+// Package ebpf defines the A6 eBPF adapter interface for kernel-level
+// syscall interception on Linux 5.8+.
 //
-// Requirements:
+// STATUS: SCAFFOLDED — the Probe type, SyscallEvent, and Govern path are
+// implemented, but the BPF program loading is not wired. Attach() returns an
+// explicit not-implemented error (or configured fallback) instead of claiming
+// success. checkCAPBPF() and checkKernelVersion() conservatively return false.
+//
+// The actual eBPF ELF loader lives in adapter_linux.go (uses cilium/ebpf)
+// and handles generic BPF program attachment. The LSM-specific probe
+// described below is a future integration target.
+//
+// Design target (not yet implemented):
 //   - Linux 5.8+ kernel with BPF_LSM support
 //   - CAP_BPF + CAP_PERFMON capabilities
 //   - BTF (BPF Type Format) enabled in the kernel
+//   - DEFER via SIGSTOP/SIGCONT
 //
-// On non-Linux systems or without CAP_BPF, the adapter gracefully degrades
-// to A3 (HTTP proxy) mode with a warning log.
-//
-// DEFER mechanism: SIGSTOP/SIGCONT on the offending process.
+// On non-Linux systems or without CAP_BPF, the adapter falls back
+// to A3 (HTTP proxy) mode.
 package ebpf
 
 import (
@@ -27,11 +33,11 @@ import (
 // Probe is the eBPF adapter that attaches BPF programs to LSM hooks
 // for syscall-level governance.
 type Probe struct {
-	pipeline   *core.Pipeline
-	config     ProbeConfig
-	mu         sync.RWMutex
-	attached   bool
-	agentPIDs  map[int]string // PID → agentID
+	pipeline  *core.Pipeline
+	config    ProbeConfig
+	mu        sync.RWMutex
+	attached  bool
+	agentPIDs map[int]string // PID → agentID
 }
 
 // ProbeConfig holds configuration for the eBPF probe.
@@ -52,13 +58,13 @@ type ProbeConfig struct {
 
 // ProbeStatus reports the probe's runtime state.
 type ProbeStatus struct {
-	Available       bool     `json:"available"`
-	Attached        bool     `json:"attached"`
-	Platform        string   `json:"platform"`
-	KernelVersion   string   `json:"kernel_version"`
-	Hooks           []string `json:"hooks"`
-	FallbackActive  bool     `json:"fallback_active"`
-	FallbackTarget  string   `json:"fallback_target,omitempty"`
+	Available      bool     `json:"available"`
+	Attached       bool     `json:"attached"`
+	Platform       string   `json:"platform"`
+	KernelVersion  string   `json:"kernel_version"`
+	Hooks          []string `json:"hooks"`
+	FallbackActive bool     `json:"fallback_active"`
+	FallbackTarget string   `json:"fallback_target,omitempty"`
 }
 
 // NewProbe creates a new eBPF probe.
@@ -90,7 +96,8 @@ func (p *Probe) Available() bool {
 }
 
 // Attach loads the BPF programs and attaches them to LSM hooks.
-// On non-Linux systems, this returns an error suggesting A3 fallback.
+// Until the real LSM loader is implemented, this returns an explicit
+// not-implemented error (or configured fallback) rather than reporting success.
 func (p *Probe) Attach() error {
 	if runtime.GOOS != "linux" {
 		if p.config.FallbackToProxy {
@@ -113,14 +120,28 @@ func (p *Probe) Attach() error {
 		}
 		return fmt.Errorf("eBPF adapter requires CAP_BPF capability")
 	}
+	if !checkKernelVersion() {
+		if p.config.FallbackToProxy {
+			return &FallbackError{
+				Reason:  "Linux kernel 5.8+ with BPF LSM support not detected",
+				Target:  "a3_proxy",
+				Address: p.config.A3ProxyAddr,
+			}
+		}
+		return fmt.Errorf("eBPF adapter requires Linux kernel 5.8+ with BPF LSM support")
+	}
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-
-	// BPF program loading would happen here using cilium/ebpf library.
-	// For now, mark as attached for the adapter framework.
-	p.attached = true
-	return nil
+	p.attached = false
+	if p.config.FallbackToProxy {
+		return &FallbackError{
+			Reason:  "eBPF LSM loader is scaffolded but not implemented in this build",
+			Target:  "a3_proxy",
+			Address: p.config.A3ProxyAddr,
+		}
+	}
+	return fmt.Errorf("eBPF LSM loader is scaffolded but not implemented in this build")
 }
 
 // Detach removes BPF programs from LSM hooks.
@@ -248,7 +269,7 @@ func checkCAPBPF() bool {
 	if err != nil {
 		return false
 	}
-	_ = data // Full capability check would parse CapEff line.
+	_ = data     // Full capability check would parse CapEff line.
 	return false // Conservative: return false until BPF lib integrated.
 }
 

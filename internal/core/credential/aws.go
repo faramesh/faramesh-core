@@ -1,21 +1,31 @@
 package credential
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 )
 
 // AWSSecretsConfig configures the AWS Secrets Manager broker.
 type AWSSecretsConfig struct {
-	Region    string
-	Endpoint  string // override for testing/localstack
-	AccessKey string // falls back to default credential chain
-	SecretKey string
-	Timeout   time.Duration
+	Region       string
+	Endpoint     string // override for testing/localstack
+	AccessKey    string // falls back to default credential chain
+	SecretKey    string
+	SessionToken string
+	Timeout      time.Duration
 }
 
 func (c *AWSSecretsConfig) defaults() {
@@ -27,7 +37,7 @@ func (c *AWSSecretsConfig) defaults() {
 	}
 }
 
-// NewAWSSecretsBroker creates a production AWS Secrets Manager broker.
+// NewAWSSecretsBroker creates an AWS Secrets Manager broker.
 func NewAWSSecretsBroker(cfg AWSSecretsConfig) *AWSSecretsBroker {
 	cfg.defaults()
 	return &AWSSecretsBroker{
@@ -43,15 +53,21 @@ func (b *AWSSecretsBroker) Fetch(ctx context.Context, req FetchRequest) (*Creden
 	}
 
 	secretID := resolveAWSSecretID(req)
-	endpoint := b.resolveEndpoint()
-	url := fmt.Sprintf("%s/?Action=GetSecretValue&SecretId=%s&Version=2017-10-17", endpoint, secretID)
+	endpoint := strings.TrimRight(b.resolveEndpoint(), "/")
+	payload, err := json.Marshal(awsGetSecretValueRequest{SecretID: secretID})
+	if err != nil {
+		return nil, fmt.Errorf("aws secrets: build request payload: %w", err)
+	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("aws secrets: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/x-amz-json-1.1")
 	httpReq.Header.Set("X-Amz-Target", "secretsmanager.GetSecretValue")
+	if err := signAWSSecretsRequest(ctx, httpReq, payload, b.cfg); err != nil {
+		return nil, err
+	}
 
 	resp, err := b.client.Do(httpReq)
 	if err != nil {
@@ -101,4 +117,45 @@ type awsSecretResponse struct {
 	Name         string `json:"Name"`
 	SecretString string `json:"SecretString"`
 	VersionID    string `json:"VersionId"`
+}
+
+type awsGetSecretValueRequest struct {
+	SecretID string `json:"SecretId"`
+}
+
+func signAWSSecretsRequest(ctx context.Context, httpReq *http.Request, payload []byte, cfg AWSSecretsConfig) error {
+	creds, err := resolveAWSCredentials(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("aws secrets: resolve credentials: %w", err)
+	}
+	payloadHash := sha256.Sum256(payload)
+	signer := v4.NewSigner()
+	if err := signer.SignHTTP(
+		ctx,
+		creds,
+		httpReq,
+		hex.EncodeToString(payloadHash[:]),
+		"secretsmanager",
+		cfg.Region,
+		time.Now().UTC(),
+	); err != nil {
+		return fmt.Errorf("aws secrets: sign request: %w", err)
+	}
+	return nil
+}
+
+func resolveAWSCredentials(ctx context.Context, cfg AWSSecretsConfig) (aws.Credentials, error) {
+	if cfg.AccessKey != "" || cfg.SecretKey != "" || cfg.SessionToken != "" {
+		if cfg.AccessKey == "" || cfg.SecretKey == "" {
+			return aws.Credentials{}, fmt.Errorf("access key and secret key must both be set when using explicit AWS credentials")
+		}
+		staticProvider := credentials.NewStaticCredentialsProvider(cfg.AccessKey, cfg.SecretKey, cfg.SessionToken)
+		return staticProvider.Retrieve(ctx)
+	}
+
+	loaded, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
+	if err != nil {
+		return aws.Credentials{}, err
+	}
+	return loaded.Credentials.Retrieve(ctx)
 }

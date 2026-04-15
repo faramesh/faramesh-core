@@ -1,0 +1,42 @@
+{
+  "status": "passing",
+  "framework": "langgraph",
+  "pattern": "single-agent-fpl",
+  "coverage_tier": "A",
+  "harness": "tests/langgraph_single_agent_real_stack_fpl.sh",
+  "replay_parity": {
+    "asserted": true,
+    "strict_reason": true,
+    "source": "wal"
+  },
+  "expected_tools": [
+    {"tool_id": "http/get", "expected_effect": "permit"},
+    {"tool_id": "vault/probe", "expected_effect": "permit"},
+    {"tool_id": "shell/run", "expected_effect": "deny"},
+    {"tool_id": "stripe/refund", "expected_effect": "defer"}
+  ],
+  "enforcement_surfaces": {
+    "framework_hook": true,
+    "attachable": true,
+    "governable": true,
+    "policy_visible": true,
+    "credential_brokered": true,
+    "shell_governed": true,
+    "network_governed": true,
+    "mcp_governed": false,
+    "audit_complete": true
+  },
+  "known_gaps": [
+    "policy source is FPL-on-disk; behavior should align with langgraph-single-agent YAML row"
+  ],
+  "detection": {
+    "framework_detected": true,
+    "framework_name": "langgraph",
+    "trust_level": "strong"
+  },
+  "hook_truth": {
+    "interception_layer": "framework_autopatch",
+    "pre_execution_gate": true,
+    "dpr_evidence_expected": true
+  }
+}

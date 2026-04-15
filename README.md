@@ -389,7 +389,7 @@ These are reference measurements for release engineering, not hard latency guara
 
 | Platform | Layers | Trust Level |
 |----------|--------|-------------|
-| **Linux + root** | seccomp-BPF + Landlock + netns + eBPF + credential broker + auto-patch | STRONG |
+| **Linux + root** | seccomp-BPF + Landlock + netns + credential broker + auto-patch (eBPF LSM scaffolded, not active) | STRONG |
 | **Linux** | Landlock + proxy + credential broker + auto-patch | MODERATE |
 | **macOS** | Proxy env vars + PF rules + credential broker + auto-patch | PARTIAL |
 | **Windows** | Proxy env vars + WinDivert + credential broker + auto-patch | PARTIAL |
@@ -495,7 +495,7 @@ See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for all 30
 | `faramesh policy validate <path>` | Validate an FPL or YAML policy |
 | `faramesh policy compile <text>` | Compile natural language to FPL |
 | `faramesh audit tail` | Stream live decisions |
-| `faramesh audit verify` | Verify DPR chain integrity |
+| `faramesh audit verify <path>` | Verify DPR chain integrity (WAL preferred, SQLite fallback) |
 | `faramesh agent approve <token>` | Approve a deferred action |
 | `faramesh agent kill <id>` | Emergency kill switch |
 | `faramesh credential register <name>` | Register a credential with the broker |
@@ -507,6 +507,8 @@ See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for all 30
 | `faramesh offboard --path <dir>` | Automatically remove Faramesh runtime wiring from agent code (dry-run by default) |
 | `faramesh incident declare <desc>` | Declare a governance incident |
 | `faramesh mcp wrap <server>` | Wrap an MCP server with governance |
+
+Operator note: set `faramesh serve --dpr-hmac-key <secret>` from stable secret storage in production. If omitted, Faramesh generates an ephemeral DPR HMAC key per daemon run, so HMAC signatures are not stable across restarts.
 
 ## Architecture
 
@@ -560,8 +562,8 @@ If the WAL write fails, the decision is DENY. No execution without a durable aud
 
 | Language | Path | Package |
 |----------|------|---------|
-| Python | [`sdk/python`](sdk/python) | `pip install faramesh` |
-| TypeScript / Node.js | [`sdk/node`](sdk/node) | `npm install faramesh` |
+| Python | [`sdk/python`](sdk/python) | `pip install faramesh-sdk` |
+| TypeScript / Node.js | [`sdk/node`](sdk/node) | `npm install @faramesh/sdk` |
 
 Both SDKs provide `govern()`, `GovernedTool`, policy helpers, snapshot canonicalization, and `gate()` for wrapping any tool call with pre-execution governance.
 

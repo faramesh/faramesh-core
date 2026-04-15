@@ -1,0 +1,30 @@
+{
+  "status": "wip",
+  "framework": "faramesh-runtime",
+  "pattern": "linux-faramesh-run-matrix",
+  "coverage_tier": "C",
+  "harness": "tests/linux_interception_matrix_harness.sh",
+  "expected_tools": [
+    {"tool_id": "shell/run", "expected_effect": "permit"}
+  ],
+  "enforcement_surfaces": {
+    "framework_hook": true,
+    "attachable": false,
+    "governable": true,
+    "policy_visible": true,
+    "credential_brokered": true,
+    "shell_governed": true,
+    "network_governed": true,
+    "mcp_governed": false,
+    "audit_complete": false
+  },
+  "known_gaps": [
+    "`faramesh run` enforcement report matrix on Linux only; non-Linux hosts skip the harness (exit 0). Not a tier-A WAL + hook_truth agent row.",
+    "Some CI kernels may terminate the child under strict seccomp; harness tolerates selected exit codes when validating the report."
+  ],
+  "detection": {
+    "framework_detected": false,
+    "framework_name": "n/a",
+    "trust_level": "instrumented"
+  }
+}

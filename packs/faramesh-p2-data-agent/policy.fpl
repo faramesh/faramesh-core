@@ -1,0 +1,16 @@
+# Optional FPL sidecar; YAML remains authoritative for engine load.
+agent p2-data-agent {
+  default deny
+
+  rules {
+    deny! shell/*
+      reason: "data agents must not invoke shell"
+
+    defer file/write/*
+      notify: "data-governance"
+      reason: "exports and snapshots can exfiltrate regulated data"
+
+    permit search/*
+    permit file/read/*
+  }
+}

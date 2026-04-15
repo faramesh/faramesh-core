@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"path"
@@ -34,6 +35,8 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/runtimeenv"
 	"github.com/faramesh/faramesh-core/internal/core/sandbox"
 	"github.com/faramesh/faramesh-core/internal/core/session"
+	"github.com/faramesh/faramesh-core/internal/core/standing"
+	"github.com/faramesh/faramesh-core/internal/core/toolinventory"
 	"github.com/faramesh/faramesh-core/internal/core/webhook"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -97,6 +100,9 @@ type Pipeline struct {
 	intentClassifier  IntentClassifier
 	provenance        observe.ArgProvenanceTracker
 	phaseManager      *phases.PhaseManager
+	runtimeMode       RuntimeMode
+	bootstrap         *BootstrapEnforcer
+	toolInventory     *toolinventory.Store
 	policySourceType  string
 	policySourceID    string
 	strictModelVerify bool
@@ -107,6 +113,9 @@ type Pipeline struct {
 	activeCallChains  map[string]struct{}
 	modelMu           sync.RWMutex
 	models            map[string]ModelRegistration
+	budgetMu          sync.Mutex
+	budgetManagers    map[string]*multiagent.BudgetManager
+	standing          *standing.Registry
 }
 
 type policyArtifacts struct {
@@ -160,6 +169,12 @@ type CredentialBrokerDiagnostics struct {
 const (
 	minExecutionTimeoutMS = 50
 	maxExecutionTimeoutMS = 60 * 60 * 1000
+
+	// policyEvalAggregateTimeout caps wall-clock time for the entire policy
+	// evaluation (all rules until first match). It must exceed policy.EvalTimeout
+	// so per-rule expr evaluation can complete under goroutine scheduling load;
+	// each rule is still bounded by policy.EvalTimeout inside AtomicEngine.
+	policyEvalAggregateTimeout = 10 * policy.EvalTimeout
 )
 
 // Config holds construction parameters for the Pipeline.
@@ -185,11 +200,15 @@ type Config struct {
 	IntentClassifier        IntentClassifier
 	Provenance              observe.ArgProvenanceTracker
 	PhaseManager            *phases.PhaseManager
+	RuntimeMode             RuntimeMode
+	Bootstrap               *BootstrapEnforcer
+	ToolInventory           *toolinventory.Store
 	PolicySourceType        string
 	PolicySourceID          string
 	StrictModelVerification bool
 	HMACKey                 []byte
 	Log                     *zap.Logger
+	Standing                *standing.Registry
 }
 
 // NewPipeline constructs a Pipeline from a Config.
@@ -207,6 +226,16 @@ func NewPipeline(cfg Config) *Pipeline {
 	}
 	if cfg.Defers == nil {
 		cfg.Defers = deferwork.NewWorkflow("")
+	}
+	if cfg.RuntimeMode == "" {
+		cfg.RuntimeMode = RuntimeModeEnforce
+	}
+	if len(cfg.HMACKey) > 0 {
+		cfg.Defers.SetApprovalHMACKey(cfg.HMACKey)
+	}
+	stReg := cfg.Standing
+	if stReg == nil {
+		stReg = standing.NewRegistry()
 	}
 	p := &Pipeline{
 		engine:            cfg.Engine,
@@ -233,6 +262,9 @@ func NewPipeline(cfg Config) *Pipeline {
 		intentClassifier:  cfg.IntentClassifier,
 		provenance:        cfg.Provenance,
 		phaseManager:      cfg.PhaseManager,
+		runtimeMode:       cfg.RuntimeMode,
+		bootstrap:         cfg.Bootstrap,
+		toolInventory:     cfg.ToolInventory,
 		policySourceType:  cfg.PolicySourceType,
 		policySourceID:    cfg.PolicySourceID,
 		strictModelVerify: cfg.StrictModelVerification,
@@ -240,6 +272,8 @@ func NewPipeline(cfg Config) *Pipeline {
 		log:               cfg.Log,
 		activeCallChains:  make(map[string]struct{}),
 		models:            make(map[string]ModelRegistration),
+		budgetManagers:    make(map[string]*multiagent.BudgetManager),
+		standing:          stReg,
 	}
 	if p.log == nil {
 		p.log = zap.NewNop()
@@ -252,6 +286,25 @@ func NewPipeline(cfg Config) *Pipeline {
 				if h, err := cfg.Store.LastHash(agentID); err == nil && h != "" {
 					p.chainMu[agentID] = h
 				}
+			}
+		}
+	}
+	// [1.7] Best-effort: compare SQLite-seeded chain tips with the durable WAL.
+	// Mismatch is logged only; SQLite seed remains authoritative for in-memory cache.
+	if w, ok := cfg.WAL.(*dpr.WAL); ok && cfg.Store != nil {
+		walTips, err := w.ReplayValidatedFinalHashes()
+		if err != nil {
+			p.log.Warn("dpr wal replay for chain reconciliation failed", zap.Error(err))
+		} else {
+			for agent, walHash := range walTips {
+				sqHash := p.chainMu[agent]
+				if sqHash == "" || walHash == "" || sqHash == walHash {
+					continue
+				}
+				p.log.Warn("dpr chain tip mismatch: sqlite last_hash differs from wal replay (using sqlite seed)",
+					zap.String("agent_id", agent),
+					zap.String("sqlite_record_hash", sqHash),
+					zap.String("wal_record_hash", walHash))
 			}
 		}
 	}
@@ -474,6 +527,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 
 	// [1] Kill switch check — nanoseconds, no network.
 	sess := p.sessions.Get(req.AgentID)
+	resumeApprovalEnvelopeJSON := ""
 	if p.sessionGovernor != nil {
 		p.sessionGovernor.RegisterAgentNamespace(req.AgentID)
 	}
@@ -491,6 +545,48 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			Effect:     EffectDeny,
 			ReasonCode: reasons.KillSwitchActive,
 			Reason:     "agent kill switch is active",
+		}, sess, start, argProvenance)
+	}
+	if p.bootstrap != nil {
+		allowed, reason := p.bootstrap.CheckBootstrap(req.AgentID, req.ToolID)
+		if !allowed {
+			return p.decide(req, Decision{
+				Effect:        EffectDeny,
+				ReasonCode:    reasons.GovernanceBootstrapRequired,
+				Reason:        reason,
+				PolicyVersion: engine.Version(),
+			}, sess, start, argProvenance)
+		}
+	}
+	if strings.HasSuffix(req.CallID, "-resume") {
+		envelopeJSON, code, reason := p.validateResumeApproval(req, sess, engine.Version())
+		if code != "" {
+			return p.decide(req, Decision{
+				Effect:        EffectDeny,
+				ReasonCode:    code,
+				Reason:        reason,
+				PolicyVersion: engine.Version(),
+			}, sess, start, argProvenance)
+		}
+		resumeApprovalEnvelopeJSON = envelopeJSON
+	}
+	if p.runtimeMode == RuntimeModeAudit {
+		return p.decide(req, Decision{
+			Effect:               EffectPermit,
+			ReasonCode:           reasons.UnknownReasonCode,
+			Reason:               "audit mode passthrough; policy evaluation skipped",
+			PolicyVersion:        engine.Version(),
+			ApprovalEnvelopeJSON: resumeApprovalEnvelopeJSON,
+			RetryPermitted:       true,
+		}, sess, start, argProvenance)
+	}
+	parallelBudgetManager := p.ensureParallelBudgetManager(doc, req.SessionID, req.AgentID)
+	if parallelBudgetManager != nil && parallelBudgetAgentCancelled(parallelBudgetManager, req.AgentID) {
+		return p.decide(req, Decision{
+			Effect:        EffectDeny,
+			ReasonCode:    reasons.AggregateBudgetExceeded,
+			Reason:        "parallel budget cancelled this agent after aggregate exceedance",
+			PolicyVersion: engine.Version(),
 		}, sess, start, argProvenance)
 	}
 
@@ -717,10 +813,14 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			}, sess, start, argProvenance)
 		}
 		if needApproval {
-			token := fmt.Sprintf("%x", sha256.Sum256([]byte(req.CallID+req.ToolID+target)))[:8]
+			if resumeApprovalEnvelopeJSON != "" {
+				goto routingApproved
+			}
+			token := routingDeferToken(req.CallID, req.ToolID, target)
 			if _, err := p.defers.DeferWithToken(token, req.AgentID, req.ToolID, routeReason); err != nil {
 				// duplicate token: keep same token semantics as policy defer
 			}
+			p.storeDeferContext(token, req, sess, engine.Version())
 			return p.decide(req, Decision{
 				Effect:        EffectDefer,
 				ReasonCode:    reasons.RoutingUndeclaredInvocation,
@@ -730,6 +830,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			}, sess, start, argProvenance)
 		}
 	}
+routingApproved:
 
 	// [3.15] Session state write governor — enforce namespace + content safety.
 	if strings.HasPrefix(req.ToolID, "session/write") && p.sessionGovernor != nil {
@@ -800,31 +901,85 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	// [4] Session state — increment call count.
 	callCount := sess.IncrCallCount()
 
-	// [5] Budget enforcement — check session and daily limits.
+	// [4.5] Tool metadata lookup — needed by both budget reservation and policy conditions.
+	toolMeta, toolCostUSD := lookupToolMeta(doc, req.ToolID)
+	reservedCostUSD := 0.0
+	reservedTokens := int64(0)
+	finalizeDecision := func(dec Decision) Decision {
+		dec.ReservedCostUSD = reservedCostUSD
+		dec.ReservedTokens = reservedTokens
+		return p.decide(req, dec, sess, start, argProvenance)
+	}
+
+	// [5] Budget enforcement — reserve projected cost before policy evaluation so
+	// concurrent callers cannot race past session/daily cost limits.
 	if doc.Budget != nil {
-		if denied, code, reason := p.checkBudget(req.AgentID, doc.Budget, callCount); denied {
-			return p.decide(req, Decision{
-				Effect:     EffectDeny,
+		if toolCostUSD > 0 && (doc.Budget.SessionUSD > 0 || doc.Budget.DailyUSD > 0) {
+			ok, err := sess.CheckAndReserveCost(toolCostUSD, doc.Budget.SessionUSD, doc.Budget.DailyUSD)
+			if err != nil {
+				return finalizeDecision(Decision{
+					Effect:         EffectDeny,
+					ReasonCode:     reasons.SessionStateUnavailable,
+					Reason:         "session cost reservation unavailable",
+					RetryPermitted: true,
+				})
+			}
+			if !ok {
+				effect := EffectDeny
+				if strings.EqualFold(strings.TrimSpace(doc.Budget.OnExceed), "defer") {
+					effect = EffectDefer
+				}
+				code, reason := reservationExceededReason(sess, doc.Budget, toolCostUSD)
+				return finalizeDecision(Decision{
+					Effect:     effect,
+					ReasonCode: code,
+					Reason:     reason,
+				})
+			}
+			reservedCostUSD = toolCostUSD
+		}
+
+		incomingTok := UsageTokensFromArgs(req.Args)
+		if incomingTok > 0 && (doc.Budget.SessionTokens > 0 || doc.Budget.DailyTokens > 0) {
+			ok, err := sess.CheckAndReserveTokens(incomingTok, doc.Budget.SessionTokens, doc.Budget.DailyTokens)
+			if err != nil {
+				return finalizeDecision(Decision{
+					Effect:         EffectDeny,
+					ReasonCode:     reasons.SessionStateUnavailable,
+					Reason:         "session token reservation unavailable",
+					RetryPermitted: true,
+				})
+			}
+			if !ok {
+				effect := EffectDeny
+				if strings.EqualFold(strings.TrimSpace(doc.Budget.OnExceed), "defer") {
+					effect = EffectDefer
+				}
+				code, reason := tokenReservationExceededReason(sess, doc.Budget, incomingTok)
+				return finalizeDecision(Decision{
+					Effect:     effect,
+					ReasonCode: code,
+					Reason:     reason,
+				})
+			}
+			reservedTokens = incomingTok
+		}
+
+		if denied, code, reason := p.checkBudget(req.AgentID, doc.Budget, callCount, reservedCostUSD); denied {
+			effect := EffectDeny
+			if strings.EqualFold(strings.TrimSpace(doc.Budget.OnExceed), "defer") {
+				effect = EffectDefer
+			}
+			return finalizeDecision(Decision{
+				Effect:     effect,
 				ReasonCode: code,
 				Reason:     reason,
-			}, sess, start, argProvenance)
+			})
 		}
 	}
 
 	// [6] History ring buffer read — build history context for conditions.
 	history := sess.History()
-
-	// [7] Tool metadata lookup — for tool.* condition surface.
-	toolMeta := policy.ToolCtx{}
-	if doc.Tools != nil {
-		if t, ok := doc.Tools[req.ToolID]; ok {
-			toolMeta = policy.ToolCtx{
-				Reversibility: t.Reversibility,
-				BlastRadius:   t.BlastRadius,
-				Tags:          t.Tags,
-			}
-		}
-	}
 
 	// [7.5] Aggregation governor — cap cumulative risky actions per window.
 	if p.aggGovernor != nil {
@@ -853,11 +1008,13 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 		Vars:   runtimeenv.MergeDocVars(doc.Vars, runtimeenv.PolicyVarOverlay()),
 		ToolID: req.ToolID,
 		Session: policy.SessionCtx{
-			CallCount:    callCount,
-			History:      historyEntries,
-			CostUSD:      sess.CurrentCostUSD(),
-			DailyCostUSD: sess.DailyCostUSD(),
-			IntentClass:  sess.IntentClass(req.Timestamp),
+			CallCount:     callCount,
+			History:       historyEntries,
+			CostUSD:       subtractReservedCost(sess.CurrentCostUSD(), reservedCostUSD),
+			DailyCostUSD:  subtractReservedCost(sess.DailyCostUSD(), reservedCostUSD),
+			TokensSession: subtractReservedTokens(sess.CurrentSessionTokens(), reservedTokens),
+			TokensDaily:   subtractReservedTokens(sess.DailyTokens(), reservedTokens),
+			IntentClass:   sess.IntentClass(req.Timestamp),
 		},
 		Tool: toolMeta,
 	}
@@ -883,7 +1040,9 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 		}
 	}
 
-	result := engine.Evaluate(req.ToolID, ctx)
+	evalCtx, evalCancel := context.WithTimeout(context.Background(), policyEvalAggregateTimeout)
+	result := engine.EvaluateWithTimeout(evalCtx, req.ToolID, ctx)
+	evalCancel()
 
 	var d Decision
 	switch strings.ToLower(result.Effect) {
@@ -909,18 +1068,46 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			PolicyVersion:  engine.Version(),
 		}
 	case "defer", "abstain", "pending":
+		if resumeApprovalEnvelopeJSON != "" {
+			d = Decision{
+				Effect:        EffectPermit,
+				RuleID:        result.RuleID,
+				ReasonCode:    reasons.ApprovalGranted,
+				Reason:        "action approved and resumed successfully",
+				PolicyVersion: engine.Version(),
+			}
+			break
+		}
+		// Standing approval: policy-engine DEFER with a concrete rule may be
+		// satisfied by an operator-registered time/scope bounded grant.
+		if strings.TrimSpace(result.RuleID) != "" && p.standing != nil {
+			if g := p.standing.TryConsume(req.AgentID, req.SessionID, req.ToolID, engine.Version(), result.RuleID, time.Now().UTC()); g != nil {
+				d = Decision{
+					Effect:     EffectPermit,
+					RuleID:     result.RuleID,
+					ReasonCode: reasons.StandingApprovalConsumed,
+					Reason: fmt.Sprintf("standing grant %s consumed (issued_by=%s pattern=%q uses=%d max_uses=%d)",
+						g.ID, g.IssuedBy, g.ToolPattern, g.Uses, g.MaxUses),
+					PolicyVersion: engine.Version(),
+				}
+				break
+			}
+		}
 		reason := result.Reason
 		if reason == "" {
 			reason = "action requires human approval"
 		}
 		// Generate deterministic token from call ID — single Defer() call (no double-registration).
-		token := fmt.Sprintf("%x", sha256.Sum256([]byte(req.CallID+req.ToolID)))[:8]
+		token := deterministicDeferToken(req.CallID, req.ToolID)
 		// Register with the DEFER workflow exactly once.
-		handle, err := p.defers.DeferWithToken(token, req.AgentID, req.ToolID, reason)
+		handle, err := p.defers.DeferWithTokenOpts(token, req.AgentID, req.ToolID, reason, deferwork.DeferOptions{
+			ApprovalsRequired: result.ApprovalsRequired,
+		})
 		if err != nil || handle == nil {
 			// If a handle with this token already exists (duplicate call), reuse the token.
 			_ = handle
 		}
+		p.storeDeferContext(token, req, sess, engine.Version())
 		d = Decision{
 			Effect:        EffectDefer,
 			RuleID:        result.RuleID,
@@ -949,6 +1136,9 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	if cat, sev := incidentFromMatchedRule(engine.Doc(), result.RuleID); cat != "" || sev != "" {
 		d.IncidentCategory = cat
 		d.IncidentSeverity = sev
+	}
+	if resumeApprovalEnvelopeJSON != "" {
+		d.ApprovalEnvelopeJSON = resumeApprovalEnvelopeJSON
 	}
 
 	// [8.5] Credential broker injection for PERMIT path.
@@ -993,7 +1183,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 		}
 	}
 
-	return p.decide(req, d, sess, start, argProvenance)
+	return finalizeDecision(d)
 }
 
 func (p *Pipeline) isToolAllowedInPhase(agentID, phaseName, toolID string, fallbackTools []string) bool {
@@ -1031,7 +1221,7 @@ func (p *Pipeline) leaveCallChain(callID string) {
 }
 
 // checkBudget returns (true, code, reason) if the budget is exceeded.
-func (p *Pipeline) checkBudget(agentID string, budget *policy.Budget, callCount int64) (bool, string, string) {
+func (p *Pipeline) checkBudget(agentID string, budget *policy.Budget, callCount int64, reservedCostUSD float64) (bool, string, string) {
 	if budget.MaxCalls > 0 && callCount > budget.MaxCalls {
 		return true, reasons.SessionToolLimit,
 			fmt.Sprintf("session call limit reached (%d/%d)", callCount, budget.MaxCalls)
@@ -1039,14 +1229,14 @@ func (p *Pipeline) checkBudget(agentID string, budget *policy.Budget, callCount 
 	// Cost-based limits use the session cost tracked in session.State.
 	sess := p.sessions.Get(agentID)
 	if budget.SessionUSD > 0 {
-		cost := sess.CurrentCostUSD()
+		cost := subtractReservedCost(sess.CurrentCostUSD(), reservedCostUSD)
 		if cost >= budget.SessionUSD {
 			return true, reasons.BudgetSessionExceeded,
 				fmt.Sprintf("session cost limit reached ($%.4f/$%.4f)", cost, budget.SessionUSD)
 		}
 	}
 	if budget.DailyUSD > 0 {
-		cost := sess.DailyCostUSD()
+		cost := subtractReservedCost(sess.DailyCostUSD(), reservedCostUSD)
 		if cost >= budget.DailyUSD {
 			return true, reasons.BudgetDailyExceeded,
 				fmt.Sprintf("daily cost limit reached ($%.4f/$%.4f)", cost, budget.DailyUSD)
@@ -1059,6 +1249,10 @@ func (p *Pipeline) checkBudget(agentID string, budget *policy.Budget, callCount 
 // This is the WAL ORDERING INVARIANT implementation:
 // no decision is returned until the record is fsynced.
 func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.State, start time.Time, argProvenance map[string]string) Decision {
+	_, decisionSpan := observe.StartOTLPSpan(context.Background(), "faramesh.govern.decision")
+	defer observe.EndOTLPSpan(decisionSpan, nil)
+
+	d = p.applyRuntimeMode(d)
 	d.Latency = time.Since(start)
 	d.AgentID = req.AgentID
 	d.ToolID = req.ToolID
@@ -1089,6 +1283,7 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 
 	// Record metrics.
 	observe.Default.RecordDecision(string(d.Effect), d.ReasonCode, d.Latency)
+	observe.RecordDecisionOTLP(context.Background(), string(d.Effect), d.ReasonCode, d.Latency)
 	if d.Effect == EffectDeny && d.IncidentCategory != "" {
 		sev := d.IncidentSeverity
 		if sev == "" {
@@ -1105,6 +1300,12 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 	d.DPRRecordID = rec.RecordID
 	if err := p.wal.Write(rec); err != nil {
 		observe.Default.RecordWALWrite(false)
+		if d.ReservedCostUSD > 0 {
+			_ = sess.RollbackReservedCost(d.ReservedCostUSD)
+		}
+		if d.ReservedTokens > 0 {
+			_ = sess.RollbackReservedTokens(d.ReservedTokens)
+		}
 		// If we can't write the audit record, we must deny.
 		// Execution must never precede the audit record.
 		return Decision{
@@ -1143,16 +1344,58 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 	// controls (e.g. deny_count_within) observe the latest decision
 	// deterministically on the very next Evaluate() call.
 	sess.RecordHistory(req.ToolID, string(d.Effect))
+	if p.bootstrap != nil {
+		p.bootstrap.MarkGoverned(req.AgentID)
+	}
+	if d.ReservedCostUSD > 0 {
+		switch d.Effect {
+		case EffectPermit, EffectShadow, EffectShadowPermit:
+			_ = sess.ConfirmReservedCost(d.ReservedCostUSD)
+		case EffectDeny:
+			_ = sess.RollbackReservedCost(d.ReservedCostUSD)
+		}
+	}
+	if d.ReservedTokens > 0 {
+		switch d.Effect {
+		case EffectPermit, EffectShadow, EffectShadowPermit:
+			_ = sess.ConfirmReservedTokens(d.ReservedTokens)
+		case EffectDeny:
+			_ = sess.RollbackReservedTokens(d.ReservedTokens)
+		}
+	}
 	if d.Effect == EffectPermit {
 		if intentClass, ttl, targetsIntentWrite, err := parseIntentClassWrite(req.AgentID, req.Args); targetsIntentWrite && err == nil {
 			sess.SetIntentClass(intentClass, ttl)
 		}
 	}
-	if d.Effect == EffectPermit || d.Effect == EffectShadow {
+	if (d.Effect == EffectPermit || d.Effect == EffectShadow) && d.ReservedCostUSD == 0 {
 		go p.accountCost(req.AgentID, req.ToolID, sess)
+	}
+	if d.Effect == EffectPermit || d.Effect == EffectShadow || d.Effect == EffectShadowPermit {
+		if art := p.currentArtifacts(); art.engine != nil {
+			if doc := art.engine.Doc(); doc != nil {
+				if manager := p.ensureParallelBudgetManager(doc, req.SessionID, req.AgentID); manager != nil {
+					if _, toolCostUSD := lookupToolMeta(doc, req.ToolID); toolCostUSD > 0 {
+						_, _ = manager.RecordCost(req.AgentID, toolCostUSD)
+					}
+				}
+			}
+		}
 	}
 	if p.syncer != nil {
 		go p.syncer.Send(d)
+	}
+	if p.toolInventory != nil {
+		go func() {
+			_ = p.toolInventory.RecordObservation(toolinventory.Observation{
+				ToolID:           req.ToolID,
+				Effect:           string(d.Effect),
+				InterceptAdapter: req.InterceptAdapter,
+				PolicyRuleID:     d.RuleID,
+				CoverageTier:     coverageTierFromDecision(req, d),
+				Timestamp:        req.Timestamp,
+			})
+		}()
 	}
 	if p.webhooks != nil {
 		go p.emitWebhook(req, d)
@@ -1182,6 +1425,74 @@ func (p *Pipeline) accountCost(agentID, toolID string, sess *session.State) {
 		return
 	}
 	sess.AddCost(t.CostUSD)
+}
+
+func lookupToolMeta(doc *policy.Doc, toolID string) (policy.ToolCtx, float64) {
+	toolMeta := policy.ToolCtx{}
+	if doc == nil || doc.Tools == nil {
+		return toolMeta, 0
+	}
+	if t, ok := doc.Tools[toolID]; ok {
+		toolMeta = policy.ToolCtx{
+			Reversibility: t.Reversibility,
+			BlastRadius:   t.BlastRadius,
+			Tags:          t.Tags,
+		}
+		return toolMeta, t.CostUSD
+	}
+	return toolMeta, 0
+}
+
+func subtractReservedCost(total, reserved float64) float64 {
+	if reserved <= 0 {
+		return total
+	}
+	if total <= reserved {
+		return 0
+	}
+	return total - reserved
+}
+
+func subtractReservedTokens(total, reserved int64) int64 {
+	if reserved <= 0 {
+		return total
+	}
+	if total <= reserved {
+		return 0
+	}
+	return total - reserved
+}
+
+func tokenReservationExceededReason(sess *session.State, budget *policy.Budget, incoming int64) (string, string) {
+	if sess == nil || budget == nil {
+		return reasons.BudgetSessionTokensExceeded, "token budget exceeded"
+	}
+	curS := sess.CurrentSessionTokens()
+	curD := sess.DailyTokens()
+	if budget.SessionTokens > 0 && curS+incoming > budget.SessionTokens {
+		return reasons.BudgetSessionTokensExceeded,
+			fmt.Sprintf("session token limit exceeded (%d + %d > %d)", curS, incoming, budget.SessionTokens)
+	}
+	if budget.DailyTokens > 0 && curD+incoming > budget.DailyTokens {
+		return reasons.BudgetDailyTokensExceeded,
+			fmt.Sprintf("daily token limit exceeded (%d + %d > %d)", curD, incoming, budget.DailyTokens)
+	}
+	return reasons.BudgetSessionTokensExceeded, "token budget exceeded"
+}
+
+func reservationExceededReason(sess *session.State, budget *policy.Budget, costUSD float64) (string, string) {
+	if sess == nil || budget == nil {
+		return reasons.BudgetSessionExceeded, "session cost reservation rejected"
+	}
+	if budget.SessionUSD > 0 && sess.CurrentCostUSD()+costUSD > budget.SessionUSD {
+		return reasons.BudgetSessionExceeded,
+			fmt.Sprintf("session cost limit would be exceeded by reserved cost ($%.4f + $%.4f > $%.4f)", sess.CurrentCostUSD(), costUSD, budget.SessionUSD)
+	}
+	if budget.DailyUSD > 0 && sess.DailyCostUSD()+costUSD > budget.DailyUSD {
+		return reasons.BudgetDailyExceeded,
+			fmt.Sprintf("daily cost limit would be exceeded by reserved cost ($%.4f + $%.4f > $%.4f)", sess.DailyCostUSD(), costUSD, budget.DailyUSD)
+	}
+	return reasons.BudgetSessionExceeded, "session cost reservation rejected"
 }
 
 // buildRecord constructs the DPR record for this decision.
@@ -1223,6 +1534,8 @@ func (p *Pipeline) buildRecordWithID(req CanonicalActionRequest, d Decision, arg
 		PolicySourceID:     p.policySourceID,
 		ArgsStructuralSig:  dpr.ArgsSignature(req.Args),
 		ArgProvenance:      argProvenance,
+		SelectorSnapshot:   selectorSnapshotForRecord(req.Args),
+		ApprovalEnvelope:   d.ApprovalEnvelopeJSON,
 		CreatedAt:          req.Timestamp.UTC(),
 	}
 	if p.degraded != nil {
@@ -1335,10 +1648,12 @@ func buildPhaseTransitionEvalContext(req CanonicalActionRequest, doc *policy.Doc
 		Vars:   runtimeenv.MergeDocVars(doc.Vars, runtimeenv.PolicyVarOverlay()),
 		ToolID: req.ToolID,
 		Session: policy.SessionCtx{
-			CallCount:    sess.CallCount(),
-			History:      historyEntries,
-			CostUSD:      sess.CurrentCostUSD(),
-			DailyCostUSD: sess.DailyCostUSD(),
+			CallCount:     sess.CallCount(),
+			History:       historyEntries,
+			CostUSD:       sess.CurrentCostUSD(),
+			DailyCostUSD:  sess.DailyCostUSD(),
+			TokensSession: sess.CurrentSessionTokens(),
+			TokensDaily:   sess.DailyTokens(),
 		},
 		Tool: toolMeta,
 	}
@@ -1416,7 +1731,7 @@ func credentialBrokerPlan(toolMeta policy.ToolCtx, args map[string]any) (use boo
 		}
 		if strings.HasPrefix(t, "credential:scope:") {
 			use = true
-			scope = strings.TrimPrefix(tag, "credential:scope:")
+			scope = strings.TrimPrefix(t, "credential:scope:")
 		}
 	}
 	if v, ok := args["_credential_broker"].(bool); ok && v {
@@ -1926,6 +2241,39 @@ func (p *Pipeline) DeferWorkflow() *deferwork.Workflow {
 	return p.defers
 }
 
+// RegisterStandingGrant adds a standing approval grant.
+func (p *Pipeline) RegisterStandingGrant(in standing.Input) (*standing.Grant, error) {
+	if p == nil || p.standing == nil {
+		return nil, fmt.Errorf("standing registry unavailable")
+	}
+	return p.standing.Add(in)
+}
+
+// RevokeStandingGrant removes a grant by id.
+func (p *Pipeline) RevokeStandingGrant(id string) (bool, error) {
+	if p == nil || p.standing == nil {
+		return false, fmt.Errorf("standing registry unavailable")
+	}
+	return p.standing.Revoke(id)
+}
+
+// CloseStandingPersistence closes the standing registry SQLite handle when the
+// pipeline was built with a file-backed registry.
+func (p *Pipeline) CloseStandingPersistence() error {
+	if p == nil || p.standing == nil {
+		return nil
+	}
+	return p.standing.Close()
+}
+
+// ListStandingGrants returns a snapshot of active grants.
+func (p *Pipeline) ListStandingGrants() []standing.Grant {
+	if p == nil || p.standing == nil {
+		return nil
+	}
+	return p.standing.List()
+}
+
 // SessionManager returns the session manager.
 func (p *Pipeline) SessionManager() *session.Manager {
 	return p.sessions
@@ -2135,12 +2483,188 @@ func (p *Pipeline) emitWebhook(req CanonicalActionRequest, d Decision) {
 	})
 }
 
+func (p *Pipeline) storeDeferContext(token string, req CanonicalActionRequest, sess *session.State, policyHash string) {
+	if token == "" || p.defers == nil {
+		return
+	}
+	ctx := deferwork.NewDeferContext(token, req.SessionID, policyHash, req.Args)
+	ctx.SetSessionStateHash(deferSessionStateSnapshot(sess, req))
+	p.defers.StoreContext(ctx)
+}
+
+func (p *Pipeline) validateResumeApproval(req CanonicalActionRequest, sess *session.State, policyHash string) (string, string, string) {
+	if p.defers == nil {
+		return "", reasons.ApprovalDenied, "resume approval validation unavailable"
+	}
+	var (
+		ctx *deferwork.DeferContext
+		env *deferwork.ApprovalEnvelope
+	)
+	for _, candidate := range resumeDeferTokens(req) {
+		if candidate == "" {
+			continue
+		}
+		candidateCtx := p.defers.Context(candidate)
+		candidateEnv, ok := p.defers.ApprovalEnvelope(candidate)
+		if candidateCtx == nil || !ok || candidateEnv == nil {
+			continue
+		}
+		ctx = candidateCtx
+		env = candidateEnv
+		break
+	}
+	if ctx == nil {
+		return "", reasons.ApprovalDenied, "resume approval context is missing"
+	}
+	if !env.Approved || env.Status != deferwork.StatusApproved {
+		return "", reasons.ApprovalDenied, "approval envelope does not authorize execution"
+	}
+	if err := deferwork.VerifyApprovalEnvelope(p.hmacKey, env); err != nil {
+		return "", reasons.ApprovalDenied, fmt.Sprintf("approval envelope verification failed: %v", err)
+	}
+	validation := ctx.ValidateForResume(policyHash, deferSessionStateHash(sess, req), deferwork.DefaultTimeout)
+	if !validation.Valid {
+		return "", reasons.ApprovalDenied, strings.Join(validation.Warnings, "; ")
+	}
+	currentArgsJSON := canonicalArgsJSON(req.Args)
+	if currentArgsJSON != canonicalArgsJSON(ctx.ArgSnapshot) && currentArgsJSON != canonicalArgsJSON(env.ModifiedArgs) {
+		return "", reasons.ApprovalDenied, "resume args do not match the approved defer context"
+	}
+	body, err := json.Marshal(env)
+	if err != nil {
+		return "", reasons.ApprovalDenied, fmt.Sprintf("serialize approval envelope: %v", err)
+	}
+	return string(body), "", ""
+}
+
+func deterministicDeferToken(callID, toolID string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(callID+toolID)))[:8]
+}
+
+// DeterministicDeferToken returns the DEFER token derived from a stable call ID
+// and tool ID. Exposed for MCP and other adapters that must align with pipeline
+// defer token semantics.
+func DeterministicDeferToken(callID, toolID string) string {
+	return deterministicDeferToken(callID, toolID)
+}
+
+func routingDeferToken(callID, toolID, target string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(callID+toolID+target)))[:8]
+}
+
+func resumeDeferTokens(req CanonicalActionRequest) []string {
+	originalCallID := strings.TrimSuffix(req.CallID, "-resume")
+	tokens := []string{deterministicDeferToken(originalCallID, req.ToolID)}
+	if topologyInvokeTool(req.ToolID) {
+		if target := extractTargetAgentID(req.Args); target != "" {
+			routeToken := routingDeferToken(originalCallID, req.ToolID, target)
+			if routeToken != tokens[0] {
+				tokens = append(tokens, routeToken)
+			}
+		}
+	}
+	return tokens
+}
+
+func deferSessionStateHash(sess *session.State, req CanonicalActionRequest) string {
+	ctx := deferwork.NewDeferContext("", req.SessionID, "", nil)
+	ctx.SetSessionStateHash(deferSessionStateSnapshot(sess, req))
+	return ctx.SessionStateHash
+}
+
+func deferSessionStateSnapshot(sess *session.State, req CanonicalActionRequest) map[string]any {
+	if sess == nil {
+		return map[string]any{
+			"session_id": req.SessionID,
+			"tool_id":    req.ToolID,
+		}
+	}
+	return map[string]any{
+		"session_id":       req.SessionID,
+		"tool_id":          req.ToolID,
+		"phase":            sess.CurrentPhase(),
+		"session_cost_usd": fmt.Sprintf("%.6f", sess.CurrentCostUSD()),
+		"daily_cost_usd":   fmt.Sprintf("%.6f", sess.DailyCostUSD()),
+	}
+}
+
+func (p *Pipeline) ensureParallelBudgetManager(doc *policy.Doc, sessionID, agentID string) *multiagent.BudgetManager {
+	if doc == nil || doc.ParallelBudget == nil || sessionID == "" || agentID == "" {
+		return nil
+	}
+	cfg := doc.ParallelBudget
+	if len(cfg.Agents) > 0 && !containsString(cfg.Agents, agentID) {
+		return nil
+	}
+	p.budgetMu.Lock()
+	defer p.budgetMu.Unlock()
+	manager := p.budgetManagers[sessionID]
+	if manager == nil {
+		manager = multiagent.NewBudgetManager(sessionID, cfg.AggregateMaxCostUSD)
+		p.budgetManagers[sessionID] = manager
+	}
+	_ = manager.AllocateAgent(agentID, cfg.PerAgentMaxCostUSD)
+	return manager
+}
+
+func parallelBudgetAgentCancelled(manager *multiagent.BudgetManager, agentID string) bool {
+	if manager == nil {
+		return false
+	}
+	status := manager.Status()
+	for _, agent := range status.Agents {
+		if agent.AgentID == agentID {
+			return agent.Cancelled
+		}
+	}
+	return false
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == strings.TrimSpace(target) {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalArgsJSON(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	body, err := json.Marshal(args)
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
+func coverageTierFromDecision(req CanonicalActionRequest, d Decision) string {
+	switch {
+	case req.InterceptAdapter == "sdk" && d.RuleID != "":
+		return "A"
+	case req.InterceptAdapter == "mcp" && d.RuleID != "":
+		return "B"
+	case req.InterceptAdapter == "proxy" || req.InterceptAdapter == "daemon":
+		return "C"
+	case d.RuleID != "":
+		return "D"
+	default:
+		return "E"
+	}
+}
+
 // ScanOutput runs post-execution output scanning on a tool's output.
 // Adapters call this after a PERMIT'd tool completes, before returning
 // the output to the agent's context. Returns the scan result which may
 // contain redacted output or a denial.
 func (p *Pipeline) ScanOutput(toolID, output string) postcondition.ScanResult {
+	_, postScanSpan := observe.StartOTLPSpan(context.Background(), "faramesh.postscan")
+	defer observe.EndOTLPSpan(postScanSpan, nil)
+
 	if err := p.recordToolOutputs("", "", toolID, "", map[string]any{"output": output}); err != nil {
+		observe.RecordPostScanOTLP(context.Background(), "DENIED")
 		return postcondition.ScanResult{
 			Outcome:    postcondition.OutcomeDenied,
 			Output:     "",
@@ -2150,16 +2674,20 @@ func (p *Pipeline) ScanOutput(toolID, output string) postcondition.ScanResult {
 	}
 	scanner := p.currentArtifacts().postScanner
 	if scanner == nil {
+		observe.RecordPostScanOTLP(context.Background(), "PASS")
 		return postcondition.ScanResult{Outcome: postcondition.OutcomePass, Output: output}
 	}
 	res := scanner.Scan(toolID, output)
 	switch res.Outcome {
 	case postcondition.OutcomeRedacted:
 		observe.Default.RecordPostScan("REDACTED")
+		observe.RecordPostScanOTLP(context.Background(), "REDACTED")
 	case postcondition.OutcomeDenied:
 		observe.Default.RecordPostScan("DENIED")
+		observe.RecordPostScanOTLP(context.Background(), "DENIED")
 	default:
 		observe.Default.RecordPostScan("pass")
+		observe.RecordPostScanOTLP(context.Background(), "PASS")
 	}
 	return res
 }
@@ -2224,6 +2752,49 @@ func shouldEnforceLifecycleHooks(effect Effect) bool {
 	default:
 		return false
 	}
+}
+
+func (p *Pipeline) applyRuntimeMode(d Decision) Decision {
+	switch p.runtimeMode {
+	case RuntimeModeShadow:
+		return overrideDecisionForShadow(d)
+	case RuntimeModeAudit:
+		return Decision{
+			Effect:               EffectShadowPermit,
+			RuleID:               d.RuleID,
+			ReasonCode:           reasons.UnknownReasonCode,
+			Reason:               "audit mode passthrough; policy evaluation skipped for enforcement",
+			RetryPermitted:       true,
+			DeferToken:           "",
+			DenialToken:          "",
+			ShadowActualOutcome:  d.Effect,
+			PolicyVersion:        d.PolicyVersion,
+			IncidentCategory:     d.IncidentCategory,
+			IncidentSeverity:     d.IncidentSeverity,
+			ReservedCostUSD:      d.ReservedCostUSD,
+			ApprovalEnvelopeJSON: d.ApprovalEnvelopeJSON,
+		}
+	default:
+		return d
+	}
+}
+
+func overrideDecisionForShadow(d Decision) Decision {
+	if d.Effect == EffectShadow || d.Effect == EffectShadowPermit {
+		return d
+	}
+	out := d
+	out.Effect = EffectShadowPermit
+	out.ShadowActualOutcome = d.Effect
+	out.DeferToken = ""
+	out.DenialToken = ""
+	switch d.Effect {
+	case EffectDeny:
+		out.ReasonCode = reasons.ShadowDeny
+	case EffectDefer:
+		out.ReasonCode = reasons.ShadowDefer
+	}
+	return out
 }
 
 func (p *Pipeline) inferArgProvenance(agentID, sessionID string, args map[string]any) (out map[string]string, err error) {
@@ -2348,6 +2919,76 @@ func runScanners(req CanonicalActionRequest) (bool, string, string) {
 	}
 
 	return false, "", ""
+}
+
+func selectorSnapshotForRecord(args map[string]any) map[string]any {
+	if len(args) == 0 {
+		return nil
+	}
+	snapshot, ok := sanitizeSelectorValue(args).(map[string]any)
+	if !ok || len(snapshot) == 0 {
+		return nil
+	}
+	return snapshot
+}
+
+func sanitizeSelectorValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		for k, child := range x {
+			key := strings.TrimSpace(k)
+			if key == "" {
+				continue
+			}
+			if isSensitiveSelectorKey(key) {
+				out[key] = "[redacted]"
+				continue
+			}
+			out[key] = sanitizeSelectorValue(child)
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(x))
+		for _, item := range x {
+			out = append(out, sanitizeSelectorValue(item))
+		}
+		return out
+	case []string:
+		out := make([]any, 0, len(x))
+		for _, item := range x {
+			out = append(out, sanitizeSelectorValue(item))
+		}
+		return out
+	case string:
+		s := strings.TrimSpace(x)
+		if s == "" {
+			return x
+		}
+		// Redact obvious secret material in values, but keep path-like strings that
+		// scanners match (e.g. /etc/passwd) so WAL replay can reproduce scanner DENY
+		// parity without legacy reason passthrough.
+		if secretPatternRe.MatchString(s) {
+			return "[redacted]"
+		}
+		return x
+	default:
+		return v
+	}
+}
+
+func isSensitiveSelectorKey(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	return strings.Contains(key, "secret") ||
+		strings.Contains(key, "token") ||
+		strings.Contains(key, "password") ||
+		strings.Contains(key, "api_key") ||
+		strings.Contains(key, "apikey") ||
+		strings.Contains(key, "client_secret") ||
+		strings.Contains(key, "access_key") ||
+		strings.Contains(key, "private_key") ||
+		strings.Contains(key, "credential") ||
+		key == "authorization"
 }
 
 func firstPhaseName(phases map[string]policy.Phase) string {

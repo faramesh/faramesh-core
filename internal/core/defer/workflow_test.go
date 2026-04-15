@@ -2,10 +2,12 @@ package deferwork
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	backendstore "github.com/faramesh/faramesh-core/internal/core/defer/backends"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -19,11 +21,11 @@ func TestResolveReturnsConflictAfterFirstWinner(t *testing.T) {
 		t.Fatalf("DeferWithToken() error = %v", err)
 	}
 
-	if err := w.Resolve("tok-conflict", true, "approved"); err != nil {
+	if err := w.Resolve("tok-conflict", true, "", "approved"); err != nil {
 		t.Fatalf("first Resolve() error = %v", err)
 	}
 
-	err = w.Resolve("tok-conflict", false, "deny")
+	err = w.Resolve("tok-conflict", false, "", "deny")
 	if err == nil {
 		t.Fatalf("expected conflict error from second Resolve()")
 	}
@@ -74,12 +76,12 @@ func TestResolveConcurrentApproveDenyOnlyOneSucceeds(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		<-start
-		out <- outcome{approved: true, err: w.Resolve("tok-race", true, "approve")}
+		out <- outcome{approved: true, err: w.Resolve("tok-race", true, "", "approve")}
 	}()
 	go func() {
 		defer wg.Done()
 		<-start
-		out <- outcome{approved: false, err: w.Resolve("tok-race", false, "deny")}
+		out <- outcome{approved: false, err: w.Resolve("tok-race", false, "", "deny")}
 	}()
 
 	close(start)
@@ -132,7 +134,7 @@ func TestStatusPendingResolvedAndUnknown(t *testing.T) {
 		t.Fatalf("status before resolve = (%q, %v), want (%q, true)", st, pending, StatusPending)
 	}
 
-	if err := w.Resolve("tok-status", false, "denied"); err != nil {
+	if err := w.Resolve("tok-status", false, "", "denied"); err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 	st, pending = w.Status("tok-status")
@@ -148,7 +150,7 @@ func TestStatusPendingResolvedAndUnknown(t *testing.T) {
 
 func TestResolveUnknownToken(t *testing.T) {
 	w := NewWorkflow("")
-	err := w.Resolve("missing-token", true, "x")
+	err := w.Resolve("missing-token", true, "", "x")
 	if err == nil {
 		t.Fatalf("expected error for unknown token")
 	}
@@ -163,10 +165,10 @@ func TestResolveWithModifiedArgsConflictAfterResolution(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeferWithToken() error = %v", err)
 	}
-	if err := w.ResolveWithModifiedArgs("tok-modified", "edited", map[string]any{"x": 1}); err != nil {
+	if err := w.ResolveWithModifiedArgs("tok-modified", "approver-1", "edited", map[string]any{"x": 1}); err != nil {
 		t.Fatalf("first ResolveWithModifiedArgs() error = %v", err)
 	}
-	err = w.ResolveWithModifiedArgs("tok-modified", "edited-again", map[string]any{"x": 2})
+	err = w.ResolveWithModifiedArgs("tok-modified", "approver-2", "edited-again", map[string]any{"x": 2})
 	if err == nil {
 		t.Fatalf("expected conflict error on second ResolveWithModifiedArgs()")
 	}
@@ -176,6 +178,109 @@ func TestResolveWithModifiedArgsConflictAfterResolution(t *testing.T) {
 	}
 	if conflict.Code != ResolveConflictCode {
 		t.Fatalf("conflict code = %q, want %q", conflict.Code, ResolveConflictCode)
+	}
+}
+
+func TestDeferMultiApprovalRequiresDistinctApprovers(t *testing.T) {
+	w := NewWorkflow("")
+	h, err := w.DeferWithTokenOpts("tok-multi", "agent-a", "tool-a", "review", DeferOptions{ApprovalsRequired: 2})
+	if err != nil {
+		t.Fatalf("DeferWithTokenOpts() error = %v", err)
+	}
+	if err := w.Resolve("tok-multi", true, "alice", "ok"); err != nil {
+		t.Fatalf("first Resolve() error = %v", err)
+	}
+	req, got, pending := w.ApprovalProgress("tok-multi")
+	if !pending || req != 2 || got != 1 {
+		t.Fatalf("ApprovalProgress = (%d,%d,pending=%v), want (2,1,true)", req, got, pending)
+	}
+	select {
+	case r := <-h.ch:
+		t.Fatalf("channel should not receive until second approval, got %+v", r)
+	default:
+	}
+	if err := w.Resolve("tok-multi", true, "bob", "also ok"); err != nil {
+		t.Fatalf("second Resolve() error = %v", err)
+	}
+	res, ok := Wait(h)
+	if !ok || res.Status != StatusApproved {
+		t.Fatalf("Wait() ok=%v status=%q", ok, res.Status)
+	}
+	if !strings.Contains(res.ApproverID, "alice") || !strings.Contains(res.ApproverID, "bob") {
+		t.Fatalf("ApproverID = %q, want both alice and bob", res.ApproverID)
+	}
+	if !strings.Contains(res.Reason, "alice") || !strings.Contains(res.Reason, "bob") {
+		t.Fatalf("Reason = %q", res.Reason)
+	}
+}
+
+func TestDeferMultiApprovalDenyIsImmediate(t *testing.T) {
+	w := NewWorkflow("")
+	h, err := w.DeferWithTokenOpts("tok-deny-multi", "a", "t", "r", DeferOptions{ApprovalsRequired: 3})
+	if err != nil {
+		t.Fatalf("DeferWithTokenOpts() error = %v", err)
+	}
+	if err := w.Resolve("tok-deny-multi", true, "alice", "ok"); err != nil {
+		t.Fatalf("Resolve approve: %v", err)
+	}
+	if err := w.Resolve("tok-deny-multi", false, "carol", "no"); err != nil {
+		t.Fatalf("Resolve deny: %v", err)
+	}
+	res, ok := Wait(h)
+	if ok || res.Status != StatusDenied {
+		t.Fatalf("Wait() ok=%v status=%q", ok, res.Status)
+	}
+}
+
+func TestDeferMultiApprovalSameApproverDoesNotAdvance(t *testing.T) {
+	w := NewWorkflow("")
+	h, err := w.DeferWithTokenOpts("tok-same", "a", "t", "r", DeferOptions{ApprovalsRequired: 2})
+	if err != nil {
+		t.Fatalf("DeferWithTokenOpts() error = %v", err)
+	}
+	if err := w.Resolve("tok-same", true, "alice", "one"); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if err := w.Resolve("tok-same", true, "alice", "two"); err != nil {
+		t.Fatalf("second Resolve same approver: %v", err)
+	}
+	_, got, _ := w.ApprovalProgress("tok-same")
+	if got != 1 {
+		t.Fatalf("signoffs = %d, want 1", got)
+	}
+	select {
+	case r := <-h.ch:
+		t.Fatalf("unexpected resolution %+v", r)
+	default:
+	}
+}
+
+func TestResolveWithModifiedArgsRejectsMultiApproval(t *testing.T) {
+	w := NewWorkflow("")
+	if _, err := w.DeferWithTokenOpts("tok-cond", "a", "t", "r", DeferOptions{ApprovalsRequired: 2}); err != nil {
+		t.Fatalf("DeferWithTokenOpts: %v", err)
+	}
+	err := w.ResolveWithModifiedArgs("tok-cond", "x", "y", map[string]any{"k": 1})
+	if err == nil {
+		t.Fatal("expected error for multi-approval defer with modified args")
+	}
+}
+
+func TestResolveCapturesApproverIdentity(t *testing.T) {
+	w := NewWorkflow("")
+	h, err := w.DeferWithToken("tok-approver", "agent-a", "tool-a", "needs review")
+	if err != nil {
+		t.Fatalf("DeferWithToken() error = %v", err)
+	}
+	if err := w.Resolve("tok-approver", true, "approver-123", "approved"); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	res, ok := Wait(h)
+	if !ok {
+		t.Fatalf("wait ok = false, want true")
+	}
+	if res.ApproverID != "approver-123" {
+		t.Fatalf("approver_id = %q, want approver-123", res.ApproverID)
 	}
 }
 
@@ -200,10 +305,10 @@ func TestResolveConflictEmitsStructuredGovernanceLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeferWithToken() error = %v", err)
 	}
-	if err := w.Resolve("tok-log-conflict", true, "approved"); err != nil {
+	if err := w.Resolve("tok-log-conflict", true, "", "approved"); err != nil {
 		t.Fatalf("first Resolve() error = %v", err)
 	}
-	_ = w.Resolve("tok-log-conflict", false, "denied")
+	_ = w.Resolve("tok-log-conflict", false, "", "denied")
 
 	entries := logs.FilterMessage("defer resolution conflict").All()
 	if len(entries) == 0 {
@@ -283,7 +388,7 @@ func TestLateResolveAfterTimeoutKeepsExpiredTerminalState(t *testing.T) {
 		{name: "late-deny", approved: false, reason: "late deny"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := w.Resolve("tok-timeout-late", tc.approved, tc.reason)
+			err := w.Resolve("tok-timeout-late", tc.approved, "", tc.reason)
 			if err == nil {
 				t.Fatalf("expected conflict for %s", tc.name)
 			}
@@ -336,7 +441,7 @@ func TestResolveStressOnlyOneWinnerMaintainsStableFinalState(t *testing.T) {
 		}
 		go func(approved bool, r string) {
 			<-start
-			out <- w.Resolve("tok-stress", approved, r)
+			out <- w.Resolve("tok-stress", approved, "", r)
 		}(approve, reason)
 	}
 
@@ -386,5 +491,129 @@ func TestResolveStressOnlyOneWinnerMaintainsStableFinalState(t *testing.T) {
 		if conflictStatus != st {
 			t.Fatalf("conflict status = %q, want final status %q", conflictStatus, st)
 		}
+	}
+}
+
+func TestDeferWithTokenUsesAutoDenyDeadlineFromTriage(t *testing.T) {
+	w := NewWorkflow("")
+	w.SetTriage(NewTriage(TriageConfig{
+		Rules: []TriageRule{
+			{
+				ToolPattern:   "payments/*",
+				Priority:      PriorityCritical,
+				SLA:           5 * time.Minute,
+				AutoDeny:      true,
+				AutoDenyAfter: 2 * time.Minute,
+			},
+		},
+	}))
+
+	h, err := w.DeferWithToken("tok-auto-deny", "agent-p", "payments/refund", "needs review")
+	if err != nil {
+		t.Fatalf("DeferWithToken() error = %v", err)
+	}
+
+	if got := h.Deadline.Sub(h.CreatedAt); got < 119*time.Second || got > 121*time.Second {
+		t.Fatalf("deadline delta = %v, want about 2m", got)
+	}
+}
+
+func TestWorkflowBackendSyncsCrossInstanceResolution(t *testing.T) {
+	backend := backendstore.NewPollingBackend()
+
+	creator := NewWorkflow("")
+	creator.SetBackend(backend)
+
+	resolver := NewWorkflow("")
+	resolver.SetBackend(backend)
+
+	h, err := creator.DeferWithToken("tok-backend", "agent-a", "tool-a", "review")
+	if err != nil {
+		t.Fatalf("DeferWithToken() error = %v", err)
+	}
+
+	pending := resolver.Pending()
+	if len(pending) != 1 || pending[0]["token"] != "tok-backend" {
+		t.Fatalf("resolver pending = %#v, want tok-backend", pending)
+	}
+
+	if err := resolver.Resolve("tok-backend", true, "approver-123", "approved"); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	res, ok := Wait(h)
+	if !ok {
+		t.Fatalf("wait ok = false, want true")
+	}
+	if res.ApproverID != "approver-123" || res.Status != StatusApproved {
+		t.Fatalf("wait resolution = %#v, want approved by approver-123", res)
+	}
+
+	st, stillPending := creator.Status("tok-backend")
+	if stillPending || st != StatusApproved {
+		t.Fatalf("creator status = (%q, %v), want approved false", st, stillPending)
+	}
+}
+
+func TestResolveSignsApprovalEnvelope(t *testing.T) {
+	w := NewWorkflow("")
+	w.SetApprovalHMACKey([]byte("approval-secret"))
+
+	h, err := w.DeferWithToken("tok-envelope", "agent-a", "tool-a", "review")
+	if err != nil {
+		t.Fatalf("DeferWithToken() error = %v", err)
+	}
+	if err := w.Resolve("tok-envelope", true, "approver-9", "approved"); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	res, ok := Wait(h)
+	if !ok {
+		t.Fatalf("wait ok = false, want true")
+	}
+	if res.Envelope == nil || res.Envelope.Signature == "" {
+		t.Fatalf("expected signed approval envelope, got %#v", res.Envelope)
+	}
+	if err := VerifyApprovalEnvelope([]byte("approval-secret"), res.Envelope); err != nil {
+		t.Fatalf("VerifyApprovalEnvelope() error = %v", err)
+	}
+}
+
+func TestRestoreResolutionSeedsApprovalEnvelope(t *testing.T) {
+	w := NewWorkflow("")
+	env := &ApprovalEnvelope{
+		Token:      "tok-original",
+		ApproverID: "approver-7",
+		Approved:   true,
+		Reason:     "approved offline",
+		Status:     StatusApproved,
+		ResolvedAt: time.Now().UTC(),
+		Signature:  "deadbeef",
+	}
+	if err := w.RestoreResolution("tok-replay", Resolution{
+		Approved:   true,
+		ApproverID: env.ApproverID,
+		Reason:     env.Reason,
+		Status:     env.Status,
+		ResolvedAt: env.ResolvedAt,
+		Envelope:   env,
+	}); err != nil {
+		t.Fatalf("RestoreResolution() error = %v", err)
+	}
+
+	got, ok := w.ApprovalEnvelope("tok-replay")
+	if !ok {
+		t.Fatal("expected restored approval envelope to be available")
+	}
+	if got.Token != "tok-original" {
+		t.Fatalf("restored envelope token = %q, want tok-original", got.Token)
+	}
+	if got.Signature != "deadbeef" {
+		t.Fatalf("restored envelope signature = %q, want deadbeef", got.Signature)
+	}
+
+	st, pending := w.Status("tok-replay")
+	if pending || st != StatusApproved {
+		t.Fatalf("restored status = (%q, %v), want approved false", st, pending)
 	}
 }

@@ -13,17 +13,21 @@ func TestGCPSecretsBrokerFetch(t *testing.T) {
 		if r.URL.Path != "/v1/projects/my-project/secrets/faramesh-stripe/refund/versions/latest:access" {
 			t.Logf("path: %s", r.URL.Path)
 		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("authorization header: got %q", got)
+		}
 		resp := gcpSecretResponse{
 			Name: "projects/my-project/secrets/faramesh-stripe/refund/versions/1",
 		}
-		resp.Payload.Data = "gcp_secret_value_456"
+		resp.Payload.Data = "Z2NwX3NlY3JldF92YWx1ZV80NTY="
 		json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
 	b := NewGCPSecretsBroker(GCPSecretsConfig{
-		Project:  "my-project",
-		Endpoint: srv.URL,
+		Project:     "my-project",
+		Endpoint:    srv.URL,
+		AccessToken: "test-token",
 	})
 
 	cred, err := b.Fetch(context.Background(), FetchRequest{
@@ -47,8 +51,9 @@ func TestGCPSecretsBrokerFetch_Error(t *testing.T) {
 	defer srv.Close()
 
 	b := NewGCPSecretsBroker(GCPSecretsConfig{
-		Project:  "bad",
-		Endpoint: srv.URL,
+		Project:     "bad",
+		Endpoint:    srv.URL,
+		AccessToken: "test-token",
 	})
 	_, err := b.Fetch(context.Background(), FetchRequest{ToolID: "x"})
 	if err == nil {

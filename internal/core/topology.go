@@ -15,29 +15,19 @@ func topologyInvokeTool(toolID string) bool {
 	if toolID == "multiagent/invoke_agent" || toolID == "invoke_agent" {
 		return true
 	}
-	return strings.HasSuffix(toolID, "/invoke_agent")
+	if strings.HasSuffix(toolID, "/invoke_agent") {
+		return true
+	}
+	parts := strings.Split(strings.TrimSpace(toolID), "/")
+	if len(parts) >= 2 && parts[len(parts)-2] == "invoke_agent" {
+		return true
+	}
+	return false
 }
 
 // extractTargetAgentID reads the callee agent id from common CAR shapes.
 func extractTargetAgentID(args map[string]any) string {
-	if args == nil {
-		return ""
-	}
-	if s, ok := args["target_agent_id"].(string); ok && strings.TrimSpace(s) != "" {
-		return strings.TrimSpace(s)
-	}
-	if s, ok := args["agent_id"].(string); ok && strings.TrimSpace(s) != "" {
-		return strings.TrimSpace(s)
-	}
-	if m, ok := args["params"].(map[string]any); ok {
-		if s, ok := m["target_agent_id"].(string); ok && strings.TrimSpace(s) != "" {
-			return strings.TrimSpace(s)
-		}
-		if s, ok := m["agent_id"].(string); ok && strings.TrimSpace(s) != "" {
-			return strings.TrimSpace(s)
-		}
-	}
-	return ""
+	return extractNestedString(args, "target_agent_id", "agent_id")
 }
 
 func enforceDelegationConstraints(doc *policy.Doc, targetAgentID string, args map[string]any) (bool, string, string) {
@@ -93,24 +83,7 @@ func findDelegationPolicy(policies []policy.DelegationPolicy, targetAgentID stri
 }
 
 func extractDelegationScope(args map[string]any) string {
-	if args == nil {
-		return ""
-	}
-	if s, ok := args["delegation_scope"].(string); ok && strings.TrimSpace(s) != "" {
-		return strings.TrimSpace(s)
-	}
-	if s, ok := args["scope"].(string); ok && strings.TrimSpace(s) != "" {
-		return strings.TrimSpace(s)
-	}
-	if m, ok := args["params"].(map[string]any); ok {
-		if s, ok := m["delegation_scope"].(string); ok && strings.TrimSpace(s) != "" {
-			return strings.TrimSpace(s)
-		}
-		if s, ok := m["scope"].(string); ok && strings.TrimSpace(s) != "" {
-			return strings.TrimSpace(s)
-		}
-	}
-	return ""
+	return extractNestedString(args, "delegation_scope", "scope")
 }
 
 func extractDelegationTTL(args map[string]any) (time.Duration, bool) {
@@ -131,7 +104,44 @@ func extractDelegationTTL(args map[string]any) (time.Duration, bool) {
 			return ttl, true
 		}
 	}
+	if m, ok := args["input"].(map[string]any); ok {
+		if ttl, ok := parseDelegationTTLValue(m["delegation_ttl"]); ok {
+			return ttl, true
+		}
+		if ttl, ok := parseDelegationTTLValue(m["ttl"]); ok {
+			return ttl, true
+		}
+	}
+	if m, ok := args["arguments"].(map[string]any); ok {
+		if ttl, ok := parseDelegationTTLValue(m["delegation_ttl"]); ok {
+			return ttl, true
+		}
+		if ttl, ok := parseDelegationTTLValue(m["ttl"]); ok {
+			return ttl, true
+		}
+	}
 	return 0, false
+}
+
+func extractNestedString(args map[string]any, keys ...string) string {
+	if args == nil {
+		return ""
+	}
+	for _, key := range keys {
+		if s, ok := args[key].(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
+		}
+	}
+	for _, nestedKey := range []string{"params", "input", "arguments"} {
+		if nested, ok := args[nestedKey].(map[string]any); ok {
+			for _, key := range keys {
+				if s, ok := nested[key].(string); ok && strings.TrimSpace(s) != "" {
+					return strings.TrimSpace(s)
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func parseDelegationTTLValue(v any) (time.Duration, bool) {

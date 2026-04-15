@@ -1,0 +1,16 @@
+# Optional FPL sidecar; YAML remains authoritative for engine load.
+agent marketing-agent {
+  default deny
+
+  rules {
+    deny! shell/*
+      reason: "marketing stack must not invoke shell"
+
+    defer email/*
+      notify: "marketing-ops"
+      reason: "bulk or template sends require approval"
+
+    permit http/get
+      reason: "read-only campaign and analytics fetches"
+  }
+}

@@ -1,0 +1,52 @@
+faramesh-version: "1.0"
+agent-id: "payment-agent"
+default_effect: deny
+
+tools:
+  stripe/refund:
+    tags:
+      - "risk:high"
+  credential/stripe:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+      - "credential:scope:stripe"
+
+rules:
+  - id: deny-shell
+    match:
+      tool: "shell/*"
+      when: "true"
+    effect: deny
+    reason: "payment agents must not use shell"
+
+  - id: permit-customer-read
+    match:
+      tool: "read_customer"
+      when: "true"
+    effect: permit
+
+  - id: permit-order-read
+    match:
+      tool: "get_order"
+      when: "true"
+    effect: permit
+
+  - id: permit-notify
+    match:
+      tool: "send_notification"
+      when: "true"
+    effect: permit
+
+  - id: defer-high-value-refund
+    match:
+      tool: "stripe/refund"
+      when: "args.amount != nil && args.amount > 100"
+    effect: defer
+    reason: "large refunds require approval"
+
+  - id: permit-low-value-refund
+    match:
+      tool: "stripe/refund"
+      when: "args.amount != nil && args.amount <= 100"
+    effect: permit

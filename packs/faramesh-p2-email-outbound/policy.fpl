@@ -1,0 +1,22 @@
+# Optional FPL sidecar; ESP allowlist and tool granularity live in YAML.
+agent p2-email-outbound {
+  default deny
+
+  rules {
+    deny! shell/*
+      reason: "email agents must not invoke shell"
+
+    defer email/broadcast/*
+      notify: "comms-ops"
+      reason: "broadcast sends require approval"
+
+    defer email/send/*
+      notify: "comms-ops"
+      reason: "outbound send requires approval"
+
+    permit email/read/*
+    permit email/draft/*
+    permit http/get
+      reason: "ESP analytics hosts enforced in YAML"
+  }
+}

@@ -1,0 +1,17 @@
+# Optional FPL sidecar; YAML remains authoritative for engine load.
+agent p2-vendor-diligence {
+  default deny
+
+  rules {
+    deny! shell/*
+      reason: "procurement agents must not invoke shell"
+
+    defer vendor/contract_submit
+      notify: "legal"
+      reason: "contract submission requires approval"
+
+    permit vendor/risk_lookup
+    permit http/get
+      reason: "read-only diligence pulls"
+  }
+}

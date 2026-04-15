@@ -125,12 +125,16 @@ type EvalContext struct {
 //	session.history            — array of recent tool calls (newest first)
 //	session.cost_usd           — session cost in USD (when CostShield is enabled)
 //	session.daily_cost_usd     — daily cost in USD (when CostShield is enabled)
+//	session.tokens_session     — session token usage (when token budgets are enabled)
+//	session.tokens_daily       — UTC-day token usage
 //	session.intent_class       — cached async intent class (empty when unset/expired)
 type SessionCtx struct {
 	CallCount    int64            `expr:"call_count"`
 	History      []map[string]any `expr:"history"` // [{tool, effect, timestamp}, ...]
 	CostUSD      float64          `expr:"cost_usd"`
 	DailyCostUSD float64          `expr:"daily_cost_usd"`
+	TokensSession int64           `expr:"tokens_session"`
+	TokensDaily   int64           `expr:"tokens_daily"`
 	IntentClass  string           `expr:"intent_class"`
 }
 
@@ -200,6 +204,9 @@ type EvalResult struct {
 	RuleID     string
 	ReasonCode string
 	Reason     string
+	// ApprovalsRequired is copied from the matched rule for defer effects.
+	// 0 means use the workflow default (1 distinct approver).
+	ApprovalsRequired int
 }
 
 // PhaseTransitionResult describes a matched phase transition.
@@ -241,16 +248,7 @@ func (e *Engine) Evaluate(toolID string, ctx EvalContext) EvalResult {
 				continue
 			}
 		}
-		rc := rule.ReasonCode
-		if rc == "" {
-			rc = defaultReasonCode(rule.Effect)
-		}
-		return EvalResult{
-			Effect:     rule.Effect,
-			RuleID:     rule.ID,
-			ReasonCode: rc,
-			Reason:     rule.Reason,
-		}
+		return evalResultFromRule(rule)
 	}
 
 	return EvalResult{
@@ -258,6 +256,20 @@ func (e *Engine) Evaluate(toolID string, ctx EvalContext) EvalResult {
 		RuleID:     "",
 		ReasonCode: unmatchedReasonCode(e.doc.DefaultEffect),
 		Reason:     "no rule matched; applying default_effect",
+	}
+}
+
+func evalResultFromRule(rule Rule) EvalResult {
+	rc := rule.ReasonCode
+	if rc == "" {
+		rc = defaultReasonCode(rule.Effect)
+	}
+	return EvalResult{
+		Effect:            rule.Effect,
+		RuleID:            rule.ID,
+		ReasonCode:        rc,
+		Reason:            rule.Reason,
+		ApprovalsRequired: rule.ApprovalsRequired,
 	}
 }
 
@@ -750,11 +762,13 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 		history = []map[string]any{}
 	}
 	env["session"] = map[string]any{
-		"call_count":     ctx.Session.CallCount,
-		"history":        history,
-		"cost_usd":       ctx.Session.CostUSD,
-		"daily_cost_usd": ctx.Session.DailyCostUSD,
-		"intent_class":   ctx.Session.IntentClass,
+		"call_count":      ctx.Session.CallCount,
+		"history":         history,
+		"cost_usd":        ctx.Session.CostUSD,
+		"daily_cost_usd":  ctx.Session.DailyCostUSD,
+		"tokens_session":  ctx.Session.TokensSession,
+		"tokens_daily":    ctx.Session.TokensDaily,
+		"intent_class":    ctx.Session.IntentClass,
 	}
 
 	tags := ctx.Tool.Tags

@@ -1,0 +1,12 @@
+# Optional FPL sidecar; tools/call and file/write rules live in YAML.
+agent mcp-server {
+  default deny
+
+  rules {
+    deny! shell/*
+      reason: "MCP servers should not invoke shell"
+
+    permit tools/list
+      reason: "tool discovery permitted"
+  }
+}

@@ -8,8 +8,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -53,7 +55,7 @@ func TestSearchAndGetPackVersion(t *testing.T) {
 	c.HTTP = srv.Client()
 
 	ctx := context.Background()
-	sr, err := c.Search(ctx, "demo")
+	sr, err := c.Search(ctx, "demo", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,8 +103,15 @@ func TestVerifyPolicySignatureRoundTrip(t *testing.T) {
 }
 
 func TestPublish(t *testing.T) {
+	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/packs" && r.Method == http.MethodPost {
+			var err error
+			gotBody, err = io.ReadAll(r.Body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 			w.WriteHeader(http.StatusCreated)
 			return
 		}
@@ -116,7 +125,48 @@ func TestPublish(t *testing.T) {
 	}
 	c.HTTP = srv.Client()
 	ctx := context.Background()
-	if err := c.Publish(ctx, PublishRequest{Name: "x/y", Version: "1.0.0", PolicyYAML: "k: v\n"}); err != nil {
+	fpl := "agent z { default deny rules { deny! shell/run } }\n"
+	if err := c.Publish(ctx, PublishRequest{Name: "x/y", Version: "1.0.0", PolicyYAML: "k: v\n", PolicyFPL: fpl}); err != nil {
 		t.Fatal(err)
+	}
+	var dec map[string]any
+	if err := json.Unmarshal(gotBody, &dec); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := dec["policy_fpl"].(string); !ok || got != fpl {
+		t.Fatalf("publish body policy_fpl: got %q want %q", got, fpl)
+	}
+}
+
+func TestSearchVisibilityAndOrgHeader(t *testing.T) {
+	var gotQuery, gotOrg string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/search" && r.Method == http.MethodGet {
+			gotQuery = r.URL.RawQuery
+			gotOrg = r.Header.Get("X-Faramesh-Org-Id")
+			_ = json.NewEncoder(w).Encode(SearchResponse{APIVersion: "1", Packs: nil})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	c, err := NewClient(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.HTTP = srv.Client()
+	c.OrgID = "org_acme"
+
+	ctx := context.Background()
+	_, err = c.Search(ctx, "demo", &SearchOptions{Visibility: "org"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOrg != "org_acme" {
+		t.Fatalf("org header = %q", gotOrg)
+	}
+	if !strings.Contains(gotQuery, "visibility=org") || !strings.Contains(gotQuery, "q=demo") {
+		t.Fatalf("query = %q", gotQuery)
 	}
 }

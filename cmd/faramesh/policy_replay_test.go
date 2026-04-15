@@ -1,12 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 	"github.com/faramesh/faramesh-core/internal/core/dpr"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
 )
@@ -39,6 +41,18 @@ agent replay-credential {
 		permit vault/probe/*
 	}
 }
+`
+
+const replayApprovalPolicyYAML = `
+faramesh-version: "1.0"
+agent-id: "replay-approval"
+default_effect: deny
+rules:
+  - id: defer-refund
+    match:
+      tool: "payments_refund/invoke"
+    effect: defer
+    reason_code: RULE_DEFER
 `
 
 func TestRunPolicyReplayWALBasicSuccess(t *testing.T) {
@@ -107,7 +121,7 @@ func TestRunPolicyReplayWALDetectsDivergence(t *testing.T) {
 	}
 }
 
-func TestRunPolicyReplayWALLegacyNonPolicyReasonPassthrough(t *testing.T) {
+func TestRunPolicyReplayWALScannerDenyWithoutSnapshotDivergesOnReason(t *testing.T) {
 	dir := t.TempDir()
 	policyPath := writeReplayTestPolicy(t, dir, replayTestPolicyYAML)
 	walPath := writeReplayTestWAL(t, dir, []*dpr.Record{
@@ -116,7 +130,7 @@ func TestRunPolicyReplayWALLegacyNonPolicyReasonPassthrough(t *testing.T) {
 			ToolID:     "shell/exec",
 			Effect:     "DENY",
 			ReasonCode: reasons.SensitiveFilePath,
-			// Legacy record: no selector snapshot available for scanner replay.
+			// No selector snapshot: replay cannot reproduce scanner DENY context.
 			SelectorSnapshot: nil,
 			CreatedAt:        time.Date(2026, time.April, 5, 8, 0, 0, 0, time.UTC),
 		},
@@ -126,40 +140,14 @@ func TestRunPolicyReplayWALLegacyNonPolicyReasonPassthrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run policy replay: %v", err)
 	}
-	if summary.Divergences != 0 {
-		t.Fatalf("expected no divergences with legacy non-policy passthrough, got %+v", summary)
-	}
-	if summary.LegacyNonPolicyReasonPassthroughs != 1 {
-		t.Fatalf("expected one legacy non-policy passthrough, got %+v", summary)
-	}
-}
-
-func TestRunPolicyReplayWALStrictReasonParityFlagsLegacyNonPolicyMismatch(t *testing.T) {
-	dir := t.TempDir()
-	policyPath := writeReplayTestPolicy(t, dir, replayTestPolicyYAML)
-	walPath := writeReplayTestWAL(t, dir, []*dpr.Record{
-		{
-			RecordID:   "r1",
-			ToolID:     "shell/exec",
-			Effect:     "DENY",
-			ReasonCode: reasons.SensitiveFilePath,
-			SelectorSnapshot: nil,
-			CreatedAt:        time.Date(2026, time.April, 5, 8, 1, 0, 0, time.UTC),
-		},
-	})
-
-	summary, err := runPolicyReplayWALWithOptions(policyPath, walPath, 0, policyReplayWALOptions{StrictReasonParity: true})
-	if err != nil {
-		t.Fatalf("run policy replay strict reason parity: %v", err)
-	}
 	if summary.Divergences != 1 {
-		t.Fatalf("expected one divergence with strict reason parity, got %+v", summary)
+		t.Fatalf("expected one divergence (reason parity) without selector snapshot, got %+v", summary)
 	}
 	if summary.EffectDivergences != 0 || summary.ReasonCodeDivergences != 1 {
 		t.Fatalf("expected effect=0 reason=1 divergences, got %+v", summary)
 	}
 	if summary.Samples[0].ReplayMode != "pipeline" {
-		t.Fatalf("expected strict mode to keep pipeline replay mode, got %+v", summary.Samples[0])
+		t.Fatalf("expected pipeline replay mode, got %+v", summary.Samples[0])
 	}
 }
 
@@ -185,9 +173,6 @@ func TestRunPolicyReplayWALPipelineScannerReasonParity(t *testing.T) {
 	}
 	if summary.Divergences != 0 {
 		t.Fatalf("expected scanner parity with selector snapshot context, got %+v", summary)
-	}
-	if summary.LegacyNonPolicyReasonPassthroughs != 0 {
-		t.Fatalf("expected no legacy passthrough usage, got %+v", summary)
 	}
 }
 
@@ -220,6 +205,53 @@ func TestRunPolicyReplayWALPipelineCredentialBrokerParity(t *testing.T) {
 	}
 	if summary.EffectDivergences != 0 || summary.ReasonCodeDivergences != 0 {
 		t.Fatalf("expected effect=0 reason=0 divergences, got %+v", summary)
+	}
+}
+
+func TestRunPolicyReplayWALApprovedResumeParity(t *testing.T) {
+	dir := t.TempDir()
+	policyPath := writeReplayTestPolicy(t, dir, replayApprovalPolicyYAML)
+	w := deferwork.NewWorkflow("")
+	key := []byte("approval-secret")
+	w.SetApprovalHMACKey(key)
+	h, err := w.DeferWithToken("tok-original", "replay-approval", "payments_refund/invoke", "review")
+	if err != nil {
+		t.Fatalf("DeferWithToken() error = %v", err)
+	}
+	if err := w.Resolve("tok-original", true, "approver-42", "approved offline"); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	res, ok := deferwork.Wait(h)
+	if !ok || res.Envelope == nil {
+		t.Fatalf("expected resolved approval envelope, got ok=%v res=%#v", ok, res)
+	}
+	body, err := json.Marshal(res.Envelope)
+	if err != nil {
+		t.Fatalf("marshal approval envelope: %v", err)
+	}
+	walPath := writeReplayTestWAL(t, dir, []*dpr.Record{
+		{
+			RecordID:         "resume-1",
+			AgentID:          "replay-approval",
+			SessionID:        "sess-1",
+			ToolID:           "payments_refund/invoke",
+			Effect:           "PERMIT",
+			ReasonCode:       reasons.ApprovalGranted,
+			SelectorSnapshot: map[string]any{"amount": 1200, "currency": "USD"},
+			ApprovalEnvelope: string(body),
+			CreatedAt:        time.Date(2026, time.April, 5, 8, 4, 0, 0, time.UTC),
+		},
+	})
+
+	summary, err := runPolicyReplayWALWithOptions(policyPath, walPath, 0, policyReplayWALOptions{
+		StrictReasonParity: true,
+		HMACKey:            string(key),
+	})
+	if err != nil {
+		t.Fatalf("run policy replay approved resume parity: %v", err)
+	}
+	if summary.Divergences != 0 {
+		t.Fatalf("expected approved resume replay parity, got %+v", summary)
 	}
 }
 

@@ -6,10 +6,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
+	"github.com/faramesh/faramesh-core/internal/core/dpr"
+	"github.com/faramesh/faramesh-core/internal/core/jobs"
 	"github.com/faramesh/faramesh-core/internal/core/multiagent"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/principal"
@@ -185,6 +188,738 @@ agent ambient-guard {
 	})
 	if otherPrincipal.Effect != EffectPermit {
 		t.Fatalf("separate principal should not inherit another principal's ambient counters, got %s (%s)", otherPrincipal.Effect, otherPrincipal.Reason)
+	}
+}
+
+func TestPipeline_BudgetOnExceedCanDefer(t *testing.T) {
+	yamlPolicy := `
+faramesh-version: "1.0"
+agent-id: "budget-defer-agent"
+budget:
+  max_calls: 1
+  on_exceed: defer
+rules:
+  - id: allow-safe
+    match:
+      tool: "safe/read"
+    effect: permit
+default_effect: deny
+`
+
+	doc, version, err := policy.LoadBytes([]byte(yamlPolicy))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	p := NewPipeline(Config{Engine: policy.NewAtomicEngine(eng)})
+
+	first := p.Evaluate(CanonicalActionRequest{
+		CallID:    "budget-first",
+		AgentID:   "budget-defer-agent",
+		SessionID: "budget-session",
+		ToolID:    "safe/read",
+		Args:      map[string]any{},
+		Timestamp: time.Now().UTC(),
+	})
+	if first.Effect != EffectPermit {
+		t.Fatalf("first call should be permitted, got %s (%s)", first.Effect, first.Reason)
+	}
+
+	second := p.Evaluate(CanonicalActionRequest{
+		CallID:    "budget-second",
+		AgentID:   "budget-defer-agent",
+		SessionID: "budget-session",
+		ToolID:    "safe/read",
+		Args:      map[string]any{},
+		Timestamp: time.Now().UTC(),
+	})
+	if second.Effect != EffectDefer {
+		t.Fatalf("second call should defer on budget exceed, got %s (%s)", second.Effect, second.Reason)
+	}
+	if second.ReasonCode != reasons.SessionToolLimit {
+		t.Fatalf("want reason code %s, got %s", reasons.SessionToolLimit, second.ReasonCode)
+	}
+}
+
+func TestPipeline_TokenBudgetSessionExceeded(t *testing.T) {
+	yamlPolicy := `
+faramesh-version: "1.0"
+agent-id: "tok-budget-agent"
+budget:
+  session_tokens: 100
+rules:
+  - id: allow-llm
+    match:
+      tool: "llm/call"
+    effect: permit
+default_effect: deny
+`
+
+	doc, version, err := policy.LoadBytes([]byte(yamlPolicy))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	p := NewPipeline(Config{Engine: policy.NewAtomicEngine(eng)})
+
+	first := p.Evaluate(CanonicalActionRequest{
+		CallID:    "tok-1",
+		AgentID:   "tok-budget-agent",
+		SessionID: "tok-session",
+		ToolID:    "llm/call",
+		Args:      map[string]any{"_faramesh.tokens": int64(60)},
+		Timestamp: time.Now().UTC(),
+	})
+	if first.Effect != EffectPermit {
+		t.Fatalf("first call permit, got %s (%s)", first.Effect, first.Reason)
+	}
+
+	second := p.Evaluate(CanonicalActionRequest{
+		CallID:    "tok-2",
+		AgentID:   "tok-budget-agent",
+		SessionID: "tok-session",
+		ToolID:    "llm/call",
+		Args:      map[string]any{"_faramesh.tokens": int64(50)},
+		Timestamp: time.Now().UTC(),
+	})
+	if second.Effect != EffectDeny {
+		t.Fatalf("second call should deny on token budget, got %s (%s)", second.Effect, second.Reason)
+	}
+	if second.ReasonCode != reasons.BudgetSessionTokensExceeded {
+		t.Fatalf("reason = %s, want %s", second.ReasonCode, reasons.BudgetSessionTokensExceeded)
+	}
+}
+
+func TestPipeline_BudgetReservationConfirmsPermitWithoutDoubleCharge(t *testing.T) {
+	yamlPolicy := `
+faramesh-version: "1.0"
+agent-id: "budget-cost-agent"
+budget:
+  session_usd: 10
+tools:
+  llm/generate:
+    cost_usd: 6
+rules:
+  - id: allow-costed-tool
+    match:
+      tool: "llm/generate"
+    effect: permit
+default_effect: deny
+`
+
+	doc, version, err := policy.LoadBytes([]byte(yamlPolicy))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	sessions := session.NewManager()
+	p := NewPipeline(Config{
+		Engine:   policy.NewAtomicEngine(eng),
+		Sessions: sessions,
+		Defers:   deferwork.NewWorkflow(""),
+	})
+
+	first := p.Evaluate(CanonicalActionRequest{
+		CallID:    "budget-cost-first",
+		AgentID:   "budget-cost-agent",
+		SessionID: "budget-cost-session",
+		ToolID:    "llm/generate",
+		Args:      map[string]any{},
+		Timestamp: time.Now().UTC(),
+	})
+	if first.Effect != EffectPermit {
+		t.Fatalf("first call should be permitted, got %s (%s)", first.Effect, first.Reason)
+	}
+	if got := sessions.Get("budget-cost-agent").CurrentCostUSD(); got != 6 {
+		t.Fatalf("current cost after first permit = %v, want 6", got)
+	}
+
+	second := p.Evaluate(CanonicalActionRequest{
+		CallID:    "budget-cost-second",
+		AgentID:   "budget-cost-agent",
+		SessionID: "budget-cost-session",
+		ToolID:    "llm/generate",
+		Args:      map[string]any{},
+		Timestamp: time.Now().UTC(),
+	})
+	if second.Effect != EffectDeny {
+		t.Fatalf("second call should be denied on reserved budget exceed, got %s (%s)", second.Effect, second.Reason)
+	}
+	if second.ReasonCode != reasons.BudgetSessionExceeded {
+		t.Fatalf("want reason code %s, got %s", reasons.BudgetSessionExceeded, second.ReasonCode)
+	}
+	if got := sessions.Get("budget-cost-agent").CurrentCostUSD(); got != 6 {
+		t.Fatalf("current cost after denied second call = %v, want 6", got)
+	}
+}
+
+func TestPipeline_BudgetReservationRollsBackDeniedDecision(t *testing.T) {
+	yamlPolicy := `
+faramesh-version: "1.0"
+agent-id: "budget-rollback-agent"
+budget:
+  session_usd: 10
+tools:
+  llm/generate:
+    cost_usd: 4
+rules:
+  - id: deny-costed-tool
+    match:
+      tool: "llm/generate"
+    effect: deny
+default_effect: deny
+`
+
+	doc, version, err := policy.LoadBytes([]byte(yamlPolicy))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	sessions := session.NewManager()
+	p := NewPipeline(Config{
+		Engine:   policy.NewAtomicEngine(eng),
+		Sessions: sessions,
+		Defers:   deferwork.NewWorkflow(""),
+	})
+
+	decision := p.Evaluate(CanonicalActionRequest{
+		CallID:    "budget-rollback-deny",
+		AgentID:   "budget-rollback-agent",
+		SessionID: "budget-rollback-session",
+		ToolID:    "llm/generate",
+		Args:      map[string]any{},
+		Timestamp: time.Now().UTC(),
+	})
+	if decision.Effect != EffectDeny {
+		t.Fatalf("policy deny should still deny, got %s (%s)", decision.Effect, decision.Reason)
+	}
+	if got := sessions.Get("budget-rollback-agent").CurrentCostUSD(); got != 0 {
+		t.Fatalf("current cost after denied reserved call = %v, want 0", got)
+	}
+}
+
+func TestPipelineResumeValidationRequiresSignedApprovalEnvelope(t *testing.T) {
+	policyYAML := `
+faramesh_version: "1.0"
+agent_id: "agent-a"
+default_effect: deny
+rules:
+  - id: "defer-dangerous"
+    tool: "dangerous/run"
+    effect: "defer"
+    reason: "human approval required"
+`
+	doc, version, err := policy.LoadBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	wf := deferwork.NewWorkflow("")
+	key := []byte("approval-secret")
+	wf.SetApprovalHMACKey(key)
+	p := NewPipeline(Config{
+		Engine:   policy.NewAtomicEngine(eng),
+		Sessions: session.NewManager(),
+		Defers:   wf,
+		HMACKey:  key,
+	})
+
+	first := p.Evaluate(CanonicalActionRequest{
+		CallID:    "call-1",
+		AgentID:   "agent-a",
+		SessionID: "sess-1",
+		ToolID:    "dangerous/run",
+		Args:      map[string]any{"target": "prod"},
+		Timestamp: time.Now(),
+	})
+	if first.Effect != EffectDefer {
+		t.Fatalf("first effect = %q, want defer", first.Effect)
+	}
+	if err := wf.Resolve(first.DeferToken, true, "approver-1", "approved"); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	envelopeJSON, code, reason := p.validateResumeApproval(CanonicalActionRequest{
+		CallID:    "call-1-resume",
+		AgentID:   "agent-a",
+		SessionID: "sess-1",
+		ToolID:    "dangerous/run",
+		Args:      map[string]any{"target": "prod"},
+	}, p.sessions.Get("agent-a"), version)
+	if code != "" || envelopeJSON == "" {
+		t.Fatalf("validateResumeApproval() = (%q, %q), want success with envelope", code, reason)
+	}
+
+	_, code, reason = p.validateResumeApproval(CanonicalActionRequest{
+		CallID:    "call-1-resume",
+		AgentID:   "agent-a",
+		SessionID: "sess-1",
+		ToolID:    "dangerous/run",
+		Args:      map[string]any{"target": "staging"},
+	}, p.sessions.Get("agent-a"), version)
+	if code != reasons.ApprovalDenied || !strings.Contains(reason, "resume args do not match") {
+		t.Fatalf("tampered resume = (%q, %q), want approval denied args mismatch", code, reason)
+	}
+}
+
+func TestPipelineApprovedResumePermitsDeferredPolicyAction(t *testing.T) {
+	policyYAML := `
+faramesh_version: "1.0"
+agent_id: "agent-a"
+default_effect: deny
+rules:
+  - id: "defer-dangerous"
+    tool: "dangerous/run"
+    effect: "defer"
+    reason: "human approval required"
+`
+	doc, version, err := policy.LoadBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	wf := deferwork.NewWorkflow("")
+	key := []byte("approval-secret")
+	wf.SetApprovalHMACKey(key)
+	p := NewPipeline(Config{
+		Engine:   policy.NewAtomicEngine(eng),
+		Sessions: session.NewManager(),
+		Defers:   wf,
+		HMACKey:  key,
+	})
+
+	first := p.Evaluate(CanonicalActionRequest{
+		CallID:    "call-approve-1",
+		AgentID:   "agent-a",
+		SessionID: "sess-1",
+		ToolID:    "dangerous/run",
+		Args:      map[string]any{"target": "prod"},
+		Timestamp: time.Now(),
+	})
+	if first.Effect != EffectDefer {
+		t.Fatalf("first effect = %q, want defer", first.Effect)
+	}
+	if err := wf.Resolve(first.DeferToken, true, "approver-1", "approved"); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	resumed := p.Evaluate(CanonicalActionRequest{
+		CallID:    "call-approve-1-resume",
+		AgentID:   "agent-a",
+		SessionID: "sess-1",
+		ToolID:    "dangerous/run",
+		Args:      map[string]any{"target": "prod"},
+		Timestamp: time.Now(),
+	})
+	if resumed.Effect != EffectPermit {
+		t.Fatalf("resume effect = %q, want permit", resumed.Effect)
+	}
+	if resumed.ReasonCode != reasons.ApprovalGranted {
+		t.Fatalf("resume reason code = %q, want %q", resumed.ReasonCode, reasons.ApprovalGranted)
+	}
+	if strings.TrimSpace(resumed.ApprovalEnvelopeJSON) == "" {
+		t.Fatal("expected approval envelope JSON on resumed decision")
+	}
+}
+
+func TestPipelineApprovedResumePermitsRoutingDeferredInvocation(t *testing.T) {
+	policyYAML := `
+faramesh-version: "1.0"
+agent-id: "orch-1"
+default_effect: deny
+orchestrator_manifest:
+  agent_id: "orch-1"
+  undeclared_invocation_policy: deny
+  permitted_invocations:
+    - agent_id: "worker-b"
+      max_invocations_per_session: 10
+      requires_prior_approval: true
+delegation_policies:
+  - target_agent: "worker-b"
+    scope: "safe/*"
+    ttl: "1h"
+    ceiling: "approval"
+rules:
+  - id: "allow-invoke"
+    match:
+      tool: "multiagent/invoke_agent/*"
+      when: "true"
+    effect: permit
+`
+	doc, version, err := policy.LoadBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	wf := deferwork.NewWorkflow("")
+	key := []byte("approval-secret")
+	wf.SetApprovalHMACKey(key)
+	p := NewPipeline(Config{
+		Engine:          policy.NewAtomicEngine(eng),
+		Sessions:        session.NewManager(),
+		Defers:          wf,
+		HMACKey:         key,
+		RoutingGovernor: multiagent.NewRoutingGovernor(),
+	})
+
+	first := p.Evaluate(CanonicalActionRequest{
+		CallID:    "route-approve-1",
+		AgentID:   "orch-1",
+		SessionID: "sess-1",
+		ToolID:    "multiagent/invoke_agent/_execute_tool_sync",
+		Args: map[string]any{
+			"input": map[string]any{
+				"target_agent_id":  "worker-b",
+				"delegation_scope": "safe/read",
+				"delegation_ttl":   "30m",
+			},
+		},
+		Timestamp: time.Now(),
+	})
+	if first.Effect != EffectDefer {
+		t.Fatalf("first effect = %q, want defer", first.Effect)
+	}
+	if err := wf.Resolve(first.DeferToken, true, "approver-1", "approved"); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	resumed := p.Evaluate(CanonicalActionRequest{
+		CallID:    "route-approve-1-resume",
+		AgentID:   "orch-1",
+		SessionID: "sess-1",
+		ToolID:    "multiagent/invoke_agent/_execute_tool_sync",
+		Args: map[string]any{
+			"input": map[string]any{
+				"target_agent_id":  "worker-b",
+				"delegation_scope": "safe/read",
+				"delegation_ttl":   "30m",
+			},
+		},
+		Timestamp: time.Now(),
+	})
+	if resumed.Effect != EffectPermit {
+		t.Fatalf("resume effect = %q, want permit", resumed.Effect)
+	}
+	if resumed.ReasonCode != reasons.RulePermit {
+		t.Fatalf("resume reason code = %q, want %q", resumed.ReasonCode, reasons.RulePermit)
+	}
+	if strings.TrimSpace(resumed.ApprovalEnvelopeJSON) == "" {
+		t.Fatal("expected approval envelope JSON on routing resumed decision")
+	}
+}
+
+func TestPipelineApprovedResumePersistsApprovalEnvelopeToSQLite(t *testing.T) {
+	policyYAML := `
+faramesh_version: "1.0"
+agent_id: "agent-a"
+default_effect: deny
+rules:
+  - id: "defer-dangerous"
+    tool: "dangerous/run"
+    effect: "defer"
+    reason: "human approval required"
+`
+	doc, version, err := policy.LoadBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	dir := t.TempDir()
+	store, err := dpr.OpenStore(filepath.Join(dir, "faramesh.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	wal, err := dpr.OpenWAL(filepath.Join(dir, "faramesh.wal"))
+	if err != nil {
+		t.Fatalf("open wal: %v", err)
+	}
+	defer func() { _ = wal.Close() }()
+	queue := jobs.NewInprocDPRQueue(store, jobs.InprocDPRQueueConfig{})
+	defer func() { _ = queue.Close() }()
+
+	wf := deferwork.NewWorkflow("")
+	key := []byte("approval-secret")
+	wf.SetApprovalHMACKey(key)
+	p := NewPipeline(Config{
+		Engine:   policy.NewAtomicEngine(eng),
+		WAL:      wal,
+		Store:    store,
+		DPRQueue: queue,
+		Sessions: session.NewManager(),
+		Defers:   wf,
+		HMACKey:  key,
+	})
+
+	first := p.Evaluate(CanonicalActionRequest{
+		CallID:    "call-persist-1",
+		AgentID:   "agent-a",
+		SessionID: "sess-1",
+		ToolID:    "dangerous/run",
+		Args:      map[string]any{"target": "prod"},
+		Timestamp: time.Now(),
+	})
+	if first.Effect != EffectDefer {
+		t.Fatalf("first effect = %q, want defer", first.Effect)
+	}
+	if err := wf.Resolve(first.DeferToken, true, "approver-1", "approved"); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	resumed := p.Evaluate(CanonicalActionRequest{
+		CallID:    "call-persist-1-resume",
+		AgentID:   "agent-a",
+		SessionID: "sess-1",
+		ToolID:    "dangerous/run",
+		Args:      map[string]any{"target": "prod"},
+		Timestamp: time.Now(),
+	})
+	if resumed.Effect != EffectPermit {
+		t.Fatalf("resume effect = %q, want permit", resumed.Effect)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		recs, err := store.RecentByAgent("agent-a", 10)
+		if err != nil {
+			if strings.Contains(err.Error(), "SQLITE_BUSY") || strings.Contains(err.Error(), "database is locked") {
+				if time.Now().After(deadline) {
+					t.Fatalf("RecentByAgent() remained busy: %v", err)
+				}
+				time.Sleep(25 * time.Millisecond)
+				continue
+			}
+			t.Fatalf("RecentByAgent() error = %v", err)
+		}
+		for _, rec := range recs {
+			if rec.ToolID == "dangerous/run" && rec.Effect == "PERMIT" && strings.TrimSpace(rec.ApprovalEnvelope) != "" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for resumed permit DPR with approval envelope")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func TestPipelineParallelBudgetCancelsAgentAfterPerAgentExceed(t *testing.T) {
+	policyYAML := `
+faramesh_version: "1.0"
+agent_id: "agent-a"
+default_effect: deny
+parallel_budget:
+  orchestration_id: "orch-1"
+  agents: ["agent-a"]
+  aggregate_max_cost_usd: 2.0
+  per_agent_max_cost_usd: 1.0
+  on_aggregate_exceed: "cancel_remaining"
+tools:
+  expensive/tool:
+    cost_usd: 0.6
+rules:
+  - id: "permit-expensive"
+    tool: "expensive/tool"
+    effect: "permit"
+`
+	p := buildPipelineFromYAML(t, policyYAML)
+
+	first := p.Evaluate(CanonicalActionRequest{
+		CallID:    "budget-a-1",
+		AgentID:   "agent-a",
+		SessionID: "parallel-sess",
+		ToolID:    "expensive/tool",
+		Timestamp: time.Now(),
+	})
+	if first.Effect != EffectPermit {
+		t.Fatalf("first effect = %q, want permit", first.Effect)
+	}
+
+	second := p.Evaluate(CanonicalActionRequest{
+		CallID:    "budget-a-2",
+		AgentID:   "agent-a",
+		SessionID: "parallel-sess",
+		ToolID:    "expensive/tool",
+		Timestamp: time.Now(),
+	})
+	if second.Effect != EffectPermit {
+		t.Fatalf("second effect = %q, want permit before per-agent cancellation applies", second.Effect)
+	}
+
+	third := p.Evaluate(CanonicalActionRequest{
+		CallID:    "budget-a-3",
+		AgentID:   "agent-a",
+		SessionID: "parallel-sess",
+		ToolID:    "expensive/tool",
+		Timestamp: time.Now(),
+	})
+	if third.Effect != EffectDeny {
+		t.Fatalf("third effect = %q, want deny after per-agent exceed", third.Effect)
+	}
+	if third.ReasonCode != reasons.AggregateBudgetExceeded {
+		t.Fatalf("third reason code = %q, want %q", third.ReasonCode, reasons.AggregateBudgetExceeded)
+	}
+}
+
+func TestPipelineShadowModeOverridesDenyToShadowPermit(t *testing.T) {
+	policyYAML := `
+faramesh_version: "1.0"
+agent_id: "agent-a"
+default_effect: deny
+rules:
+  - id: "deny-shell"
+    tool: "shell/exec"
+    effect: "deny"
+    reason: "blocked"
+`
+	doc, version, err := policy.LoadBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	p := NewPipeline(Config{
+		Engine:      policy.NewAtomicEngine(eng),
+		Sessions:    session.NewManager(),
+		Defers:      deferwork.NewWorkflow(""),
+		RuntimeMode: RuntimeModeShadow,
+	})
+
+	d := p.Evaluate(CanonicalActionRequest{
+		CallID:    "shadow-deny",
+		AgentID:   "agent-a",
+		SessionID: "sess-shadow",
+		ToolID:    "shell/exec",
+		Timestamp: time.Now(),
+	})
+	if d.Effect != EffectShadowPermit {
+		t.Fatalf("effect = %q, want shadow_permit", d.Effect)
+	}
+	if d.ShadowActualOutcome != EffectDeny {
+		t.Fatalf("shadow actual outcome = %q, want deny", d.ShadowActualOutcome)
+	}
+	if d.ReasonCode != reasons.ShadowDeny {
+		t.Fatalf("reason code = %q, want %q", d.ReasonCode, reasons.ShadowDeny)
+	}
+}
+
+func TestPipelineAuditModeSkipsPolicyEvaluation(t *testing.T) {
+	policyYAML := `
+faramesh_version: "1.0"
+agent_id: "agent-a"
+default_effect: deny
+rules:
+  - id: "deny-shell"
+    tool: "shell/exec"
+    effect: "deny"
+    reason: "blocked"
+`
+	doc, version, err := policy.LoadBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	p := NewPipeline(Config{
+		Engine:      policy.NewAtomicEngine(eng),
+		Sessions:    session.NewManager(),
+		Defers:      deferwork.NewWorkflow(""),
+		RuntimeMode: RuntimeModeAudit,
+	})
+
+	d := p.Evaluate(CanonicalActionRequest{
+		CallID:    "audit-shell",
+		AgentID:   "agent-a",
+		SessionID: "sess-audit",
+		ToolID:    "shell/exec",
+		Timestamp: time.Now(),
+	})
+	if d.Effect != EffectShadowPermit {
+		t.Fatalf("effect = %q, want shadow_permit", d.Effect)
+	}
+	if d.ShadowActualOutcome != EffectPermit {
+		t.Fatalf("shadow actual outcome = %q, want permit passthrough", d.ShadowActualOutcome)
+	}
+	if !strings.Contains(d.Reason, "audit mode passthrough") {
+		t.Fatalf("reason = %q, want audit passthrough message", d.Reason)
+	}
+}
+
+func TestPipelineBootstrapEnforcerDeniesFirstNetworkTool(t *testing.T) {
+	policyYAML := `
+faramesh_version: "1.0"
+agent_id: "agent-a"
+default_effect: permit
+rules:
+  - id: "allow-http"
+    tool: "http/request"
+    effect: "permit"
+`
+	doc, version, err := policy.LoadBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	p := NewPipeline(Config{
+		Engine:    policy.NewAtomicEngine(eng),
+		Sessions:  session.NewManager(),
+		Defers:    deferwork.NewWorkflow(""),
+		Bootstrap: NewBootstrapEnforcer(true),
+	})
+
+	first := p.Evaluate(CanonicalActionRequest{
+		CallID:    "bootstrap-1",
+		AgentID:   "agent-a",
+		SessionID: "sess-bootstrap",
+		ToolID:    "http/request",
+		Timestamp: time.Now(),
+	})
+	if first.Effect != EffectDeny {
+		t.Fatalf("first effect = %q, want deny", first.Effect)
+	}
+	if first.ReasonCode != reasons.GovernanceBootstrapRequired {
+		t.Fatalf("first reason code = %q, want %q", first.ReasonCode, reasons.GovernanceBootstrapRequired)
+	}
+
+	second := p.Evaluate(CanonicalActionRequest{
+		CallID:    "bootstrap-2",
+		AgentID:   "agent-a",
+		SessionID: "sess-bootstrap",
+		ToolID:    "http/request",
+		Timestamp: time.Now(),
+	})
+	if second.Effect != EffectPermit {
+		t.Fatalf("second effect = %q, want permit after governance bootstrap mark", second.Effect)
 	}
 }
 

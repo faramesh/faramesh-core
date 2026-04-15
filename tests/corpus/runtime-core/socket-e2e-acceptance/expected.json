@@ -1,0 +1,30 @@
+{
+  "status": "wip",
+  "framework": "faramesh-runtime",
+  "pattern": "unix-socket-daemon-cli",
+  "coverage_tier": "C",
+  "harness": "tests/socket_e2e_acceptance.sh",
+  "expected_tools": [
+    {"tool_id": "http/get", "expected_effect": "permit"}
+  ],
+  "enforcement_surfaces": {
+    "framework_hook": false,
+    "attachable": true,
+    "governable": true,
+    "policy_visible": true,
+    "credential_brokered": true,
+    "shell_governed": true,
+    "network_governed": false,
+    "mcp_governed": false,
+    "audit_complete": false
+  },
+  "known_gaps": [
+    "Daemon + Unix socket JSON-RPC govern acceptance (demo.fpl); not a tier-A agent harness with WAL replay_parity + hook_truth contract",
+    "Previously ran only as a standalone release-gate job; now tracked in corpus matrix and corpus-harness alongside other runtime wip rows"
+  ],
+  "detection": {
+    "framework_detected": false,
+    "framework_name": "n/a",
+    "trust_level": "instrumented"
+  }
+}

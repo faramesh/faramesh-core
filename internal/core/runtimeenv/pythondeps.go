@@ -104,7 +104,8 @@ func knownPythonFrameworkToken(tok string) bool {
 	case "deepagents", "langgraph", "langchain", "langchain-core", "crewai",
 		"pyautogen", "autogen", "autogen-agentchat", "semantic-kernel",
 		"pydantic-ai", "llama-index", "llama-index-core", "smolagents",
-		"haystack-ai", "haystack":
+		"haystack-ai", "haystack",
+		"google-adk", "strands-agents", "strands-agents-builder", "bedrock-agentcore":
 		return true
 	default:
 		return false

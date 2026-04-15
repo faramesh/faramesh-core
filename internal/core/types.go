@@ -19,6 +19,15 @@ const (
 	EffectShadowPermit Effect = "SHADOW_PERMIT"
 )
 
+// RuntimeMode controls whether the daemon enforces, shadows, or audits decisions.
+type RuntimeMode string
+
+const (
+	RuntimeModeEnforce RuntimeMode = "enforce"
+	RuntimeModeShadow  RuntimeMode = "shadow"
+	RuntimeModeAudit   RuntimeMode = "audit"
+)
+
 // CARVersion is the current Canonical Action Request specification version.
 const CARVersion = "car/1.0"
 
@@ -184,6 +193,17 @@ type Decision struct {
 
 	// Latency is how long the pipeline took.
 	Latency time.Duration `json:"-"`
+
+	// ReservedCostUSD tracks pre-reserved session budget during evaluation.
+	// Internal only: used so the pipeline can avoid double-charging cost.
+	ReservedCostUSD float64 `json:"-"`
+
+	// ReservedTokens tracks pre-reserved token budget (LLM usage) for this evaluation.
+	ReservedTokens int64 `json:"-"`
+
+	// ApprovalEnvelopeJSON stores the signed approval envelope for resume-path DPRs.
+	// Internal only: used to persist tamper-evident approval evidence.
+	ApprovalEnvelopeJSON string `json:"-"`
 }
 
 // GovernanceError is the base error type for governance infrastructure failures.

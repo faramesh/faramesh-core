@@ -109,8 +109,8 @@ func TestEvaluateWithTimeoutCancellationReturnsExplicitDeny(t *testing.T) {
 	if res.Effect != "deny" {
 		t.Fatalf("expected explicit deny on timeout, got %q", res.Effect)
 	}
-	if res.ReasonCode != "GOVERNANCE_TIMEOUT" {
-		t.Fatalf("expected GOVERNANCE_TIMEOUT, got %q", res.ReasonCode)
+	if res.ReasonCode != "POLICY_EVAL_TIMEOUT" {
+		t.Fatalf("expected POLICY_EVAL_TIMEOUT, got %q", res.ReasonCode)
 	}
 }
 

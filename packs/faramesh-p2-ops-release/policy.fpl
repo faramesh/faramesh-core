@@ -1,0 +1,9 @@
+# Optional FPL sidecar; kubectl/terraform matchers live in YAML.
+agent p2-ops-release {
+  default deny
+
+  rules {
+    deny! shell/run
+      reason: "unsafe destructive shell patterns governed in YAML"
+  }
+}

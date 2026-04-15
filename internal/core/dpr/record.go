@@ -97,11 +97,12 @@ type Record struct {
 	DegradedMode string `json:"degraded_mode,omitempty"` // "FULL"|"STATELESS"|"MINIMAL"|"EMERGENCY"
 
 	// ── Batch Approval ──
-	BatchApproval   bool     `json:"batch_approval,omitempty"`
-	BatchSize       int      `json:"batch_size,omitempty"`
-	BatchDPRIDs     []string `json:"batch_dpr_ids,omitempty"`
-	ResolvedByBatch bool     `json:"resolved_by_batch,omitempty"`
-	BatchApprovalID string   `json:"batch_approval_id,omitempty"`
+	BatchApproval    bool     `json:"batch_approval,omitempty"`
+	BatchSize        int      `json:"batch_size,omitempty"`
+	BatchDPRIDs      []string `json:"batch_dpr_ids,omitempty"`
+	ResolvedByBatch  bool     `json:"resolved_by_batch,omitempty"`
+	BatchApprovalID  string   `json:"batch_approval_id,omitempty"`
+	ApprovalEnvelope string   `json:"approval_envelope,omitempty"`
 
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -139,6 +140,7 @@ func (r *Record) CanonicalBytes() []byte {
 		InferenceRewrite   bool      `json:"inference_model_rewrite_applied,omitempty"`
 		WorkflowPhase      string    `json:"workflow_phase,omitempty"`
 		CredentialBrokered bool      `json:"credential_brokered,omitempty"`
+		ApprovalEnvelope   string    `json:"approval_envelope,omitempty"`
 		DegradedMode       string    `json:"degraded_mode,omitempty"`
 		CreatedAt          time.Time `json:"created_at"`
 	}
@@ -170,6 +172,7 @@ func (r *Record) CanonicalBytes() []byte {
 		InferenceRewrite:   r.InferenceModelRewriteApplied,
 		WorkflowPhase:      r.WorkflowPhase,
 		CredentialBrokered: r.CredentialBrokered,
+		ApprovalEnvelope:   r.ApprovalEnvelope,
 		DegradedMode:       r.DegradedMode,
 		CreatedAt:          r.CreatedAt.UTC(),
 	})

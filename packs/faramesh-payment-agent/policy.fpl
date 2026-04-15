@@ -1,0 +1,21 @@
+# Optional FPL sidecar; YAML remains authoritative for engine load.
+agent payment-agent {
+  default deny
+
+  rules {
+    deny! shell/*
+      reason: "payment agents must not use shell"
+
+    defer stripe/refund
+      when args.amount > 100
+      notify: "finance"
+      reason: "large refunds require approval"
+
+    permit stripe/refund
+      when args.amount <= 100
+
+    permit read_customer
+    permit get_order
+    permit send_notification
+  }
+}

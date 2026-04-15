@@ -63,7 +63,7 @@ const EvalTimeout = 50 * time.Millisecond
 
 // EvaluateWithTimeout runs the first-match-wins evaluation with per-rule
 // timeouts. If any rule exceeds EvalTimeout, evaluation returns DENY with
-// reason code GOVERNANCE_TIMEOUT (fail-closed).
+// reason code POLICY_EVAL_TIMEOUT (fail-closed).
 func (e *Engine) EvaluateWithTimeout(ctx context.Context, toolID string, evalCtx EvalContext) EvalResult {
 	if evalCtx.Vars == nil {
 		evalCtx.Vars = e.doc.Vars
@@ -82,7 +82,7 @@ func (e *Engine) EvaluateWithTimeout(ctx context.Context, toolID string, evalCtx
 			case <-ctx.Done():
 				return EvalResult{
 					Effect:     "deny",
-					ReasonCode: "GOVERNANCE_TIMEOUT",
+					ReasonCode: "POLICY_EVAL_TIMEOUT",
 					Reason:     "evaluation cancelled: " + ctx.Err().Error(),
 				}
 			default:
@@ -116,28 +116,19 @@ func (e *Engine) EvaluateWithTimeout(ctx context.Context, toolID string, evalCtx
 				return EvalResult{
 					Effect:     "deny",
 					RuleID:     rule.ID,
-					ReasonCode: "GOVERNANCE_TIMEOUT",
+					ReasonCode: "POLICY_EVAL_TIMEOUT",
 					Reason:     "rule evaluation timed out",
 				}
 			case <-ctx.Done():
 				timer.Stop()
 				return EvalResult{
 					Effect:     "deny",
-					ReasonCode: "GOVERNANCE_TIMEOUT",
+					ReasonCode: "POLICY_EVAL_TIMEOUT",
 					Reason:     "evaluation cancelled: " + ctx.Err().Error(),
 				}
 			}
 		}
-		rc := rule.ReasonCode
-		if rc == "" {
-			rc = defaultReasonCode(rule.Effect)
-		}
-		return EvalResult{
-			Effect:     rule.Effect,
-			RuleID:     rule.ID,
-			ReasonCode: rc,
-			Reason:     rule.Reason,
-		}
+		return evalResultFromRule(rule)
 	}
 
 	return EvalResult{

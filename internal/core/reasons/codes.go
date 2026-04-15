@@ -76,6 +76,7 @@ const (
 	AgentLoopDetected          = "AGENT_LOOP_DETECTED"
 
 	// Governance infrastructure codes
+	PolicyEvalTimeout               = "POLICY_EVAL_TIMEOUT"
 	EvaluationTimeout               = "EVALUATION_TIMEOUT"
 	SessionStateUnavailable         = "SESSION_STATE_UNAVAILABLE"
 	ContextStale                    = "CONTEXT_STALE"
@@ -113,6 +114,9 @@ const (
 	ApprovalDenied   = "APPROVAL_DENIED"
 	ApprovalTimeout  = "APPROVAL_TIMEOUT"
 	ApprovalModified = "APPROVAL_MODIFIED"
+	// StandingApprovalConsumed is emitted when a policy DEFER is converted to
+	// PERMIT because an operator-registered standing grant matched and was consumed.
+	StandingApprovalConsumed = "STANDING_APPROVAL_CONSUMED"
 
 	// Compensation codes
 	CompensationExecuted = "COMPENSATION_EXECUTED"
@@ -131,6 +135,9 @@ const (
 	BudgetDailyExceeded   = "BUDGET_DAILY_EXCEEDED"
 	BudgetSessionExceeded = "BUDGET_SESSION_EXCEEDED"
 	BudgetRollingExceeded = "BUDGET_ROLLING_EXCEEDED"
+	// Token budget (LLM context) — enforced when adapters report usage via args.
+	BudgetSessionTokensExceeded = "BUDGET_SESSION_TOKENS_EXCEEDED"
+	BudgetDailyTokensExceeded   = "BUDGET_DAILY_TOKENS_EXCEEDED"
 
 	// Degraded mode codes
 	GovernanceDegradedStateless = "GOVERNANCE_DEGRADED_STATELESS"
@@ -249,6 +256,7 @@ var canonical = map[string]struct{}{
 	LoopDetection:              {},
 	AgentLoopDetected:          {},
 
+	PolicyEvalTimeout:               {},
 	EvaluationTimeout:               {},
 	SessionStateUnavailable:         {},
 	ContextStale:                    {},
@@ -284,6 +292,7 @@ var canonical = map[string]struct{}{
 	ApprovalDenied:   {},
 	ApprovalTimeout:  {},
 	ApprovalModified: {},
+	StandingApprovalConsumed: {},
 
 	CompensationExecuted: {},
 	CompensationFailed:   {},
@@ -298,6 +307,9 @@ var canonical = map[string]struct{}{
 	BudgetDailyExceeded:   {},
 	BudgetSessionExceeded: {},
 	BudgetRollingExceeded: {},
+
+	BudgetSessionTokensExceeded: {},
+	BudgetDailyTokensExceeded:   {},
 
 	GovernanceDegradedStateless: {},
 	GovernanceDegradedMinimal:   {},

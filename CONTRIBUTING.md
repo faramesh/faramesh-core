@@ -12,7 +12,7 @@ faramesh-core/
 │   │   ├── engine/        # Policy engine and decision pipeline
 │   │   ├── fpl/           # FPL parser, compiler, decompiler
 │   │   ├── credential/    # Credential broker backends
-│   │   └── sandbox/       # Kernel sandbox (seccomp, Landlock, eBPF)
+│   │   └── sandbox/       # Kernel sandbox (seccomp, Landlock; eBPF scaffold)
 │   ├── daemon/            # HTTP/gRPC daemon
 │   └── adapter/           # Framework auto-patchers
 ├── examples/              # FPL policy examples

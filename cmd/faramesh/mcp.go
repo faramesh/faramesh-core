@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -13,8 +14,11 @@ import (
 	"github.com/faramesh/faramesh-core/internal/adapter/mcp"
 	"github.com/faramesh/faramesh-core/internal/core"
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
+	"github.com/faramesh/faramesh-core/internal/core/dpr"
+	"github.com/faramesh/faramesh-core/internal/core/jobs"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/session"
+	"github.com/faramesh/faramesh-core/internal/core/toolinventory"
 )
 
 var mcpCmd = &cobra.Command{
@@ -23,8 +27,10 @@ var mcpCmd = &cobra.Command{
 }
 
 var (
-	mcpWrapPolicy string
-	mcpWrapAgent  string
+	mcpWrapPolicy     string
+	mcpWrapAgent      string
+	mcpWrapDataDir    string
+	mcpWrapDPRHMACKey string
 )
 
 var mcpWrapCmd = &cobra.Command{
@@ -45,6 +51,8 @@ as the HTTP MCP gateway).`,
 func init() {
 	mcpWrapCmd.Flags().StringVar(&mcpWrapPolicy, "policy", "policy.yaml", "path to policy YAML")
 	mcpWrapCmd.Flags().StringVar(&mcpWrapAgent, "agent-id", "", "agent id for policy evaluation (default: policy agent-id)")
+	mcpWrapCmd.Flags().StringVar(&mcpWrapDataDir, "data-dir", "", "directory for WAL, DPR SQLite, and tool inventory (default: $TMPDIR/faramesh-mcp-wrap)")
+	mcpWrapCmd.Flags().StringVar(&mcpWrapDPRHMACKey, "dpr-hmac-key", "", "HMAC secret for approval envelopes and DPR replay (optional; should match policy policy-replay --dpr-hmac-key)")
 	rootCmd.AddCommand(mcpCmd)
 	mcpCmd.AddCommand(mcpWrapCmd)
 }
@@ -71,11 +79,41 @@ func runMCPWrap(_ *cobra.Command, args []string) error {
 	}
 	defer log.Sync()
 
-	pipe := core.NewPipeline(core.Config{
-		Engine:   policy.NewAtomicEngine(eng),
-		Sessions: session.NewManager(),
-		Defers:   deferwork.NewWorkflow(""),
-	})
+	dataDir := defaultMCPWrapDataDir(mcpWrapDataDir)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return fmt.Errorf("create data dir: %w", err)
+	}
+	wal, err := dpr.OpenWAL(filepath.Join(dataDir, "faramesh.wal"))
+	if err != nil {
+		return fmt.Errorf("open WAL: %w", err)
+	}
+	defer wal.Close()
+	store, err := dpr.OpenStore(filepath.Join(dataDir, "faramesh.db"))
+	if err != nil {
+		return fmt.Errorf("open DPR store: %w", err)
+	}
+	defer store.Close()
+	inventoryStore, err := toolinventory.OpenStore(filepath.Join(dataDir, "faramesh-tool-inventory.db"))
+	if err != nil {
+		return fmt.Errorf("open tool inventory store: %w", err)
+	}
+	defer inventoryStore.Close()
+	dprQueue := jobs.NewInprocDPRQueue(store, jobs.InprocDPRQueueConfig{})
+	defer dprQueue.Close()
+
+	pcfg := core.Config{
+		Engine:        policy.NewAtomicEngine(eng),
+		WAL:           wal,
+		Store:         store,
+		DPRQueue:      dprQueue,
+		Sessions:      session.NewManager(),
+		Defers:        deferwork.NewWorkflow(""),
+		ToolInventory: inventoryStore,
+	}
+	if k := strings.TrimSpace(mcpWrapDPRHMACKey); k != "" {
+		pcfg.HMACKey = []byte(k)
+	}
+	pipe := core.NewPipeline(pcfg)
 
 	gw, err := mcp.NewStdioGateway(pipe, agentID, log, args)
 	if err != nil {
@@ -144,6 +182,13 @@ func runMCPWrap(_ *cobra.Command, args []string) error {
 			}
 		}
 	}
+}
+
+func defaultMCPWrapDataDir(v string) string {
+	if strings.TrimSpace(v) != "" {
+		return v
+	}
+	return filepath.Join(os.TempDir(), "faramesh-mcp-wrap")
 }
 
 func writeJSONRPCErrorLine(code int, message string) error {

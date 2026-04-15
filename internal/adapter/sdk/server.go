@@ -13,6 +13,17 @@
 //	Client → Server: {"type":"approve_defer","defer_token":"...","approved":true,"reason":"..."}\n
 //	Server → Client: {"ok":true}\n
 //
+//	Client → Server: {"type":"standing_grant_add","admin_token":"<daemon secret>","agent_id":"...","tool_pattern":"pay/*","ttl_seconds":3600,"max_uses":1,"issued_by":"ops",...}\n
+//	Server → Client: {"ok":true,"grant":{...}}\n
+//
+//	Client → Server: {"type":"standing_grant_revoke","admin_token":"<daemon secret>","grant_id":"stg_..."}\n
+//	Server → Client: {"ok":true}\n
+//
+//	Client → Server: {"type":"standing_grant_list","admin_token":"<daemon secret>"}\n
+//	Server → Client: {"ok":true,"grants":[...]}\n
+//
+//	admin_token must match the daemon's configured standing/policy admin token (see SetStandingAdminToken). If the daemon has no admin token configured, standing grant APIs are disabled.
+//
 //	Client → Server: {"type":"kill","agent_id":"..."}\n
 //	Server → Client: {"ok":true}\n
 //
@@ -139,8 +150,9 @@ type callbackEvent struct {
 	Args             map[string]any `json:"args,omitempty"`
 
 	// Defer resolution payload.
-	Status   string `json:"status,omitempty"`
-	Approved *bool  `json:"approved,omitempty"`
+	Status     string `json:"status,omitempty"`
+	Approved   *bool  `json:"approved,omitempty"`
+	ApproverID string `json:"approver_id,omitempty"`
 }
 
 // pollDeferRequest is the client → server message for polling a DEFER.
@@ -161,6 +173,7 @@ type approveRequest struct {
 	Type       string `json:"type"`
 	DeferToken string `json:"defer_token"`
 	Approved   bool   `json:"approved"`
+	ApproverID string `json:"approver_id,omitempty"`
 	Reason     string `json:"reason"`
 }
 
@@ -178,6 +191,16 @@ type scanOutputResponse struct {
 	SanitizedOutput string `json:"sanitized_output,omitempty"`
 	ReasonCode      string `json:"reason_code,omitempty"`
 	Reason          string `json:"reason,omitempty"`
+	DeferToken      string `json:"defer_token,omitempty"`
+}
+
+type governOutputRequest struct {
+	Type           string   `json:"type"`
+	AgentID        string   `json:"agent_id"`
+	SessionID      string   `json:"session_id,omitempty"`
+	OutputType     string   `json:"output_type,omitempty"`
+	Output         string   `json:"output"`
+	SourceAgentIDs []string `json:"source_agent_ids,omitempty"`
 }
 
 type statusResponse struct {
@@ -272,12 +295,13 @@ type identityFederation struct {
 }
 
 type identityState struct {
-	SPIFFEID    string
-	Domain      string
-	Bundle      string
-	Workload    string
-	TrustLevel  string
-	Federations map[string]identityFederation
+	SPIFFEID           string
+	Domain             string
+	Bundle             string
+	Workload           string
+	TrustLevel         string
+	VerificationMethod string
+	Federations        map[string]identityFederation
 }
 
 type credentialRequest struct {
@@ -371,6 +395,10 @@ type Server struct {
 	rlMu       sync.Mutex
 	rl         map[string]*rate.Limiter
 	connTokens chan struct{}
+	// standingAdminToken, when non-empty, requires matching "admin_token" on
+	// standing_grant_* JSON requests (constant-time compare). When empty,
+	// standing grant APIs are disabled (fail closed).
+	standingAdminToken string
 }
 
 // NewServer creates a new SDK socket server.
@@ -383,8 +411,9 @@ func NewServer(pipeline *core.Pipeline, log *zap.Logger) *Server {
 		models:      make(map[string]*modelRecord),
 		provByAgent: make(map[string]*provenanceRecord),
 		identity: identityState{
-			TrustLevel:  "unknown",
-			Federations: make(map[string]identityFederation),
+			TrustLevel:         "unknown",
+			VerificationMethod: "unknown",
+			Federations:        make(map[string]identityFederation),
 		},
 		credentials:   make(map[string]*credentialRecord),
 		incidents:     make(map[string]*incidentRecord),
@@ -397,6 +426,14 @@ func NewServer(pipeline *core.Pipeline, log *zap.Logger) *Server {
 // SetPrincipalResolver wires bearer-token principal verification into govern requests.
 func (s *Server) SetPrincipalResolver(resolver func(context.Context, string) (*principal.Identity, error)) {
 	s.principalResolver = resolver
+}
+
+// SetStandingAdminToken configures authentication for standing_grant_add|revoke|list.
+// When non-empty, each request must include "admin_token" with the same value.
+// When empty, standing grant operations are rejected (operators must set
+// --standing-admin-token or share --policy-admin-token via daemon flags / env).
+func (s *Server) SetStandingAdminToken(token string) {
+	s.standingAdminToken = strings.TrimSpace(token)
 }
 
 // Listen binds the Unix socket and starts accepting connections.
@@ -575,6 +612,7 @@ func (s *Server) accept(ln net.Listener, acceptDone chan struct{}) {
 		if err != nil {
 			return
 		}
+		logPeerCredentials(s.log, conn)
 		select {
 		case s.connTokens <- struct{}{}:
 		default:
@@ -637,10 +675,18 @@ func (s *Server) handle(conn net.Conn) {
 			s.handlePollDefer(conn, line)
 		case "approve_defer":
 			s.handleApproveDefer(conn, line)
+		case "standing_grant_add":
+			s.handleStandingGrantAdd(conn, line)
+		case "standing_grant_revoke":
+			s.handleStandingGrantRevoke(conn, line)
+		case "standing_grant_list":
+			s.handleStandingGrantList(conn, line)
 		case "kill":
 			s.handleKill(conn, line)
 		case "scan_output":
 			s.handleScanOutput(conn, line)
+		case "govern_output":
+			s.handleGovernOutput(conn, line)
 		case "audit_subscribe":
 			// This call blocks — it streams decisions until the connection closes.
 			s.handleAuditSubscribe(conn)
@@ -1191,8 +1237,17 @@ func (s *Server) handleIdentity(conn net.Conn, line []byte) {
 		}
 		if verified {
 			s.identity.TrustLevel = "high"
+			s.identity.VerificationMethod = "client_asserted"
+			s.log.Warn("sdk identity verify accepted client-asserted SPIFFE claim without transport attestation",
+				zap.String("spiffe_id", s.identity.SPIFFEID),
+				zap.String("verification_method", s.identity.VerificationMethod))
 		}
-		writeJSON(conn, map[string]any{"verified": verified, "spiffe_id": s.identity.SPIFFEID, "trust_level": s.identity.TrustLevel})
+		writeJSON(conn, map[string]any{
+			"verified":            verified,
+			"spiffe_id":           s.identity.SPIFFEID,
+			"trust_level":         s.identity.TrustLevel,
+			"verification_method": s.identity.VerificationMethod,
+		})
 
 	case "trust":
 		if strings.TrimSpace(req.Domain) != "" {
@@ -1206,14 +1261,26 @@ func (s *Server) handleIdentity(conn net.Conn, line []byte) {
 		} else if s.identity.Domain != "" || s.identity.Bundle != "" {
 			s.identity.TrustLevel = "medium"
 		}
-		writeJSON(conn, map[string]any{"domain": s.identity.Domain, "bundle": s.identity.Bundle, "trust_level": s.identity.TrustLevel})
+		if s.identity.Domain != "" || s.identity.Bundle != "" {
+			s.identity.VerificationMethod = "client_asserted"
+			s.log.Warn("sdk identity trust accepted client-asserted trust material without transport attestation",
+				zap.String("domain", s.identity.Domain),
+				zap.String("verification_method", s.identity.VerificationMethod))
+		}
+		writeJSON(conn, map[string]any{
+			"domain":              s.identity.Domain,
+			"bundle":              s.identity.Bundle,
+			"trust_level":         s.identity.TrustLevel,
+			"verification_method": s.identity.VerificationMethod,
+		})
 
 	case "whoami":
 		writeJSON(conn, map[string]any{
-			"spiffe_id":   s.identity.SPIFFEID,
-			"domain":      s.identity.Domain,
-			"workload":    s.identity.Workload,
-			"trust_level": s.identity.TrustLevel,
+			"spiffe_id":           s.identity.SPIFFEID,
+			"domain":              s.identity.Domain,
+			"workload":            s.identity.Workload,
+			"trust_level":         s.identity.TrustLevel,
+			"verification_method": s.identity.VerificationMethod,
 		})
 
 	case "attest":
@@ -1224,8 +1291,17 @@ func (s *Server) handleIdentity(conn net.Conn, line []byte) {
 			if s.identity.TrustLevel == "unknown" {
 				s.identity.TrustLevel = "medium"
 			}
+			s.identity.VerificationMethod = "client_asserted"
+			s.log.Warn("sdk identity attest accepted client-asserted workload claim without transport attestation",
+				zap.String("workload", s.identity.Workload),
+				zap.String("verification_method", s.identity.VerificationMethod))
 		}
-		writeJSON(conn, map[string]any{"workload": s.identity.Workload, "attested": s.identity.Workload != "", "trust_level": s.identity.TrustLevel})
+		writeJSON(conn, map[string]any{
+			"workload":            s.identity.Workload,
+			"attested":            s.identity.Workload != "",
+			"trust_level":         s.identity.TrustLevel,
+			"verification_method": s.identity.VerificationMethod,
+		})
 
 	case "federation_add":
 		if strings.TrimSpace(req.IDP) == "" {
@@ -1590,7 +1666,7 @@ func (s *Server) handleApproveDefer(conn net.Conn, line []byte) {
 			reason = "denied via CLI"
 		}
 	}
-	if err := s.pipeline.DeferWorkflow().Resolve(req.DeferToken, req.Approved, reason); err != nil {
+	if err := s.pipeline.DeferWorkflow().Resolve(req.DeferToken, req.Approved, req.ApproverID, reason); err != nil {
 		writeJSON(conn, map[string]any{"ok": false, "error": err.Error()})
 		return
 	}
@@ -1605,12 +1681,17 @@ func (s *Server) handleApproveDefer(conn net.Conn, line []byte) {
 		DeferToken: req.DeferToken,
 		Status:     status,
 		Approved:   &approved,
+		ApproverID: req.ApproverID,
 		Reason:     reason,
 	})
 	writeJSON(conn, map[string]any{"ok": true})
 }
 
 func (s *Server) handleScanOutput(conn net.Conn, line []byte) {
+	if s.pipeline == nil {
+		writeJSON(conn, map[string]any{"error": "pipeline unavailable"})
+		return
+	}
 	var req scanOutputRequest
 	if err := json.Unmarshal(line, &req); err != nil {
 		writeJSON(conn, map[string]any{"error": "invalid scan_output request"})
@@ -1633,6 +1714,43 @@ func (s *Server) handleScanOutput(conn net.Conn, line []byte) {
 		SanitizedOutput: sr.Output,
 		ReasonCode:      reasons.Normalize(sr.ReasonCode),
 		Reason:          sr.Reason,
+	})
+}
+
+func (s *Server) handleGovernOutput(conn net.Conn, line []byte) {
+	if s.pipeline == nil {
+		writeJSON(conn, map[string]any{"error": "pipeline unavailable"})
+		return
+	}
+	var req governOutputRequest
+	if err := json.Unmarshal(line, &req); err != nil {
+		writeJSON(conn, map[string]any{"error": "invalid govern_output request"})
+		return
+	}
+	if strings.TrimSpace(req.Output) == "" {
+		writeJSON(conn, map[string]any{"error": "output is required"})
+		return
+	}
+	if req.AgentID != "" && !s.allowAgent(req.AgentID) {
+		writeJSON(conn, map[string]any{
+			"error":       "rate_limited",
+			"reason_code": reasons.SessionRollingLimit,
+		})
+		return
+	}
+	res := s.pipeline.GovernOutput(core.GovernOutputRequest{
+		AgentID:        req.AgentID,
+		SessionID:      req.SessionID,
+		OutputType:     req.OutputType,
+		Output:         req.Output,
+		SourceAgentIDs: req.SourceAgentIDs,
+	})
+	writeJSON(conn, scanOutputResponse{
+		Outcome:         res.Outcome,
+		SanitizedOutput: res.SanitizedOutput,
+		ReasonCode:      reasons.Normalize(res.ReasonCode),
+		Reason:          res.Reason,
+		DeferToken:      res.DeferToken,
 	})
 }
 

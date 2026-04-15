@@ -26,6 +26,38 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
 )
 
+func buildOutputPolicyPipeline(t *testing.T) *core.Pipeline {
+	t.Helper()
+	const policyYAML = `
+faramesh-version: "1"
+agent-id: "sdk-output-test"
+default-effect: "permit"
+rules:
+  - id: allow-all
+    effect: permit
+    match:
+      tool: "*"
+output_policies:
+  - output_type: aggregate
+    rules:
+      - id: defer-sensitive
+        scan:
+          entity_extraction: true
+        condition: "entity_count > 0"
+        on_match: defer
+        reason: "needs review"
+`
+	doc, version, err := policy.LoadBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	return core.NewPipeline(core.Config{Engine: policy.NewAtomicEngine(eng)})
+}
+
 func TestCallbackSubscribeDecisionEventFires(t *testing.T) {
 	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
 	cbClient := startSocketHandler(t, srv)
@@ -84,6 +116,49 @@ func TestCallbackSubscribeDeferResolvedEventFires(t *testing.T) {
 	}
 	if got := asString(ev["status"]); got != "approved" {
 		t.Fatalf("status = %q, want approved", got)
+	}
+}
+
+func TestApproveDeferCarriesApproverID(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	token := "tok-approve-id"
+	if _, err := srv.pipeline.DeferWorkflow().DeferWithToken(token, "agent-x", "tool.defer", "needs approval"); err != nil {
+		t.Fatalf("seed defer token: %v", err)
+	}
+
+	cbClient := startSocketHandler(t, srv)
+	defer cbClient.conn.Close()
+	writeLine(t, cbClient.conn, `{"type":"callback_subscribe"}`)
+	readJSONWithDeadline(t, cbClient, 500*time.Millisecond)
+
+	approveClient := startSocketHandler(t, srv)
+	defer approveClient.conn.Close()
+	writeLine(t, approveClient.conn, `{"type":"approve_defer","defer_token":"`+token+`","approved":true,"approver_id":"approver-42","reason":"ship it"}`)
+	resp := readJSONWithDeadline(t, approveClient, 500*time.Millisecond)
+	if ok, _ := resp["ok"].(bool); !ok {
+		t.Fatalf("approve response not ok: %#v", resp)
+	}
+
+	ev := readJSONWithDeadline(t, cbClient, 500*time.Millisecond)
+	if got := asString(ev["approver_id"]); got != "approver-42" {
+		t.Fatalf("approver_id = %q, want approver-42", got)
+	}
+}
+
+func TestIdentityVerifyReturnsClientAssertedVerificationMethod(t *testing.T) {
+	coreObs, logs := observer.New(zapcore.WarnLevel)
+	logger := zap.New(coreObs)
+	srv := NewServer(core.NewPipeline(core.Config{}), logger)
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"identity","op":"verify","spiffe_id":"spiffe://example.org/agent/test"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["verification_method"]); got != "client_asserted" {
+		t.Fatalf("verification_method = %q, want client_asserted", got)
+	}
+	if got := logs.FilterMessage("sdk identity verify accepted client-asserted SPIFFE claim without transport attestation").Len(); got != 1 {
+		t.Fatalf("expected one client-asserted identity warning, got %d", got)
 	}
 }
 
@@ -270,6 +345,49 @@ func TestModelOpsLifecycleOverSocket(t *testing.T) {
 	alertResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
 	if _, ok := alertResp["alerts"].([]any); !ok {
 		t.Fatalf("alert response missing alerts: %#v", alertResp)
+	}
+}
+
+func TestGovernOutputRequest_DeferredOutcome(t *testing.T) {
+	srv := NewServer(buildOutputPolicyPipeline(t), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"govern_output","agent_id":"orch-1","session_id":"sess-1","output_type":"aggregate","output":"contact alice@example.com","source_agent_ids":["worker-a","worker-b"]}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+
+	if got := asString(resp["outcome"]); got != core.OutputOutcomeDeferred {
+		t.Fatalf("outcome=%q, want %q", got, core.OutputOutcomeDeferred)
+	}
+	if got := asString(resp["reason_code"]); got != reasons.OutputSchemaDefer {
+		t.Fatalf("reason_code=%q, want %q", got, reasons.OutputSchemaDefer)
+	}
+	if got := asString(resp["defer_token"]); strings.TrimSpace(got) == "" {
+		t.Fatalf("expected defer_token, got %#v", resp)
+	}
+}
+
+func TestGovernOutputRequest_PipelineUnavailable(t *testing.T) {
+	srv := NewServer(nil, zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"govern_output","agent_id":"orch-1","output":"hello"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["error"]); got != "pipeline unavailable" {
+		t.Fatalf("error=%q, want pipeline unavailable", got)
+	}
+}
+
+func TestScanOutputRequest_PipelineUnavailable(t *testing.T) {
+	srv := NewServer(nil, zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"scan_output","agent_id":"orch-1","tool_id":"tool.echo","output":"hello"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["error"]); got != "pipeline unavailable" {
+		t.Fatalf("error=%q, want pipeline unavailable", got)
 	}
 }
 

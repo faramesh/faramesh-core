@@ -1,0 +1,9 @@
+# Optional FPL sidecar; shell/file/MCP matchers live in YAML.
+agent coding-agent {
+  default deny
+
+  rules {
+    deny! shell/exec
+      reason: "destructive shell patterns governed in YAML"
+  }
+}

@@ -1,0 +1,67 @@
+faramesh-version: "1.0"
+agent-id: "support-agent"
+default_effect: deny
+
+tools:
+  read_customer:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+      - "credential:scope:zendesk"
+
+rules:
+  - id: permit-customer-read
+    match:
+      tool: "read_customer"
+      when: "true"
+    effect: permit
+
+  - id: permit-order-read
+    match:
+      tool: "get_order"
+      when: "true"
+    effect: permit
+
+  - id: permit-kb-search
+    match:
+      tool: "search_kb"
+      when: "true"
+    effect: permit
+
+  - id: permit-small-credit
+    match:
+      tool: "issue_credit"
+      when: "args.amount != nil && args.amount <= 25"
+    effect: permit
+
+  - id: defer-large-issue-credit
+    match:
+      tool: "issue_credit"
+      when: "args.amount != nil && args.amount > 25"
+    effect: defer
+    reason: "credit above threshold requires approval"
+
+  - id: permit-single-recipient-email
+    match:
+      tool: "send_email"
+      when: "args_array_len(\"recipients\") <= 1"
+    effect: permit
+
+  - id: deny-mass-email
+    match:
+      tool: "send_email"
+      when: "args_array_len(\"recipients\") > 10"
+    effect: deny
+    reason: "mass email blocked"
+
+  - id: deny-shell
+    match:
+      tool: "shell/*"
+      when: "true"
+    effect: deny
+
+  - id: deny-filesystem
+    match:
+      tool: "file/*"
+      when: "true"
+    effect: deny

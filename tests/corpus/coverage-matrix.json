@@ -1,0 +1,550 @@
+{
+  "summary": {
+    "entries": 15,
+    "passing": 10,
+    "wip": 5,
+    "replay_parity": 10,
+    "tiers": {
+      "A": 8,
+      "B": 2,
+      "C": 5
+    }
+  },
+  "entries": [
+    {
+      "entry": "framework-hooks/deepagents-governed",
+      "status": "passing",
+      "framework": "deepagents",
+      "pattern": "governed-real-stack",
+      "coverage_tier": "A",
+      "harness": "tests/deepagents_real_stack.sh",
+      "attachable": true,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": false,
+      "shell_governed": true,
+      "network_governed": false,
+      "mcp_governed": false,
+      "audit_complete": true,
+      "replay_parity": true,
+      "replay_strict_reason": true,
+      "replay_source": "wal",
+      "hook_interception_layer": "framework_autopatch",
+      "hook_pre_execution_gate": true,
+      "known_gaps": [
+        "live model invocation is optional and skipped when OPENROUTER_API_KEY is absent"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "infra_status",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "bash_run",
+          "expected_effect": "deny"
+        },
+        {
+          "tool_id": "payments_refund",
+          "expected_effect": "defer"
+        }
+      ]
+    },
+    {
+      "entry": "framework-hooks/langchain-fpl",
+      "status": "passing",
+      "framework": "langchain",
+      "pattern": "one-file-fpl",
+      "coverage_tier": "A",
+      "harness": "tests/langchain_single_agent_real_stack_fpl.sh",
+      "attachable": true,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": true,
+      "shell_governed": true,
+      "network_governed": true,
+      "mcp_governed": false,
+      "audit_complete": true,
+      "replay_parity": true,
+      "replay_strict_reason": true,
+      "replay_source": "wal",
+      "hook_interception_layer": "framework_autopatch",
+      "hook_pre_execution_gate": true,
+      "known_gaps": [
+        "policy source is FPL-on-disk path; behavior should match langchain-simple YAML row"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "http/get",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "vault/probe",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "shell/run",
+          "expected_effect": "deny"
+        },
+        {
+          "tool_id": "stripe/refund",
+          "expected_effect": "defer"
+        }
+      ]
+    },
+    {
+      "entry": "framework-hooks/langchain-governed-smoke",
+      "status": "passing",
+      "framework": "langchain",
+      "pattern": "smoke",
+      "coverage_tier": "B",
+      "harness": "tests/langchain_single_agent_governed.sh",
+      "attachable": true,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": false,
+      "shell_governed": false,
+      "network_governed": true,
+      "mcp_governed": false,
+      "audit_complete": true,
+      "replay_parity": true,
+      "replay_strict_reason": true,
+      "replay_source": "wal",
+      "hook_interception_layer": "framework_autopatch",
+      "hook_pre_execution_gate": true,
+      "known_gaps": [
+        "smoke harness does not cover deny or defer outcomes",
+        "smoke harness does not exercise credential-brokered or shell-governed paths"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "http/get/run",
+          "expected_effect": "permit"
+        }
+      ]
+    },
+    {
+      "entry": "framework-hooks/langchain-simple",
+      "status": "passing",
+      "framework": "langchain",
+      "pattern": "one-file",
+      "coverage_tier": "A",
+      "harness": "tests/langchain_single_agent_real_stack.sh",
+      "attachable": true,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": true,
+      "shell_governed": true,
+      "network_governed": true,
+      "mcp_governed": false,
+      "audit_complete": true,
+      "replay_parity": true,
+      "replay_strict_reason": true,
+      "replay_source": "wal",
+      "hook_interception_layer": "framework_autopatch",
+      "hook_pre_execution_gate": true,
+      "known_gaps": [
+        "the shared demo agent lives outside this corpus entry and should be localized in a later hardening pass"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "http/get",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "vault/probe",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "shell/run",
+          "expected_effect": "deny"
+        },
+        {
+          "tool_id": "stripe/refund",
+          "expected_effect": "defer"
+        }
+      ]
+    },
+    {
+      "entry": "framework-hooks/langgraph-fpl",
+      "status": "passing",
+      "framework": "langgraph",
+      "pattern": "single-agent-fpl",
+      "coverage_tier": "A",
+      "harness": "tests/langgraph_single_agent_real_stack_fpl.sh",
+      "attachable": true,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": true,
+      "shell_governed": true,
+      "network_governed": true,
+      "mcp_governed": false,
+      "audit_complete": true,
+      "replay_parity": true,
+      "replay_strict_reason": true,
+      "replay_source": "wal",
+      "hook_interception_layer": "framework_autopatch",
+      "hook_pre_execution_gate": true,
+      "known_gaps": [
+        "policy source is FPL-on-disk; behavior should align with langgraph-single-agent YAML row"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "http/get",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "vault/probe",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "shell/run",
+          "expected_effect": "deny"
+        },
+        {
+          "tool_id": "stripe/refund",
+          "expected_effect": "defer"
+        }
+      ]
+    },
+    {
+      "entry": "framework-hooks/langgraph-multi-agent",
+      "status": "passing",
+      "framework": "langgraph",
+      "pattern": "multi-agent",
+      "coverage_tier": "A",
+      "harness": "tests/langgraph_multi_agent_real_stack.sh",
+      "attachable": true,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": false,
+      "shell_governed": false,
+      "network_governed": false,
+      "mcp_governed": false,
+      "audit_complete": true,
+      "replay_parity": true,
+      "replay_strict_reason": true,
+      "replay_source": "wal",
+      "hook_interception_layer": "framework_autopatch",
+      "hook_pre_execution_gate": true,
+      "known_gaps": [
+        "row covers LangGraph ToolNode delegation truth, but not a full graph-of-graphs orchestration runtime"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "multiagent/invoke_agent",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "multiagent/invoke_agent",
+          "expected_effect": "deny"
+        },
+        {
+          "tool_id": "multiagent/invoke_agent",
+          "expected_effect": "defer"
+        }
+      ]
+    },
+    {
+      "entry": "framework-hooks/langgraph-single-agent",
+      "status": "passing",
+      "framework": "langgraph",
+      "pattern": "single-agent",
+      "coverage_tier": "A",
+      "harness": "tests/langgraph_single_agent_real_stack.sh",
+      "attachable": true,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": true,
+      "shell_governed": true,
+      "network_governed": true,
+      "mcp_governed": false,
+      "audit_complete": true,
+      "replay_parity": true,
+      "replay_strict_reason": true,
+      "replay_source": "wal",
+      "hook_interception_layer": "framework_autopatch",
+      "hook_pre_execution_gate": true,
+      "known_gaps": [
+        "full multi-agent LangGraph corpus coverage is not implemented yet"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "http/get",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "vault/probe",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "shell/run",
+          "expected_effect": "deny"
+        },
+        {
+          "tool_id": "stripe/refund",
+          "expected_effect": "defer"
+        }
+      ]
+    },
+    {
+      "entry": "mcp-servers/mcp-http-sse",
+      "status": "passing",
+      "framework": "mcp-http-sse",
+      "pattern": "http-sse",
+      "coverage_tier": "A",
+      "harness": "tests/mcp_http_sse_real_stack.sh",
+      "attachable": true,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": false,
+      "shell_governed": false,
+      "network_governed": true,
+      "mcp_governed": true,
+      "audit_complete": true,
+      "replay_parity": true,
+      "replay_strict_reason": true,
+      "replay_source": "wal",
+      "hook_interception_layer": "mcp_gateway",
+      "hook_pre_execution_gate": true,
+      "known_gaps": [
+        "HTTP SSE row does not yet cover edge-auth, protocol-version strict mode, or session-expiry hardening"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "safe/tool",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "danger/x",
+          "expected_effect": "deny"
+        }
+      ]
+    },
+    {
+      "entry": "mcp-servers/mcp-node-sdk",
+      "status": "passing",
+      "framework": "mcp-node-sdk",
+      "pattern": "standalone-mcp",
+      "coverage_tier": "A",
+      "harness": "tests/node_autopatch_real_stack.sh",
+      "attachable": true,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": false,
+      "shell_governed": true,
+      "network_governed": true,
+      "mcp_governed": true,
+      "audit_complete": true,
+      "replay_parity": true,
+      "replay_strict_reason": true,
+      "replay_source": "wal",
+      "hook_interception_layer": "framework_autopatch",
+      "hook_pre_execution_gate": true,
+      "known_gaps": [
+        "this row covers Node MCP autopatch, not stdio or HTTP SSE server variants"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "http/get",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "shell/run",
+          "expected_effect": "deny"
+        },
+        {
+          "tool_id": "stripe/refund",
+          "expected_effect": "defer"
+        }
+      ]
+    },
+    {
+      "entry": "mcp-servers/mcp-stdio-wrap",
+      "status": "passing",
+      "framework": "mcp-stdio",
+      "pattern": "stdio-wrap",
+      "coverage_tier": "B",
+      "harness": "tests/mcp_stdio_wrap_harness.sh",
+      "attachable": true,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": false,
+      "shell_governed": false,
+      "network_governed": false,
+      "mcp_governed": true,
+      "audit_complete": true,
+      "replay_parity": true,
+      "replay_strict_reason": true,
+      "replay_source": "wal",
+      "hook_interception_layer": "mcp_gateway",
+      "hook_pre_execution_gate": true,
+      "known_gaps": [],
+      "expected_tools": [
+        {
+          "tool_id": "safe/tool",
+          "expected_effect": "permit"
+        },
+        {
+          "tool_id": "danger/x",
+          "expected_effect": "deny"
+        },
+        {
+          "tool_id": "review/pending",
+          "expected_effect": "defer"
+        }
+      ]
+    },
+    {
+      "entry": "policy-core/policy-roundtrip",
+      "status": "wip",
+      "framework": "faramesh-cli",
+      "pattern": "policy-yaml-roundtrip",
+      "coverage_tier": "C",
+      "harness": "tests/policy_roundtrip_harness.sh",
+      "attachable": false,
+      "governable": false,
+      "policy_visible": true,
+      "credential_brokered": false,
+      "shell_governed": false,
+      "network_governed": false,
+      "mcp_governed": false,
+      "audit_complete": false,
+      "replay_parity": false,
+      "replay_strict_reason": false,
+      "replay_source": "",
+      "hook_interception_layer": "",
+      "hook_pre_execution_gate": false,
+      "known_gaps": [
+        "Policy validate / decompile / policy test only \u2014 not an agent stack; hook_truth + WAL replay parity not asserted for this row"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "http/get",
+          "expected_effect": "permit"
+        }
+      ]
+    },
+    {
+      "entry": "runtime-core/burst-rate-limits",
+      "status": "wip",
+      "framework": "faramesh-runtime",
+      "pattern": "rate-limit-adapters",
+      "coverage_tier": "C",
+      "harness": "tests/burst_rate_limit_harness.sh",
+      "attachable": false,
+      "governable": true,
+      "policy_visible": false,
+      "credential_brokered": false,
+      "shell_governed": false,
+      "network_governed": false,
+      "mcp_governed": false,
+      "audit_complete": false,
+      "replay_parity": false,
+      "replay_strict_reason": false,
+      "replay_source": "",
+      "hook_interception_layer": "",
+      "hook_pre_execution_gate": false,
+      "known_gaps": [
+        "SDK socket + proxy adapter burst rate-limit unit tests only \u2014 not corpus tier-A WAL replay + hook_truth"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "govern/sdk-socket",
+          "expected_effect": "permit"
+        }
+      ]
+    },
+    {
+      "entry": "runtime-core/defer-timeout-resume",
+      "status": "wip",
+      "framework": "faramesh-runtime",
+      "pattern": "defer-g3-stress",
+      "coverage_tier": "C",
+      "harness": "tests/defer_timeout_resume_stress_harness.sh",
+      "attachable": false,
+      "governable": false,
+      "policy_visible": false,
+      "credential_brokered": false,
+      "shell_governed": false,
+      "network_governed": false,
+      "mcp_governed": false,
+      "audit_complete": false,
+      "replay_parity": false,
+      "replay_strict_reason": false,
+      "replay_source": "",
+      "hook_interception_layer": "",
+      "hook_pre_execution_gate": false,
+      "known_gaps": [
+        "Go stress tests for late resolve, triage, and daemon wait-for-approval timeouts \u2014 not an agent hook_truth / WAL tier-A row"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "defer/wait-for-approval",
+          "expected_effect": "defer"
+        }
+      ]
+    },
+    {
+      "entry": "runtime-core/linux-interception",
+      "status": "wip",
+      "framework": "faramesh-runtime",
+      "pattern": "linux-faramesh-run-matrix",
+      "coverage_tier": "C",
+      "harness": "tests/linux_interception_matrix_harness.sh",
+      "attachable": false,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": true,
+      "shell_governed": true,
+      "network_governed": true,
+      "mcp_governed": false,
+      "audit_complete": false,
+      "replay_parity": false,
+      "replay_strict_reason": false,
+      "replay_source": "",
+      "hook_interception_layer": "",
+      "hook_pre_execution_gate": false,
+      "known_gaps": [
+        "`faramesh run` enforcement report matrix on Linux only; non-Linux hosts skip the harness (exit 0). Not a tier-A WAL + hook_truth agent row.",
+        "Some CI kernels may terminate the child under strict seccomp; harness tolerates selected exit codes when validating the report."
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "shell/run",
+          "expected_effect": "permit"
+        }
+      ]
+    },
+    {
+      "entry": "runtime-core/socket-e2e-acceptance",
+      "status": "wip",
+      "framework": "faramesh-runtime",
+      "pattern": "unix-socket-daemon-cli",
+      "coverage_tier": "C",
+      "harness": "tests/socket_e2e_acceptance.sh",
+      "attachable": true,
+      "governable": true,
+      "policy_visible": true,
+      "credential_brokered": true,
+      "shell_governed": true,
+      "network_governed": false,
+      "mcp_governed": false,
+      "audit_complete": false,
+      "replay_parity": false,
+      "replay_strict_reason": false,
+      "replay_source": "",
+      "hook_interception_layer": "",
+      "hook_pre_execution_gate": false,
+      "known_gaps": [
+        "Daemon + Unix socket JSON-RPC govern acceptance (demo.fpl); not a tier-A agent harness with WAL replay_parity + hook_truth contract",
+        "Previously ran only as a standalone release-gate job; now tracked in corpus matrix and corpus-harness alongside other runtime wip rows"
+      ],
+      "expected_tools": [
+        {
+          "tool_id": "http/get",
+          "expected_effect": "permit"
+        }
+      ]
+    }
+  ]
+}
