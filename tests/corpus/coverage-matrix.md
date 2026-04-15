@@ -1,6 +1,6 @@
 # Coverage Matrix
 
-- Corpus root: `/Users/xquark_home/Faramesh-Nexus/faramesh-core/tests/corpus`
+- Corpus root: `tests/corpus`
 - Entries: 15
 - Passing: 10
 - WIP: 5

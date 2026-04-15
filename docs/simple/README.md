@@ -2,6 +2,17 @@
 
 These docs are written in very plain language.
 
+Last refreshed: 2026-04-15
+
+Recommended rollout flow in this repo:
+
+1. `faramesh discover`
+2. `faramesh attach`
+3. `faramesh coverage`
+4. `faramesh gaps`
+5. `faramesh suggest`
+6. `faramesh pack shadow` -> `faramesh pack enforce`
+
 Read in this order:
 
 1. [00_START_HERE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/00_START_HERE.md)

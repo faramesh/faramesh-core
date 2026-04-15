@@ -2,6 +2,15 @@
 
 This section contains deep technical references for advanced operators.
 
+Last refreshed: 2026-04-15
+
+Current advanced focus in `faramesh-core`:
+
+- Runtime-truth corpus harnesses and matrix release gates
+- Observe-first governance lifecycle (`discover`/`attach`/`coverage`/`gaps`/`suggest`)
+- Pack artifact lifecycle (`policy.yaml`, optional `policy.fpl`, normalized `policy.compiled.yaml`)
+- Standing approval persistence and defer governance controls
+
 If you want fast setup and practical usage, use the guides in `docs/guides/`.
 
 ## Start Here (Advanced)
