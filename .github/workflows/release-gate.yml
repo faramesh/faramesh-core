@@ -267,10 +267,16 @@ jobs:
           cache: "npm"
           cache-dependency-path: sdk/node/package-lock.json
 
-      - name: Setup Vault CLI
-        uses: hashicorp/setup-vault@v3
-        with:
-          version: "1.17.6"
+      - name: Install Vault CLI
+        run: |
+          set -euo pipefail
+          VAULT_VERSION="1.17.6"
+          sudo apt-get update
+          sudo apt-get install -y unzip
+          curl -fsSL -o vault.zip "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip"
+          unzip -q vault.zip
+          sudo install vault /usr/local/bin/vault
+          vault version
 
       - name: Run corpus entry
         run: bash scripts/run_corpus_entry.sh "${{ matrix.entry }}"

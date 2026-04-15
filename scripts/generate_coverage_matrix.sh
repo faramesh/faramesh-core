@@ -4,14 +4,20 @@ set -euo pipefail
 CORE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORPUS_DIR="${1:-$CORE_DIR/tests/corpus}"
 
-python3 - "$CORPUS_DIR" <<'PY'
+python3 - "$CORE_DIR" "$CORPUS_DIR" <<'PY'
 import json
 import os
 import sys
 
-corpus_dir = os.path.abspath(sys.argv[1])
+core_dir = os.path.abspath(sys.argv[1])
+corpus_dir = os.path.abspath(sys.argv[2])
 json_out = os.path.join(corpus_dir, "coverage-matrix.json")
 md_out = os.path.join(corpus_dir, "coverage-matrix.md")
+
+try:
+    corpus_label = os.path.relpath(corpus_dir, core_dir)
+except ValueError:
+    corpus_label = corpus_dir
 
 entries = []
 for root, _, files in os.walk(corpus_dir):
@@ -69,7 +75,7 @@ with open(json_out, "w", encoding="utf-8") as f:
 lines = [
     "# Coverage Matrix",
     "",
-    f"- Corpus root: `{corpus_dir}`",
+    f"- Corpus root: `{corpus_label}`",
     f"- Entries: {summary['entries']}",
     f"- Passing: {summary['passing']}",
     f"- WIP: {summary['wip']}",

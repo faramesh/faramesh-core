@@ -89,11 +89,18 @@ Recent hardening and productization work now in mainline:
 - Standing approvals with persisted grants and admin-token authenticated standing-grant operations.
 - Corpus harness + contract checks wired into CI release gates.
 - Node SDK parity improvements: execution governor client + active config retrieval.
+- Deterministic pack artifact model: installs write `policy.yaml`, optional authored `policy.fpl`, and normalized `policy.compiled.yaml`.
 
 Boundary note:
 
 - `faramesh-core` is the OSS runtime, CLI, SDKs, packs, and local adapters.
 - Hosted control-plane artifacts and proprietary API contracts are maintained outside this repository.
+
+Current governance rollout recommendation:
+
+1. Observe: `discover` -> `attach` -> `coverage` -> `gaps` -> `suggest`
+2. Pack mode rollout: `pack shadow` first, then `pack enforce`
+3. Keep `audit tail` and corpus contract gates green before release promotion
 
 ## Install
 
