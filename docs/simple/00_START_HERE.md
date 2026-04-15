@@ -43,9 +43,15 @@ faramesh demo
 faramesh policy validate policy.yaml
 faramesh serve --policy policy.yaml
 faramesh audit tail
+faramesh discover --source ./
+faramesh attach --agent-id my-agent --cmd "python agent.py"
+faramesh coverage --agent-id my-agent
+faramesh gaps --agent-id my-agent
 faramesh agent approve <defer-token>
 faramesh agent deny <defer-token>
 faramesh explain --last-deny
+faramesh pack shadow faramesh/<pack>
+faramesh pack enforce faramesh/<pack>
 ```
 
 ## Next files to read
