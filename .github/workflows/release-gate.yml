@@ -267,6 +267,11 @@ jobs:
           cache: "npm"
           cache-dependency-path: sdk/node/package-lock.json
 
+      - name: Setup Vault CLI
+        uses: hashicorp/setup-vault@v3
+        with:
+          version: "1.17.6"
+
       - name: Run corpus entry
         run: bash scripts/run_corpus_entry.sh "${{ matrix.entry }}"
 
