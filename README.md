@@ -110,6 +110,12 @@ For local repositories and existing agent stacks (LangChain, LangGraph, DeepAgen
 bash scripts/faramesh_setup.sh
 ```
 
+Single-file guided flow (install + optional cloud pair + discover/attach/coverage/gaps/suggest + run):
+
+```bash
+bash scripts/faramesh_setup.sh flow
+```
+
 Key lifecycle commands:
 
 ```bash
