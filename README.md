@@ -106,35 +106,36 @@ make setup
 For local repositories and existing agent stacks (LangChain, LangGraph, DeepAgents, MCP), use one command surface:
 
 ```bash
-# Canonical setup command
-bash scripts/faramesh_setup.sh
+# Canonical setup command (guided flow)
+faramesh setup flow
 ```
 
 Single-file guided flow (install + optional cloud pair + discover/attach/coverage/gaps/suggest + run):
 
 ```bash
-bash scripts/faramesh_setup.sh flow
+faramesh setup flow
 ```
 
 Key lifecycle commands:
 
 ```bash
-# Guided governance startup (framework + policy + credential profile toggles)
-bash scripts/faramesh_setup.sh start
+# Guided governance startup with policy + runtime profile prompts
+faramesh onboard --policy policies/default.fpl
 
-# Optional preflight only
-bash scripts/faramesh_setup.sh onboard --policy policies/default.fpl
+# Runtime controls
+faramesh status
+faramesh stop
 
-# Stop / inspect runtime
-bash scripts/faramesh_setup.sh status
-bash scripts/faramesh_setup.sh stop
+# Detach wiring from an existing project
+faramesh offboard --path /path/to/agent
+faramesh offboard --path /path/to/agent --apply
 
-# Detach Faramesh wiring from an existing project (dry-run, then apply)
-bash scripts/faramesh_setup.sh offboard --path /path/to/agent
-bash scripts/faramesh_setup.sh offboard --path /path/to/agent --apply
+# Full cleanup: detach + remove local state
+faramesh setup uninstall --path /path/to/agent --yes
 
-# Full cleanup: detach + remove local runtime and common local binaries
-bash scripts/faramesh_setup.sh uninstall --path /path/to/agent --yes
+# Binary maintenance
+faramesh setup update
+faramesh setup upgrade --version 0.5.0
 ```
 
 ## Quick Start
