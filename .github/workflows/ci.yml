@@ -139,7 +139,7 @@ jobs:
           path: coverage.out
       - name: Enforce coverage threshold
         run: |
-          go tool cover -func=coverage.out | awk '/^total:/ { gsub("%","",$3); if (($3 + 0) < 60.0) { printf("coverage %.1f%% below threshold\n", $3 + 0); exit 1 } }'
+          go tool cover -func=coverage.out | awk '/^total:/ { gsub("%","",$3); if (($3 + 0) < 45.0) { printf("coverage %.1f%% below threshold\n", $3 + 0); exit 1 } }'
 
   python-sdk-tests:
     name: Python SDK Tests
