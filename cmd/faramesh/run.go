@@ -323,6 +323,13 @@ func applyEnforcementStack(det *runtimeenv.DetectedEnvironment, env []string, cw
 		}
 	}
 
+	// Node bootstrap: inject NODE_OPTIONS so MCP servers get auto-patched.
+	if looksLikeNodeCommand(childArgs) {
+		if autopatchPath, ok := resolveNodeAutopatchPath(cwd); ok {
+			env = prependNodeOptions(env, autopatchPath)
+		}
+	}
+
 	// L4: Credential broker — strip ambient API keys from child environment.
 	if runBrokerOn || runEnforce == "full" {
 		env, r.credentialStrip = stripAmbientCredentials(env)
@@ -636,4 +643,73 @@ func envValue(env []string, key string) string {
 func dirExists(path string) bool {
 	st, err := os.Stat(path)
 	return err == nil && st.IsDir()
+}
+
+func looksLikeNodeCommand(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	cmd := strings.ToLower(filepath.Base(args[0]))
+	switch cmd {
+	case "node", "npx", "tsx", "ts-node":
+		return true
+	}
+	for i := 0; i < len(args) && i < 3; i++ {
+		lower := strings.ToLower(args[i])
+		if strings.HasSuffix(lower, ".js") || strings.HasSuffix(lower, ".ts") || strings.HasSuffix(lower, ".mjs") {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveNodeAutopatchPath(cwd string) (string, bool) {
+	if override := strings.TrimSpace(os.Getenv("FARAMESH_NODE_AUTOPATCH_PATH")); override != "" {
+		if abs, err := filepath.Abs(override); err == nil {
+			override = abs
+		}
+		if fileExists(override) {
+			return override, true
+		}
+	}
+
+	candidates := []string{
+		filepath.Join(cwd, "faramesh-core", "sdk", "node", "dist", "autopatch.js"),
+		filepath.Join(cwd, "sdk", "node", "dist", "autopatch.js"),
+	}
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(exeDir, "sdk", "node", "dist", "autopatch.js"),
+			filepath.Join(exeDir, "..", "sdk", "node", "dist", "autopatch.js"),
+			filepath.Join(exeDir, "..", "..", "sdk", "node", "dist", "autopatch.js"),
+		)
+	}
+
+	for _, candidate := range candidates {
+		if abs, err := filepath.Abs(candidate); err == nil {
+			candidate = abs
+		}
+		if fileExists(candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func fileExists(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && !st.IsDir()
+}
+
+func prependNodeOptions(env []string, autopatchPath string) []string {
+	requireFlag := "--require " + autopatchPath
+	cur := envValue(env, "NODE_OPTIONS")
+	if strings.Contains(cur, autopatchPath) {
+		return env
+	}
+	if cur == "" {
+		return mergeEnv(env, []string{"NODE_OPTIONS=" + requireFlag})
+	}
+	return mergeEnv(env, []string{"NODE_OPTIONS=" + requireFlag + " " + cur})
 }

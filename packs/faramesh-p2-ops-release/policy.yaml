@@ -1,0 +1,42 @@
+faramesh-version: "1.0"
+agent-id: "p2-ops-release"
+default_effect: deny
+
+parallel_budget:
+  orchestration_id: "release-orchestration"
+  agents: ["release-copilot", "release-verifier"]
+  aggregate_max_cost_usd: 40
+  per_agent_max_cost_usd: 25
+  on_aggregate_exceed: deny
+
+defer_priority:
+  critical:
+    criteria: "tool_id matches \"prod/*\""
+    sla_seconds: 300
+    channel: "pagerduty"
+  high:
+    criteria: "tool_id matches \"staging/*\""
+    sla_seconds: 900
+    channel: "slack"
+
+rules:
+  - id: permit-readonly-deploy-commands
+    match:
+      tool: "shell/run"
+      when: "args.cmd != nil && args.cmd matches \"kubectl get|kubectl describe|kubectl logs|helm version\""
+    effect: permit
+    reason: "read-only cluster inspection"
+
+  - id: defer-mutations
+    match:
+      tool: "shell/run"
+      when: "args.cmd != nil && args.cmd matches \"terraform|kubectl apply|helm upgrade|kubectl rollout\""
+    effect: defer
+    reason: "release mutations require approval"
+
+  - id: deny-force-delete
+    match:
+      tool: "shell/run"
+      when: "args.cmd != nil && args.cmd matches \"terraform destroy|--force|grace-period=0\""
+    effect: deny
+    reason: "unsafe destructive pattern"

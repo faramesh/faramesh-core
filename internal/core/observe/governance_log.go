@@ -1,6 +1,8 @@
 package observe
 
 import (
+	"context"
+
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -21,6 +23,7 @@ func EmitGovernanceLog(log *zap.Logger, level zapcore.Level, message string, eve
 	if log == nil {
 		log = zap.NewNop()
 	}
+	EmitGovernanceOTLPLog(context.Background(), event, message)
 	envelope := []zap.Field{
 		zap.String("log_schema", GovernanceLogSchema),
 		zap.String("log_schema_version", GovernanceLogSchemaVersion),

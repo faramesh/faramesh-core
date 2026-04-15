@@ -225,6 +225,9 @@ func fileExists(path string) bool {
 }
 
 // ApplyFarameshEnv sets FARAMESH_* hints for a child process based on detection.
+// Note: FARAMESH_FRAMEWORK_HINT is informational only — the Python autopatch
+// layer does not branch on it; it tries all registered patchers regardless.
+// The hint is useful for logging, diagnostics, and external tooling.
 func ApplyFarameshEnv(dst []string, det *DetectedEnvironment, policyPath string) []string {
 	out := append([]string(nil), dst...)
 	set := func(k, v string) {

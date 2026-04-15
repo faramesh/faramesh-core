@@ -43,6 +43,13 @@ type State struct {
 	dailyCostUSD float64
 	dailyCostDay string // "2006-01-02" — day the counter applies to
 
+	// LLM / context token accumulators (session + UTC calendar day).
+	// Populated when tool calls include usage metadata (e.g. _faramesh.tokens in args).
+	tokenMu        sync.Mutex
+	sessionTokens  int64
+	dailyTokens    int64
+	dailyTokensDay string
+
 	backend    Backend
 	dailyStore DailyCostStore
 	agentID    string
@@ -118,6 +125,129 @@ func (s *State) AddCost(costUSD float64) {
 	if s.dailyStore != nil && s.agentID != "" {
 		_ = s.dailyStore.AddDailyCost(context.Background(), s.agentID, today, costUSD)
 	}
+}
+
+// CheckAndReserveCost atomically reserves projected cost against session and
+// daily budgets. For local-only states this uses the in-memory counters.
+func (s *State) CheckAndReserveCost(costUSD, sessionLimit, dailyLimit float64) (bool, error) {
+	if costUSD <= 0 {
+		return true, nil
+	}
+	if s.backend != nil && s.agentID != "" {
+		return s.backend.CheckAndReserveCost(context.Background(), s.agentID, s.sessionID, costUSD, sessionLimit, dailyLimit)
+	}
+	if sessionLimit > 0 && s.CurrentCostUSD()+costUSD > sessionLimit {
+		return false, nil
+	}
+	if dailyLimit > 0 && s.DailyCostUSD()+costUSD > dailyLimit {
+		return false, nil
+	}
+	s.AddCost(costUSD)
+	return true, nil
+}
+
+// ConfirmReservedCost finalizes a previously reserved cost.
+func (s *State) ConfirmReservedCost(costUSD float64) error {
+	if costUSD <= 0 {
+		return nil
+	}
+	if s.backend != nil && s.agentID != "" {
+		return s.backend.ConfirmCost(context.Background(), s.agentID, s.sessionID, costUSD)
+	}
+	return nil
+}
+
+// RollbackReservedCost releases a previously reserved cost.
+func (s *State) RollbackReservedCost(costUSD float64) error {
+	if costUSD <= 0 {
+		return nil
+	}
+	if s.backend != nil && s.agentID != "" {
+		return s.backend.RollbackCost(context.Background(), s.agentID, s.sessionID, costUSD)
+	}
+	s.AddCost(-costUSD)
+	return nil
+}
+
+// AddTokens adds token usage to session and daily counters (UTC day).
+func (s *State) AddTokens(n int64) {
+	if n == 0 {
+		return
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	s.sessionTokens += n
+	if s.dailyTokensDay != today {
+		s.dailyTokens = 0
+		s.dailyTokensDay = today
+	}
+	s.dailyTokens += n
+}
+
+// CurrentSessionTokens returns accumulated tokens for this session.
+func (s *State) CurrentSessionTokens() int64 {
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	return s.sessionTokens
+}
+
+// DailyTokens returns accumulated tokens for the current UTC calendar day.
+func (s *State) DailyTokens() int64 {
+	today := time.Now().UTC().Format("2006-01-02")
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	if s.dailyTokensDay != today {
+		return 0
+	}
+	return s.dailyTokens
+}
+
+// CheckAndReserveTokens reserves projected token usage against session and daily limits.
+// For local state, tokens are added immediately and RollbackReservedTokens subtracts on deny.
+func (s *State) CheckAndReserveTokens(n, sessionLimit, dailyLimit int64) (bool, error) {
+	if n <= 0 {
+		return true, nil
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	if sessionLimit > 0 && s.sessionTokens+n > sessionLimit {
+		return false, nil
+	}
+	if s.dailyTokensDay != today {
+		s.dailyTokens = 0
+		s.dailyTokensDay = today
+	}
+	if dailyLimit > 0 && s.dailyTokens+n > dailyLimit {
+		return false, nil
+	}
+	s.sessionTokens += n
+	s.dailyTokens += n
+	return true, nil
+}
+
+// RollbackReservedTokens reverses a token reservation (e.g. after DENY).
+func (s *State) RollbackReservedTokens(n int64) error {
+	if n <= 0 {
+		return nil
+	}
+	s.tokenMu.Lock()
+	defer s.tokenMu.Unlock()
+	s.sessionTokens -= n
+	s.dailyTokens -= n
+	if s.sessionTokens < 0 {
+		s.sessionTokens = 0
+	}
+	if s.dailyTokens < 0 {
+		s.dailyTokens = 0
+	}
+	return nil
+}
+
+// ConfirmReservedTokens is a no-op for in-memory token accounting (symmetry with cost).
+func (s *State) ConfirmReservedTokens(_ int64) error {
+	return nil
 }
 
 // CurrentCostUSD returns the total cost accumulated in this session.

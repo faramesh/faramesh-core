@@ -26,7 +26,7 @@ Example usage:
     >>> actions = submit_actions([{...}, {...}])
 """
 
-# SPDX-License-Identifier: Elastic-2.0
+# SPDX-License-Identifier: MIT
 
 from __future__ import annotations
 

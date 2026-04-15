@@ -1,0 +1,29 @@
+{
+  "status": "wip",
+  "framework": "faramesh-runtime",
+  "pattern": "rate-limit-adapters",
+  "coverage_tier": "C",
+  "harness": "tests/burst_rate_limit_harness.sh",
+  "expected_tools": [
+    {"tool_id": "govern/sdk-socket", "expected_effect": "permit"}
+  ],
+  "enforcement_surfaces": {
+    "framework_hook": false,
+    "attachable": false,
+    "governable": true,
+    "policy_visible": false,
+    "credential_brokered": false,
+    "shell_governed": false,
+    "network_governed": false,
+    "mcp_governed": false,
+    "audit_complete": false
+  },
+  "known_gaps": [
+    "SDK socket + proxy adapter burst rate-limit unit tests only — not corpus tier-A WAL replay + hook_truth"
+  ],
+  "detection": {
+    "framework_detected": false,
+    "framework_name": "n/a",
+    "trust_level": "instrumented"
+  }
+}

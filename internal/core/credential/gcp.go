@@ -2,18 +2,23 @@ package credential
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+
+	"golang.org/x/oauth2/google"
 )
 
 // GCPSecretsConfig configures the GCP Secret Manager broker.
 type GCPSecretsConfig struct {
-	Project  string
-	Endpoint string // override for testing
-	Timeout  time.Duration
+	Project     string
+	Endpoint    string // override for testing
+	AccessToken string // override for testing or explicit bearer injection
+	Timeout     time.Duration
 }
 
 func (c *GCPSecretsConfig) defaults() {
@@ -22,7 +27,7 @@ func (c *GCPSecretsConfig) defaults() {
 	}
 }
 
-// NewGCPSecretsBroker creates a production GCP Secret Manager broker.
+// NewGCPSecretsBroker creates a GCP Secret Manager broker.
 func NewGCPSecretsBroker(cfg GCPSecretsConfig) *GCPSecretsBroker {
 	cfg.defaults()
 	return &GCPSecretsBroker{
@@ -47,6 +52,11 @@ func (b *GCPSecretsBroker) Fetch(ctx context.Context, req FetchRequest) (*Creden
 		return nil, fmt.Errorf("gcp secrets: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	token, err := resolveGCPAccessToken(ctx, b.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("gcp secrets: resolve access token: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := b.client.Do(httpReq)
 	if err != nil {
@@ -67,6 +77,13 @@ func (b *GCPSecretsBroker) Fetch(ctx context.Context, req FetchRequest) (*Creden
 	value := result.Payload.Data
 	if value == "" {
 		return nil, fmt.Errorf("gcp secrets: empty payload at %s", secretID)
+	}
+
+	// Real GCP Secret Manager returns base64-encoded payloads.
+	// Try to decode; if it fails, treat the value as plaintext
+	// (for test endpoints that return unencoded values).
+	if decoded, err := base64.StdEncoding.DecodeString(value); err == nil {
+		value = string(decoded)
 	}
 
 	return &Credential{
@@ -96,4 +113,23 @@ type gcpSecretResponse struct {
 	Payload struct {
 		Data string `json:"data"`
 	} `json:"payload"`
+}
+
+func resolveGCPAccessToken(ctx context.Context, cfg GCPSecretsConfig) (string, error) {
+	if tok := strings.TrimSpace(cfg.AccessToken); tok != "" {
+		return tok, nil
+	}
+
+	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		return "", err
+	}
+	token, err := creds.TokenSource.Token()
+	if err != nil {
+		return "", err
+	}
+	if token == nil || strings.TrimSpace(token.AccessToken) == "" {
+		return "", fmt.Errorf("received empty access token from default credentials")
+	}
+	return token.AccessToken, nil
 }

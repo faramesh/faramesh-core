@@ -54,15 +54,20 @@ Faramesh enforces governance through a nine-layer enforcement stack. Security is
 
 ### Enforcement layers (Linux)
 
-1. **Framework auto-patch** — hooks into agent tool dispatch
+Active layers (implemented and tested):
+
+1. **Framework auto-patch** — hooks into agent tool dispatch (Python; Node alpha)
 2. **seccomp-BPF** — restricts system calls at the kernel level
-3. **eBPF inspection** — inspects syscall arguments before execution
-4. **Landlock LSM** — restricts filesystem access
-5. **Network namespace** — isolates agent network access
-6. **Credential broker** — strips ambient API keys, issues scoped secrets
-7. **eBPF baselining** — detects behavioral anomalies
-8. **MicroVM isolation** — optional Firecracker/Kata hardware boundary
-9. **Policy engine** — deterministic rule evaluation, no AI in the loop
+3. **Landlock LSM** — restricts filesystem access
+4. **Network namespace** — isolates agent network access
+5. **Credential broker** — strips ambient API keys, issues scoped secrets via Vault (AWS/GCP backends are scaffolded, not production-ready)
+6. **Policy engine** — deterministic rule evaluation, no AI in the loop
+
+Scaffolded layers (interfaces exist, not yet production-ready):
+
+7. **eBPF inspection** — probe interface defined; BPF program loading not yet wired (Attach returns explicit fallback/not-implemented and never claims attachment)
+8. **eBPF baselining** — design target, not implemented
+9. **MicroVM isolation** — optional Firecracker/Kata boundary (not included in this repo)
 
 ### Security properties
 
@@ -76,7 +81,7 @@ Faramesh enforces governance through a nine-layer enforcement stack. Security is
 1. **Keep updated** — always use the latest version.
 2. **Use FPL `deny!`** — for rules that must never be overridden.
 3. **Enable the credential broker** — never let agents hold raw API keys.
-4. **Review audit logs** — run `faramesh audit verify` regularly.
+4. **Review audit logs** — run `faramesh audit verify <path-to-faramesh.wal>` regularly for full chain validation.
 5. **Use the full sandbox on Linux** — `faramesh run --enforce full`.
 
 ---

@@ -1,0 +1,31 @@
+faramesh-version: "1.0"
+agent-id: "p2-research-agent"
+default_effect: deny
+
+budget:
+  session_usd: 15
+  daily_usd: 75
+  max_calls: 400
+  on_exceed: defer
+
+rules:
+  - id: permit-sandbox-http
+    match:
+      tool: "http/get"
+      when: "args.url != nil && args.url matches \"https://api.sandbox|https://research.internal\""
+    effect: permit
+    reason: "sandbox and internal research endpoints"
+
+  - id: defer-external-http
+    match:
+      tool: "http/get"
+      when: "true"
+    effect: defer
+    reason: "external web research requires human review"
+
+  - id: deny-destructive-shell
+    match:
+      tool: "shell/run"
+      when: "true"
+    effect: deny
+    reason: "research agents must not run shell"

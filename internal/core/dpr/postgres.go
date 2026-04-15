@@ -66,11 +66,12 @@ func (s *PGStore) Save(rec *Record) error {
 			callbacks_fired, callback_errors,
 			degraded_mode,
 			batch_approval, batch_size, batch_dpr_ids, resolved_by_batch, batch_approval_id,
+			approval_envelope,
 			created_at
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
 			$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-			$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53
+			$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54
 		) ON CONFLICT (record_id) DO NOTHING`,
 		rec.SchemaVersion, rec.FPLVersion, rec.CARVersion,
 		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig,
@@ -88,6 +89,7 @@ func (s *PGStore) Save(rec *Record) error {
 		cbFired, cbErrs,
 		rec.DegradedMode,
 		rec.BatchApproval, rec.BatchSize, batchIDs, rec.ResolvedByBatch, rec.BatchApprovalID,
+		rec.ApprovalEnvelope,
 		rec.CreatedAt.UTC(),
 	)
 	return err
@@ -228,6 +230,7 @@ const pgSelectCols = `schema_version, fpl_version, car_version,
 	callbacks_fired, callback_errors,
 	degraded_mode,
 	batch_approval, batch_size, batch_dpr_ids, resolved_by_batch, batch_approval_id,
+	approval_envelope,
 	created_at`
 
 func pgMigrate(db *sql.DB) error {
@@ -287,6 +290,7 @@ func pgMigrate(db *sql.DB) error {
 		batch_dpr_ids              JSONB DEFAULT '[]',
 		resolved_by_batch          BOOLEAN DEFAULT FALSE,
 		batch_approval_id          TEXT DEFAULT '',
+		approval_envelope          TEXT DEFAULT '',
 		created_at                 TIMESTAMPTZ NOT NULL
 	);
 	CREATE INDEX IF NOT EXISTS idx_dpr_agent_time ON dpr_records(agent_id, created_at);
@@ -301,6 +305,7 @@ func pgMigrate(db *sql.DB) error {
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS network_resolved_ip_hash TEXT DEFAULT '';
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS network_audit_bypass BOOLEAN DEFAULT FALSE;
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS inference_model_rewrite_applied BOOLEAN DEFAULT FALSE;
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS approval_envelope TEXT DEFAULT '';
 	`)
 	return err
 }
@@ -310,7 +315,7 @@ func pgScanRecords(rows *sql.Rows) ([]*Record, error) {
 	for rows.Next() {
 		var r Record
 		var createdAt time.Time
-		var argProv, selSnap, custOps, opRes, cbFired, cbErrs, batchIDs sql.NullString
+		var argProv, selSnap, custOps, opRes, cbFired, cbErrs, batchIDs, approvalEnvelope sql.NullString
 		if err := rows.Scan(
 			&r.SchemaVersion, &r.FPLVersion, &r.CARVersion,
 			&r.RecordID, &r.PrevRecordHash, &r.RecordHash, &r.HMACSig,
@@ -328,6 +333,7 @@ func pgScanRecords(rows *sql.Rows) ([]*Record, error) {
 			&cbFired, &cbErrs,
 			&r.DegradedMode,
 			&r.BatchApproval, &r.BatchSize, &batchIDs, &r.ResolvedByBatch, &r.BatchApprovalID,
+			&approvalEnvelope,
 			&createdAt,
 		); err != nil {
 			return nil, err
@@ -340,6 +346,7 @@ func pgScanRecords(rows *sql.Rows) ([]*Record, error) {
 		pgJSONUnmarshal(cbFired, &r.CallbacksFired)
 		pgJSONUnmarshal(cbErrs, &r.CallbackErrors)
 		pgJSONUnmarshal(batchIDs, &r.BatchDPRIDs)
+		r.ApprovalEnvelope = approvalEnvelope.String
 		records = append(records, &r)
 	}
 	return records, rows.Err()

@@ -1,0 +1,9 @@
+# Optional FPL sidecar; shell command matchers live in YAML.
+agent infra-agent {
+  default deny
+
+  rules {
+    deny! shell/run
+      reason: "destructive shell blocked (read vs mutation split in YAML)"
+  }
+}

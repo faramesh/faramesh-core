@@ -17,6 +17,8 @@ type Client struct {
 	BaseURL    *url.URL
 	HTTP       *http.Client
 	AuthBearer string
+	// OrgID is sent as X-Faramesh-Org-Id for org-scoped catalog and private pack fetches.
+	OrgID string
 }
 
 // NewClient parses baseURL (e.g. https://registry.example.com) and returns a Client.
@@ -62,13 +64,28 @@ func (c *Client) req(ctx context.Context, method, rel string, body io.Reader) (*
 	if c.AuthBearer != "" {
 		r.Header.Set("Authorization", "Bearer "+c.AuthBearer)
 	}
+	if org := strings.TrimSpace(c.OrgID); org != "" {
+		r.Header.Set("X-Faramesh-Org-Id", org)
+	}
 	return r, nil
 }
 
-// Search calls GET /v1/search?q=...
-func (c *Client) Search(ctx context.Context, query string) (*SearchResponse, error) {
+// SearchOptions configures GET /v1/search (public catalog vs org-private listings).
+type SearchOptions struct {
+	// Visibility filters registry rows: "public", "org", or "all" (registry-defined).
+	// Empty omits the parameter and uses server default (typically public catalog only).
+	Visibility string
+}
+
+// Search calls GET /v1/search?q=... with optional visibility.
+func (c *Client) Search(ctx context.Context, query string, opts *SearchOptions) (*SearchResponse, error) {
 	q := url.Values{}
 	q.Set("q", query)
+	if opts != nil {
+		if v := strings.TrimSpace(opts.Visibility); v != "" {
+			q.Set("visibility", v)
+		}
+	}
 	r, err := c.req(ctx, http.MethodGet, "v1/search?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err

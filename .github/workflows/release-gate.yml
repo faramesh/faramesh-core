@@ -178,25 +178,8 @@ jobs:
         if: matrix.profile == 'race'
         run: go test ./... -race -count=1
 
-  socket-e2e-acceptance:
-    name: Socket E2E Acceptance (P8)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Run socket-only acceptance suite
-        run: bash tests/socket_e2e_acceptance.sh
-
-  burst-rate-harness:
-    name: Burst Rate Harness (G2)
+  corpus-matrix:
+    name: Corpus contract + matrix (release)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -209,13 +192,59 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run burst rate-limit harness
-        run: make burst-rate-harness
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-  defer-timeout-resume-harness:
-    name: Defer Timeout Resume Harness (G3)
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: sdk/node/package-lock.json
+
+      - name: Corpus check
+        run: make corpus-check
+
+  corpus-harness:
+    name: Corpus Harness (${{ matrix.id }})
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: langchain-governed-smoke
+            entry: tests/corpus/framework-hooks/langchain-governed-smoke
+          - id: langchain-fpl
+            entry: tests/corpus/framework-hooks/langchain-fpl
+          - id: langgraph-fpl
+            entry: tests/corpus/framework-hooks/langgraph-fpl
+          - id: langchain-simple
+            entry: tests/corpus/framework-hooks/langchain-simple
+          - id: langgraph-single-agent
+            entry: tests/corpus/framework-hooks/langgraph-single-agent
+          - id: deepagents-governed
+            entry: tests/corpus/framework-hooks/deepagents-governed
+          - id: langgraph-multi-agent
+            entry: tests/corpus/framework-hooks/langgraph-multi-agent
+          - id: mcp-stdio-wrap
+            entry: tests/corpus/mcp-servers/mcp-stdio-wrap
+          - id: mcp-http-sse
+            entry: tests/corpus/mcp-servers/mcp-http-sse
+          - id: mcp-node-sdk
+            entry: tests/corpus/mcp-servers/mcp-node-sdk
+          - id: linux-interception
+            entry: tests/corpus/runtime-core/linux-interception
+          - id: defer-timeout-resume
+            entry: tests/corpus/runtime-core/defer-timeout-resume
+          - id: burst-rate-limits
+            entry: tests/corpus/runtime-core/burst-rate-limits
+          - id: policy-roundtrip
+            entry: tests/corpus/policy-core/policy-roundtrip
+          - id: socket-e2e-acceptance
+            entry: tests/corpus/runtime-core/socket-e2e-acceptance
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -226,8 +255,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Run defer timeout/resume + escalation harness
-        run: make defer-timeout-resume-harness
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: sdk/node/package-lock.json
+
+      - name: Run corpus entry
+        run: bash scripts/run_corpus_entry.sh "${{ matrix.entry }}"
 
   linux-interception-matrix:
     name: Linux Interception Matrix (${{ matrix.profile }})
@@ -273,21 +314,4 @@ jobs:
 
       - name: Run Node autopatch real-stack harness
         run: make node-autopatch-harness
-
-  policy-roundtrip-harness:
-    name: Policy Roundtrip Harness (strict-lossless)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Run policy roundtrip harness
-        run: make policy-roundtrip-harness
 

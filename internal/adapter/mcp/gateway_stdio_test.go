@@ -91,6 +91,105 @@ func TestStdioGateway_toolsCallPermitEcho(t *testing.T) {
 	}
 }
 
+func TestStdioGateway_localDeferStatusAndResolve(t *testing.T) {
+	chdirMCP(t)
+	p := testMCPPipelineFromYAMLWithHMAC(t, `
+faramesh-version: "1.0"
+agent-id: "mcp-http-test"
+default_effect: deny
+rules:
+  - id: defer-review
+    match:
+      tool: "review/*"
+    effect: defer
+    reason_code: RULE_DEFER
+`, []byte("mcp-stdio-defer-test-hmac"))
+	g, err := NewStdioGateway(p, "agent-1", zap.NewNop(), []string{"go", "run", "./testdata/stdio_echo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+
+	deferMsg := MCPMessage{
+		JSONRPC: "2.0",
+		ID:      "defer-1",
+		Method:  "tools/call",
+		Params:  json.RawMessage(`{"name":"review/pending","arguments":{"ticket":"T-42"}}`),
+	}
+	out, err := g.ProcessRequest(deferMsg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deferRes map[string]any
+	if err := json.Unmarshal(out.Result, &deferRes); err != nil {
+		t.Fatal(err)
+	}
+	token, _ := deferRes["defer_token"].(string)
+	if strings.TrimSpace(token) == "" {
+		t.Fatalf("expected defer token, got %+v", deferRes)
+	}
+
+	statusMsg := MCPMessage{
+		JSONRPC: "2.0",
+		ID:      "status-1",
+		Method:  "faramesh/defer/status",
+		Params:  json.RawMessage(`{"defer_token":"` + token + `"}`),
+	}
+	statusOut, err := g.ProcessRequest(statusMsg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var statusRes map[string]any
+	if err := json.Unmarshal(statusOut.Result, &statusRes); err != nil {
+		t.Fatal(err)
+	}
+	if got := statusRes["status"]; got != "pending" {
+		t.Fatalf("pending status = %v, want pending", got)
+	}
+
+	resolveMsg := MCPMessage{
+		JSONRPC: "2.0",
+		ID:      "resolve-1",
+		Method:  "faramesh/defer/resolve",
+		Params:  json.RawMessage(`{"defer_token":"` + token + `","approved":true,"approver_id":"approver-1","reason":"approved"}`),
+	}
+	resolveOut, err := g.ProcessRequest(resolveMsg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolveRes map[string]any
+	if err := json.Unmarshal(resolveOut.Result, &resolveRes); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := resolveRes["ok"].(bool); !ok {
+		t.Fatalf("expected ok=true, got %+v", resolveRes)
+	}
+	if got := resolveRes["status"]; got != "approved" {
+		t.Fatalf("resolved status = %v, want approved", got)
+	}
+
+	retryMsg := MCPMessage{
+		JSONRPC: "2.0",
+		ID:      "defer-1",
+		Method:  "tools/call",
+		Params:  json.RawMessage(`{"name":"review/pending","arguments":{"ticket":"T-42"}}`),
+	}
+	retryOut, err := g.ProcessRequest(retryMsg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retryOut.Error != nil {
+		t.Fatalf("unexpected retry error: %+v", retryOut.Error)
+	}
+	var retryRes map[string]any
+	if err := json.Unmarshal(retryOut.Result, &retryRes); err != nil {
+		t.Fatalf("retry result: %s err=%v", string(retryOut.Result), err)
+	}
+	if retryRes["echo"] != true {
+		t.Fatalf("expected upstream echo after approved defer resume, got %+v", retryRes)
+	}
+}
+
 func TestStdioGateway_nonToolForwarded(t *testing.T) {
 	chdirMCP(t)
 	g, err := NewStdioGateway(testMCPPipeline(t), "agent-1", zap.NewNop(), []string{"go", "run", "./testdata/stdio_echo"})

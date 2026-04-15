@@ -1,0 +1,25 @@
+# Optional FPL sidecar; coordinator URLs and batch paths live in YAML.
+agent p2-multi-agent {
+  default deny
+
+  rules {
+    deny! shell/*
+      reason: "orchestrated agents must not invoke shell"
+
+    defer mcp/register_tools_batch
+      notify: "platform"
+      reason: "bulk MCP registration widens attack surface"
+
+    defer multi_agent/spawn_worker/*
+      notify: "platform"
+      reason: "parallel worker spawn requires approval"
+
+    defer multi_agent/delegate/*
+      notify: "platform"
+      reason: "sub-agent handoff requires approval"
+
+    permit search/*
+    permit http/get
+      reason: "internal coordinator hosts enforced in YAML"
+  }
+}

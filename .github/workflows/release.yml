@@ -24,11 +24,94 @@ jobs:
           echo "Release workflow syntax and conditions are valid."
           echo "Tag pushes (v*.*.*) run the full release pipeline."
 
+  corpus-matrix:
+    name: Corpus Coverage Matrix
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate and verify committed matrix
+        run: make corpus-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-coverage-matrix
+          path: |
+            tests/corpus/coverage-matrix.json
+            tests/corpus/coverage-matrix.md
+          retention-days: 1
+
+  corpus-harness:
+    name: Corpus Harness (${{ matrix.id }})
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: corpus-matrix
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: langchain-governed-smoke
+            entry: tests/corpus/framework-hooks/langchain-governed-smoke
+          - id: langchain-fpl
+            entry: tests/corpus/framework-hooks/langchain-fpl
+          - id: langgraph-fpl
+            entry: tests/corpus/framework-hooks/langgraph-fpl
+          - id: langchain-simple
+            entry: tests/corpus/framework-hooks/langchain-simple
+          - id: langgraph-single-agent
+            entry: tests/corpus/framework-hooks/langgraph-single-agent
+          - id: deepagents-governed
+            entry: tests/corpus/framework-hooks/deepagents-governed
+          - id: langgraph-multi-agent
+            entry: tests/corpus/framework-hooks/langgraph-multi-agent
+          - id: mcp-stdio-wrap
+            entry: tests/corpus/mcp-servers/mcp-stdio-wrap
+          - id: mcp-http-sse
+            entry: tests/corpus/mcp-servers/mcp-http-sse
+          - id: mcp-node-sdk
+            entry: tests/corpus/mcp-servers/mcp-node-sdk
+          - id: linux-interception
+            entry: tests/corpus/runtime-core/linux-interception
+          - id: defer-timeout-resume
+            entry: tests/corpus/runtime-core/defer-timeout-resume
+          - id: burst-rate-limits
+            entry: tests/corpus/runtime-core/burst-rate-limits
+          - id: policy-roundtrip
+            entry: tests/corpus/policy-core/policy-roundtrip
+          - id: socket-e2e-acceptance
+            entry: tests/corpus/runtime-core/socket-e2e-acceptance
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: sdk/node/package-lock.json
+      - name: Run corpus entry
+        run: bash scripts/run_corpus_entry.sh "${{ matrix.entry }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-harness-${{ matrix.id }}
+          path: .tmp/
+          if-no-files-found: ignore
+          retention-days: 1
+
   # ─── Build cross-compiled Go binaries ───────────────────────────────────────
   build-binaries:
     name: Build ${{ matrix.suffix }}
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: [corpus-matrix, corpus-harness]
 
     strategy:
       matrix:
@@ -161,7 +244,7 @@ jobs:
   github-release:
     name: GitHub Release
     runs-on: ubuntu-latest
-    needs: build-binaries
+    needs: [build-binaries, corpus-matrix, corpus-harness]
 
     steps:
       - uses: actions/checkout@v4
@@ -209,7 +292,7 @@ jobs:
 
           **Python SDK:**
           ```bash
-          pip install faramesh==${{ steps.version.outputs.version }}
+          pip install faramesh-sdk==${{ steps.version.outputs.version }}
           ```
 
           **Docker:**
@@ -300,7 +383,7 @@ jobs:
             desc "Unified governance plane for AI agents — pre-execution authorization, policy-as-code, tamper-evident audit trail"
             homepage "https://faramesh.dev"
             version "${VERSION}"
-            license "Elastic-2.0"
+            license "MIT"
 
             on_macos do
               on_arm do

@@ -55,11 +55,11 @@ faramesh serve --policy policy.yaml --grpc-port 19091
 
 Notes:
 
-- This adapter uses the internal handwritten gRPC service contract.
-- Use Faramesh in-repo client/service code for compatibility.
+- The daemon gRPC contract is defined in `api/v1/faramesh.proto`.
+- The current in-repo client keeps JSON codec compatibility for local usage.
 
 ## eBPF adapter
 
-- Linux-only path for syscall-level interception
+- Linux-only scaffold for future syscall-level interception
 - Not available on macOS/Windows
-- On unsupported hosts, fallback behavior is expected
+- Current build does not load BPF LSM programs; fallback behavior is expected

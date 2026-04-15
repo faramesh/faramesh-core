@@ -76,6 +76,8 @@ export type RiskLevel = "low" | "medium" | "high";
 
 export interface ClientConfig {
   baseUrl?: string;
+  /** Default agent id for the legacy class-based client and optional global defaults (Python: `ClientConfig.agent_id`). */
+  agentId?: string;
   token?: string;
   timeoutMs?: number;
   maxRetries?: number;

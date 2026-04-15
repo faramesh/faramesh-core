@@ -21,10 +21,12 @@ type InprocDPRQueueConfig struct {
 
 // InprocDPRQueue is a lightweight queue backed by a single worker goroutine.
 type InprocDPRQueue struct {
-	store  dpr.StoreBackend
-	ch     chan *dpr.Record
-	wg     sync.WaitGroup
-	stopCh chan struct{}
+	store     dpr.StoreBackend
+	ch        chan *dpr.Record
+	wg        sync.WaitGroup
+	mu        sync.RWMutex
+	closed    bool
+	closeOnce sync.Once
 }
 
 // NewInprocDPRQueue creates an in-process DPR queue.
@@ -33,24 +35,15 @@ func NewInprocDPRQueue(store dpr.StoreBackend, cfg InprocDPRQueueConfig) *Inproc
 		cfg.Buffer = 128
 	}
 	q := &InprocDPRQueue{
-		store:  store,
-		ch:     make(chan *dpr.Record, cfg.Buffer),
-		stopCh: make(chan struct{}),
+		store: store,
+		ch:    make(chan *dpr.Record, cfg.Buffer),
 	}
 	q.wg.Add(1)
 	go func() {
 		defer q.wg.Done()
-		for {
-			select {
-			case rec, ok := <-q.ch:
-				if !ok {
-					return
-				}
-				if rec != nil && q.store != nil {
-					_ = q.store.Save(rec)
-				}
-			case <-q.stopCh:
-				return
+		for rec := range q.ch {
+			if rec != nil && q.store != nil {
+				_ = q.store.Save(rec)
 			}
 		}
 	}()
@@ -62,6 +55,11 @@ func (q *InprocDPRQueue) EnqueueDPR(rec *dpr.Record) error {
 	if rec == nil {
 		return fmt.Errorf("nil DPR record")
 	}
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	if q.closed {
+		return fmt.Errorf("inproc DPR queue closed")
+	}
 	select {
 	case q.ch <- rec:
 		observe.Default.RecordDPREnqueue(true)
@@ -72,10 +70,14 @@ func (q *InprocDPRQueue) EnqueueDPR(rec *dpr.Record) error {
 	}
 }
 
-// Close stops the worker and drains no further records.
+// Close stops the worker after draining queued records.
 func (q *InprocDPRQueue) Close() error {
-	close(q.stopCh)
-	close(q.ch)
+	q.closeOnce.Do(func() {
+		q.mu.Lock()
+		q.closed = true
+		close(q.ch)
+		q.mu.Unlock()
+	})
 	q.wg.Wait()
 	return nil
 }

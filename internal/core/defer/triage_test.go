@@ -11,11 +11,12 @@ func TestTriageClassifyAndEscalateOnce(t *testing.T) {
 		DefaultPriority: PriorityNormal,
 		Rules: []TriageRule{
 			{
-				ToolPattern: "payment/*",
-				Priority:    PriorityCritical,
-				SLA:         120 * time.Millisecond,
-				AutoDeny:    false,
-				EscalateTo:  "pagerduty",
+				ToolPattern:   "payment/*",
+				Priority:      PriorityCritical,
+				SLA:           120 * time.Millisecond,
+				AutoDeny:      false,
+				AutoDenyAfter: 90 * time.Millisecond,
+				EscalateTo:    "pagerduty",
 			},
 		},
 	})
@@ -29,6 +30,9 @@ func TestTriageClassifyAndEscalateOnce(t *testing.T) {
 	}
 	if item.AutoDeny {
 		t.Fatalf("auto_deny = true, want false")
+	}
+	if item.AutoDenyAfter != 90*time.Millisecond {
+		t.Fatalf("auto_deny_after = %v, want %v", item.AutoDenyAfter, 90*time.Millisecond)
 	}
 	if item.EscalateTo != "pagerduty" {
 		t.Fatalf("escalate_to = %q, want pagerduty", item.EscalateTo)

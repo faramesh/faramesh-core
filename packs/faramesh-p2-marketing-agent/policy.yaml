@@ -1,0 +1,26 @@
+faramesh-version: "1.0"
+agent-id: "marketing-agent"
+default_effect: deny
+
+budget:
+  max_calls: 3000
+  on_exceed: defer
+
+rules:
+  - id: permit-reads
+    match:
+      tool: "http/get"
+    effect: permit
+    reason: "read-only campaign and analytics fetches"
+
+  - id: defer-bulk-outbound
+    match:
+      tool: "email/*"
+    effect: defer
+    reason: "bulk or template sends require approval"
+
+  - id: deny-shell
+    match:
+      tool: "shell/*"
+    effect: deny
+    reason: "marketing stack must not invoke shell"

@@ -32,9 +32,9 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/faramesh/faramesh-core/internal/core"
-	"github.com/faramesh/faramesh-core/internal/core/principal"
 	deferPkg "github.com/faramesh/faramesh-core/internal/core/defer"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
+	"github.com/faramesh/faramesh-core/internal/core/principal"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
 	"github.com/google/uuid"
 )
@@ -75,8 +75,8 @@ func NewServer(cfg Config) *Server {
 			Timeout:           10 * time.Second,
 		}),
 		grpc.MaxRecvMsgSize(4 * 1024 * 1024), // 4MB
-		// This service uses plain Go structs, not generated protobuf messages.
-		// Force JSON codec so manual clients can marshal/unmarshal safely.
+		// Keep JSON transport compatibility even though the service contract is
+		// now generated from protobuf definitions.
 		grpc.ForceServerCodec(jsonCodec{}),
 	}
 	if cfg.TLSConfig != nil {
@@ -151,7 +151,7 @@ func (s *Server) Govern(ctx context.Context, req *GovernRequest) (*GovernRespons
 		ToolID:             req.ToolId,
 		Args:               args,
 		Principal:          resolvedPrincipal,
-		ExecutionTimeoutMS: req.ExecutionTimeoutMs,
+		ExecutionTimeoutMS: int(req.ExecutionTimeoutMs),
 		Timestamp:          time.Now(),
 		InterceptAdapter:   "daemon",
 	}

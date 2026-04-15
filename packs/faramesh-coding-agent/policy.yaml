@@ -1,0 +1,61 @@
+faramesh-version: "1.0"
+agent-id: "coding-agent"
+default_effect: deny
+
+tools:
+  shell/exec:
+    tags:
+      - "risk:high"
+  file/write:
+    tags:
+      - "risk:medium"
+  credential/broker:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+
+rules:
+  - id: deny-destructive-shell
+    match:
+      tool: "shell/exec"
+      when: "args.cmd != nil && args.cmd matches \"rm -rf|git push --force|terraform destroy\""
+    effect: deny
+    reason: "destructive shell commands are blocked"
+
+  - id: defer-shell-exec
+    match:
+      tool: "shell/exec"
+      when: "args.cmd != nil && args.cmd matches \"git|npm|pnpm|go test|python|docker\""
+    effect: defer
+    reason: "shell execution should be reviewed in coding workflows"
+
+  - id: permit-readonly-shell
+    match:
+      tool: "shell/exec"
+      when: "args.cmd != nil && args.cmd matches \"ls|pwd|cat|rg|git status\""
+    effect: permit
+
+  - id: permit-file-read
+    match:
+      tool: "file/read/*"
+      when: "true"
+    effect: permit
+
+  - id: defer-file-write
+    match:
+      tool: "file/write/*"
+      when: "true"
+    effect: defer
+    reason: "file writes should be reviewed until the repo is profiled"
+
+  - id: permit-search
+    match:
+      tool: "search/*"
+      when: "true"
+    effect: permit
+
+  - id: permit-tools-call
+    match:
+      tool: "tools/call"
+      when: "true"
+    effect: permit

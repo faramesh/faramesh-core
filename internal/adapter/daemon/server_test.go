@@ -425,7 +425,7 @@ func TestWaitForApprovalTimeoutAllowsLateApprovalResolution(t *testing.T) {
 		t.Fatalf("status after timeout = (%q, %v), want (%q, true)", st, pending, deferwork.StatusPending)
 	}
 
-	if err := wf.Resolve(token, true, "late approval"); err != nil {
+	if err := wf.Resolve(token, true, "", "late approval"); err != nil {
 		t.Fatalf("late Resolve() error = %v", err)
 	}
 
@@ -473,7 +473,7 @@ func TestWaitForApprovalTimeoutAllowsLateDenialResolution(t *testing.T) {
 		t.Fatalf("status after timeout = (%q, %v), want (%q, true)", st, pending, deferwork.StatusPending)
 	}
 
-	if err := wf.Resolve(token, false, "late denial"); err != nil {
+	if err := wf.Resolve(token, false, "", "late denial"); err != nil {
 		t.Fatalf("late Resolve() error = %v", err)
 	}
 
