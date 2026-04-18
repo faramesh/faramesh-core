@@ -24,6 +24,7 @@ func main() {
 	if commit != "" {
 		rootCmd.Version = fmt.Sprintf("%s (%s)", version, commit)
 	}
+	configureCommandSurface()
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
