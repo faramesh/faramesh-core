@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -47,6 +48,8 @@ var (
 	runPolicy     string
 	runEnforce    string
 	runBrokerOn   bool
+	runAutoStart  bool
+	runAutoMode   string
 	runAgentID    string
 	runNoSeccomp  bool
 	runNoLandlock bool
@@ -59,6 +62,8 @@ func init() {
 	runCmd.Flags().StringVar(&runPolicy, "policy", "", "policy path (set FARAMESH_POLICY_PATH)")
 	runCmd.Flags().StringVar(&runEnforce, "enforce", "auto", "enforcement level: auto|full|minimal|none")
 	runCmd.Flags().BoolVar(&runBrokerOn, "broker", false, "enable credential broker (strip ambient API keys)")
+	runCmd.Flags().BoolVar(&runAutoStart, "auto-start", true, "auto-start runtime daemon when socket is unreachable")
+	runCmd.Flags().StringVar(&runAutoMode, "auto-start-mode", "enforce", "daemon mode used by --auto-start: enforce|shadow|audit")
 	runCmd.Flags().StringVar(&runAgentID, "agent-id", "", "agent identity injected as FARAMESH_AGENT_ID (default: inferred from command)")
 	runCmd.Flags().BoolVar(&runNoSeccomp, "no-seccomp", false, "skip seccomp-BPF installation")
 	runCmd.Flags().BoolVar(&runNoLandlock, "no-landlock", false, "skip Landlock filesystem restrictions")
@@ -107,6 +112,41 @@ func runRunE(_ *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "%s\n", b)
 	}
 
+	childSocket := resolveChildSocket(os.Environ())
+	if !socketStatusOK(childSocket) {
+		if !runAutoStart {
+			return fmt.Errorf("daemon socket %s is not reachable (run faramesh up or faramesh start first)", childSocket)
+		}
+
+		autoPolicyPath := policyPath
+		if strings.TrimSpace(autoPolicyPath) == "" {
+			autoPolicyPath = detectDefaultPolicyPath()
+			if strings.TrimSpace(autoPolicyPath) == "" {
+				return fmt.Errorf("daemon socket %s is not reachable and no local policy file was found for auto-start; provide --policy or run faramesh up --policy <path>", childSocket)
+			}
+		}
+
+		result, err := ensureDaemonStarted(daemonStartOptions{
+			PolicyPath: autoPolicyPath,
+			Mode:       runAutoMode,
+			SocketPath: childSocket,
+		})
+		if err != nil {
+			return fmt.Errorf("auto-start runtime: %w", err)
+		}
+		if result.AlreadyRunning {
+			fmt.Fprintf(os.Stderr, "Faramesh runtime detected on %s (pid=%d)\n", result.State.SocketPath, result.State.DaemonPID)
+		} else {
+			fmt.Fprintf(os.Stderr, "Faramesh runtime auto-started on %s (pid=%d)\n", result.State.SocketPath, result.State.DaemonPID)
+		}
+	}
+
+	if runBrokerOn || runEnforce == "full" {
+		if err := ensureBrokerModeReady(childSocket); err != nil {
+			return err
+		}
+	}
+
 	name, err := exec.LookPath(args[0])
 	if err != nil {
 		return err
@@ -142,6 +182,66 @@ type enforcementReport struct {
 	proxyEnv                bool
 	proxyEnvMethod          string
 	trustLevel              string
+}
+
+type brokerModeDiagnostics struct {
+	RouterConfigured bool                       `json:"router_configured"`
+	Backends         []string                   `json:"backends"`
+	FallbackBackend  string                     `json:"fallback_backend"`
+	ToolCount        int                        `json:"tool_count"`
+	Tools            []brokerModeToolDiagnostic `json:"tools"`
+}
+
+type brokerModeToolDiagnostic struct {
+	ToolID        string `json:"tool_id"`
+	BrokerEnabled bool   `json:"broker_enabled"`
+	Backend       string `json:"backend"`
+	UsesFallback  bool   `json:"uses_fallback"`
+}
+
+func ensureBrokerModeReady(socketPath string) error {
+	raw, err := daemonSocketRequestAt(socketPath, map[string]any{
+		"type": "credential",
+		"op":   "broker_map",
+	})
+	if err != nil {
+		if daemonHTTPFallback && strings.TrimSpace(daemonAddr) != "" {
+			raw, err = daemonGet("/api/v1/credential/map")
+		}
+		if err != nil {
+			return fmt.Errorf("broker mode readiness check failed: %w", err)
+		}
+	}
+
+	var diag brokerModeDiagnostics
+	if err := json.Unmarshal(raw, &diag); err != nil {
+		return fmt.Errorf("broker mode readiness returned invalid diagnostics: %w", err)
+	}
+
+	if !diag.RouterConfigured {
+		return fmt.Errorf("broker mode requested but credential router is not configured on the runtime")
+	}
+
+	if len(diag.Backends) == 0 {
+		return fmt.Errorf("broker mode requested but no credential backends are registered")
+	}
+
+	envFallback := strings.EqualFold(strings.TrimSpace(diag.FallbackBackend), "env")
+	offenders := make([]string, 0)
+	for _, tool := range diag.Tools {
+		if !tool.BrokerEnabled {
+			continue
+		}
+		if tool.UsesFallback && strings.EqualFold(strings.TrimSpace(tool.Backend), "env") {
+			offenders = append(offenders, tool.ToolID)
+		}
+	}
+
+	if envFallback && len(offenders) > 0 {
+		return fmt.Errorf("broker mode blocked: env fallback is active for broker-enabled tools (%s); configure non-env credential routes/backends before running with --broker", strings.Join(offenders, ", "))
+	}
+
+	return nil
 }
 
 func applyRunRuntimeWiring(env []string, det *runtimeenv.DetectedEnvironment, cwd string, childArgs []string, r *enforcementReport) []string {

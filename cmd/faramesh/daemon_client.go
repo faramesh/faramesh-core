@@ -150,6 +150,21 @@ func daemonSocketRequest(msg map[string]any) (json.RawMessage, error) {
 	return json.RawMessage(raw), nil
 }
 
+func daemonSocketRequestAt(socketPath string, msg map[string]any) (json.RawMessage, error) {
+	socketPath = strings.TrimSpace(socketPath)
+	if socketPath == "" || socketPath == daemonSocket {
+		return daemonSocketRequest(msg)
+	}
+
+	original := daemonSocket
+	daemonSocket = socketPath
+	defer func() {
+		daemonSocket = original
+	}()
+
+	return daemonSocketRequest(msg)
+}
+
 func readDaemonResponse(resp *http.Response) (json.RawMessage, error) {
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
