@@ -1,12 +1,18 @@
 # Run And Monitor
 
-## Start daemon
+## Start runtime
+
+```bash
+faramesh up --policy policy.yaml
+```
+
+Advanced operator runtime path (optional):
 
 ```bash
 faramesh serve --policy policy.yaml
 ```
 
-Useful flags:
+Advanced flags for explicit infrastructure control:
 
 - `--data-dir`: where WAL/DB files are stored
 - `--socket`: Unix socket path for SDK adapter
@@ -38,16 +44,27 @@ Filter by agent:
 faramesh audit tail --agent my-agent
 ```
 
+## Resolve deferred actions
+
+```bash
+faramesh approvals
+faramesh approvals watch
+faramesh approvals show <approval-id>
+faramesh approvals history --agent <agent-id>
+faramesh approvals approve <approval-id>
+faramesh approvals deny <approval-id>
+```
+
 ## Observe-first commands
 
 Use these to baseline before moving from shadow to enforce:
 
 ```bash
 faramesh discover --source ./
-faramesh attach --agent-id my-agent --cmd "python agent.py"
-faramesh coverage --agent-id my-agent
-faramesh gaps --agent-id my-agent
-faramesh suggest --agent-id my-agent
+faramesh attach --cwd . --observation-window 30s
+faramesh coverage
+faramesh gaps
+faramesh suggest
 ```
 
 If you installed a policy pack, inspect and switch mode directly:
@@ -87,11 +104,29 @@ This keeps one telemetry endpoint while supporting multiple backends.
 ## Reload policy without restart
 
 ```bash
+faramesh policy reload
+```
+
+Advanced operator path when managing a non-default daemon data directory:
+
+```bash
 faramesh policy reload --data-dir /var/lib/faramesh
 ```
 
 ## See deny reason details
 
 ```bash
-faramesh explain --last-deny --db /var/lib/faramesh/faramesh.db --policy /etc/faramesh/policy.yaml
+faramesh audit show <action-id>
+faramesh audit trace --action-id <action-id>
+faramesh explain <action-id>
+faramesh explain approval <approval-id>
 ```
+
+## Typical triage sequence
+
+1. Keep `faramesh audit tail` open.
+2. Capture `action_id` when an action is denied or deferred.
+3. Run `faramesh audit show <action-id>` for quick evidence context.
+4. Run `faramesh explain <action-id>` for full policy causality.
+5. If deferred, resolve with `faramesh approvals approve|deny <approval-id>`.
+6. Run `faramesh explain approval <approval-id>` to verify end-to-end approval linkage.
