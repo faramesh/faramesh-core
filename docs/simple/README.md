@@ -6,12 +6,16 @@ Last refreshed: 2026-04-15
 
 Recommended rollout flow in this repo:
 
-1. `faramesh discover`
-2. `faramesh attach`
-3. `faramesh coverage`
-4. `faramesh gaps`
-5. `faramesh suggest`
-6. `faramesh pack shadow` -> `faramesh pack enforce`
+1. `faramesh wizard first-run`
+2. `faramesh up --policy policy.yaml`
+3. `faramesh run --broker -- python your_agent.py`
+4. `faramesh approvals`
+5. `faramesh explain <action-id>`
+6. `faramesh audit tail`
+7. `faramesh down`
+8. `faramesh discover` -> `faramesh attach`
+9. `faramesh coverage` -> `faramesh gaps` -> `faramesh suggest`
+10. `faramesh pack shadow` -> `faramesh pack enforce`
 
 Read in this order:
 

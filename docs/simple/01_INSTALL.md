@@ -1,6 +1,18 @@
 # Install (Simple)
 
-## Option A: Build from source
+## Option A: Homebrew (recommended)
+
+```bash
+brew install faramesh/tap/faramesh
+```
+
+## Option B: Go toolchain
+
+```bash
+go install github.com/faramesh/faramesh-core/cmd/faramesh@latest
+```
+
+## Option C: Build from source
 
 ```bash
 git clone https://github.com/faramesh/faramesh-core.git
@@ -14,7 +26,7 @@ Run it:
 ./faramesh --help
 ```
 
-## Option B: Put it on PATH
+## Option D: Put it on PATH
 
 ```bash
 sudo install -m 0755 faramesh /usr/local/bin/faramesh
@@ -25,6 +37,12 @@ faramesh --help
 
 ```bash
 faramesh --version
+```
+
+## First command after install
+
+```bash
+faramesh wizard first-run
 ```
 
 If `--version` is not available in your shell, run:

@@ -18,11 +18,10 @@ import (
 
 var serveCmd = &cobra.Command{
 	Use:   "serve",
-	Short: "Start the Faramesh governance daemon",
-	Long: `faramesh serve starts the governance daemon. Agents connect via the
-Unix socket (default: /tmp/faramesh.sock) to submit tool calls and receive
-PERMIT/DENY/DEFER decisions. The daemon loads the policy file, opens the WAL
-and SQLite DPR store, and starts accepting connections.
+	Short: "Start the Faramesh governance runtime service",
+	Long: `faramesh serve starts the governance runtime service. Agents submit tool calls
+and receive PERMIT/DENY/DEFER decisions. The runtime loads policy, writes
+tamper-evident DPR records, and serves governance control APIs.
 
 To stream DPR records to Faramesh Horizon, authenticate first:
 
@@ -116,7 +115,7 @@ func init() {
 	serveCmd.Flags().StringVar(&servePolicyURL, "policy-url", "", "HTTP/HTTPS URL for policy YAML (mutually exclusive with --policy)")
 	serveCmd.Flags().DurationVar(&servePolicyPollInterval, "policy-poll-interval", 30*time.Second, "poll interval for --policy-url hot reload checks")
 	serveCmd.MarkFlagsMutuallyExclusive("policy", "policy-url")
-	serveCmd.Flags().StringVar(&serveDataDir, "data-dir", "", "directory for WAL and DPR SQLite (default: $TMPDIR/faramesh)")
+	serveCmd.Flags().StringVar(&serveDataDir, "data-dir", "", "directory for WAL and DPR SQLite (default: ~/.faramesh/runtime/data)")
 	serveCmd.Flags().StringVar(&serveSocket, "socket", sdk.SocketPath, "Unix socket path")
 	serveCmd.Flags().StringVar(&serveSlack, "slack-webhook", "", "Slack webhook URL for DEFER notifications")
 	serveCmd.Flags().StringVar(&serveLogLevel, "log-level", "info", "log level: debug|info|warn|error")

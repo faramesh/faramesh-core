@@ -41,34 +41,55 @@ rules:
 faramesh policy validate policy.yaml
 ```
 
-## 3) Start daemon
+## 3) Enable credential sequestration defaults
 
 ```bash
-faramesh serve --policy policy.yaml
+faramesh credential enable --policy policy.yaml
+faramesh credential status
 ```
 
-## 4) In another terminal, stream decisions
+`credential status` now shows a summary-first readiness view by default.
+
+## 4) Start runtime
+
+```bash
+faramesh up --policy policy.yaml
+```
+
+## 5) In another terminal, stream live decisions
 
 ```bash
 faramesh audit tail
 ```
 
-## 5) Run demo traffic
+## 6) Run your agent behind governance
+
+```bash
+faramesh run --broker -- python your_agent.py
+```
+
+Optional smoke test (built-in synthetic traffic):
 
 ```bash
 faramesh demo
 ```
 
-## 6) Handle deferred actions
+## 7) Handle deferred actions
 
 ```bash
-faramesh agent approve <defer-token>
+faramesh approvals
+faramesh approvals show <approval-id>
+faramesh approvals approve <approval-id>
 # or
-faramesh agent deny <defer-token>
+faramesh approvals deny <approval-id>
 ```
 
-## 7) Explain a deny
+## 8) Explain and trace decisions
 
 ```bash
-faramesh explain --last-deny
+faramesh audit show <action-id>
+faramesh explain <action-id>
+faramesh explain approval <approval-id>
+faramesh explain agent <agent-id>
+faramesh explain run <run-or-session-id>
 ```

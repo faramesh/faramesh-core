@@ -84,19 +84,19 @@ Most "AI governance" tools add a second AI to watch the first. That's probabilit
 ## Install
 
 ```bash
-# curl (fastest)
-curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh | bash
-
 # Homebrew
 brew install faramesh/tap/faramesh
+
+# Local installer script from repository checkout
+./install.sh
+
+# Go toolchain
+go install github.com/faramesh/faramesh-core/cmd/faramesh@latest
 
 # npm package
 npx @faramesh/cli@latest setup flow
 
 # Released from GitHub Actions via npm trusted publishing (OIDC); no long-lived npm publish token is needed.
-
-# Go toolchain
-go install github.com/faramesh/faramesh-core/cmd/faramesh@latest
 
 # Source checkout (single setup entrypoint)
 make setup
@@ -104,28 +104,29 @@ make setup
 
 ## Setup Lifecycle (Source Checkout)
 
-For local repositories and existing agent stacks (LangChain, LangGraph, DeepAgents, MCP), use one command surface:
+For local repositories and existing agent stacks (LangChain, LangGraph, DeepAgents, MCP), start from the guided product flow:
 
 ```bash
-# Canonical setup command (guided flow)
-faramesh setup flow
-```
-
-Single-file guided flow (install + optional cloud pair + discover/attach/coverage/gaps/suggest + run):
-
-```bash
-faramesh setup flow
+# Canonical setup command (guided first-run wizard)
+faramesh wizard first-run
 ```
 
 Key lifecycle commands:
 
 ```bash
-# Guided governance startup with policy + runtime profile prompts
-faramesh onboard --policy policies/default.fpl
+# Guided first-run setup
+faramesh wizard first-run
 
 # Runtime controls
-faramesh status
-faramesh stop
+faramesh up --policy policies/default.fpl
+faramesh run --broker -- python my_agent.py
+faramesh approvals
+faramesh explain <action-id>
+faramesh audit tail
+faramesh down
+
+# Optional explicit credential setup
+faramesh credential enable --policy policies/default.fpl
 
 # Detach wiring from an existing project
 faramesh offboard --path /path/to/agent
@@ -155,12 +156,6 @@ faramesh discover
 faramesh attach
 ```
 
-Tip: use a deterministic data path when onboarding a repo in CI or scripted environments.
-
-```bash
-faramesh attach --data-dir ./.faramesh
-```
-
 3. Check what is covered and what is still missing.
 
 ```bash
@@ -177,7 +172,7 @@ faramesh suggest --out suggested-policy.yaml
 5. Run your actual agent under governance enforcement.
 
 ```bash
-faramesh run -- python agent.py
+faramesh run --broker -- python agent.py
 ```
 
 6. Move to managed pack lifecycle once baseline governance looks clean.
@@ -307,7 +302,7 @@ All 13 frameworks are auto-patched at runtime — zero code changes required.
 ### OpenClaw
 
 ```bash
-faramesh run -- node openclaw/gateway.js
+faramesh run --broker -- node openclaw/gateway.js
 ```
 
 Faramesh patches the OpenClaw tool dispatch, strips credentials from `~/.openclaw/`, and governs every tool call through the policy engine. The agent never sees raw API keys.
@@ -315,7 +310,7 @@ Faramesh patches the OpenClaw tool dispatch, strips credentials from `~/.opencla
 ### NemoClaw
 
 ```bash
-faramesh run --enforce full -- python -m nemoclaw.serve --config agent.yaml
+faramesh run --broker --enforce full -- python -m nemoclaw.serve --config agent.yaml
 ```
 
 NemoClaw runs inside Faramesh's sandbox. On Linux, the kernel sandbox (seccomp-BPF, Landlock, network namespace) prevents the agent from bypassing governance.
@@ -323,7 +318,7 @@ NemoClaw runs inside Faramesh's sandbox. On Linux, the kernel sandbox (seccomp-B
 ### Deep Agents (LangChain)
 
 ```bash
-faramesh run -- python -m deep_agents.main
+faramesh run --broker -- python -m deep_agents.main
 ```
 
 Faramesh patches `BaseTool.run()` and injects `AgentMiddleware` into the LangGraph execution loop. Multi-agent delegation is tracked with cryptographic tokens — the supervisor's permissions are the ceiling for any sub-agent.
@@ -361,41 +356,36 @@ instance and securely prompt for a key so it is written directly to brokered
 Vault storage.
 
 ```bash
-# 1) Provision local Vault (writes state under ~/.faramesh/local-vault)
-faramesh credential vault up
+# 1) Configure global credential sequestration defaults
+faramesh credential enable --policy policies/payment-bot.fpl
 
-# 2) Prompt for key and store it at secret/data/faramesh/stripe/refund
-faramesh credential vault put stripe/refund
+# 2) Start runtime with persisted credential profile
+faramesh up --policy policies/payment-bot.fpl
 
-# 3) Start daemon with Vault broker backend
-source ~/.faramesh/local-vault/vault.env
-faramesh serve \
-  --policy policies/payment-bot.fpl \
-  --vault-addr "$FARAMESH_CREDENTIAL_VAULT_ADDR" \
-  --vault-token "$FARAMESH_CREDENTIAL_VAULT_TOKEN" \
-  --vault-mount secret
-
-# 4) Run agent with ambient secret stripping
+# 3) Run agent with ambient secret stripping
 faramesh run --broker --agent-id payment-bot -- python your_agent.py
 ```
+
+Advanced operator path: pass explicit backend and provider mappings only when your environment needs manual routing controls.
 
 ### External Vault Integration
 
 ```bash
-faramesh credential vault put stripe/refund \
-  --external \
+faramesh credential enable \
+  --policy policies/payment-bot.fpl \
+  --backend vault \
   --vault-addr https://vault.company.internal:8200 \
-  --vault-token "$VAULT_TOKEN" \
-  --vault-mount secret
+  --vault-token "$VAULT_TOKEN"
 ```
 
-Use `faramesh credential vault status` to verify health and
+Use `faramesh credential status` to verify global backend/routing health and
 `faramesh credential vault down` to stop locally provisioned dev Vault.
 
 ## Workload Identity (SPIFFE/SPIRE)
 
 Faramesh can consume SPIFFE workload identity at runtime and expose identity controls in the CLI.
 
+- `faramesh identity status` shows identity readiness (whoami, trust level, verify) in one command.
 - `faramesh serve --spiffe-socket <path>` enables SPIFFE workload identity resolution from the Workload API socket.
 - `faramesh identity verify --spiffe spiffe://example.org/agent` verifies workload identity state.
 - `faramesh identity trust --domain example.org --bundle /path/to/bundle.pem` configures trust domain and bundle.
@@ -509,40 +499,68 @@ faramesh-core/
 
 ## CLI Reference
 
-See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for all 40+ commands. High-usage commands:
+See the [full CLI reference](https://faramesh.dev/docs/cli-reference) for full command documentation.
 
-| Command | What it does |
-|---------|-------------|
-| `faramesh discover` | Statically discover likely governance surfaces in a project |
-| `faramesh attach` | Attach in observe-first shadow mode and bootstrap readiness |
+The public Faramesh help surface is tiered:
+
+- Core commands: default product path for day-1 usage and everyday governance.
+- Operator commands: powerful operational workflows for onboarding, incident response, approvals, and runtime control.
+- Advanced commands: expert and multi-system workflows.
+- Internal commands: engineering-only surfaces, intentionally hidden from help.
+
+### Core Top-Level Commands (Visible)
+
+| Command | Primary role |
+|---------|--------------|
+| `faramesh up` | Start the product stack (runtime + visibility + approvals UI when available) |
+| `faramesh down` | Stop the product stack cleanly |
+| `faramesh status` | Show daemon and runtime health |
+| `faramesh run -- <cmd>` | Run an agent process under governance enforcement |
+| `faramesh approvals` | List, approve, deny, and open approvals UI |
+| `faramesh policy` | Validate, compile, and test policies |
+| `faramesh audit` | Tail, verify, inspect, and export evidence |
+| `faramesh auth` | Login/logout/status for platform auth |
+| `faramesh credential` | Broker and vault credential lifecycle |
+| `faramesh wizard` | Guided first-run and enterprise setup flow |
+
+### Operator Top-Level Commands (Visible)
+
+| Command | Primary role |
+|---------|--------------|
+| `faramesh start` | Start runtime-only process (operator compatibility path) |
+| `faramesh stop` | Stop runtime-only process |
+| `faramesh serve` | Run daemon directly with explicit runtime options |
+| `faramesh setup` | Guided setup and lifecycle management |
+| `faramesh onboard` | Onboarding readiness checks and bootstrap guidance |
+| `faramesh offboard` | Remove Faramesh runtime wiring from projects |
+| `faramesh discover` | Find likely governance surfaces in a project |
+| `faramesh attach` | Attach in observe-first mode |
 | `faramesh coverage` | Report static/runtime governance coverage |
 | `faramesh gaps` | Report uncovered governance surfaces |
-| `faramesh suggest` | Generate a starter policy from observed inventory |
-| `faramesh run -- <cmd>` | Govern an agent with the full enforcement stack |
-| `faramesh pack search` | Search policy packs |
-| `faramesh pack install <pack-ref>` | Install a policy pack |
-| `faramesh pack status <pack-ref>` | Show installed mode and policy artifact paths |
-| `faramesh pack shadow <pack-ref>` | Switch an installed pack to observe-first shadow mode |
-| `faramesh pack enforce <pack-ref>` | Switch an installed pack to enforce mode |
-| `faramesh policy validate <path>` | Validate an FPL or YAML policy |
-| `faramesh policy compile <text>` | Compile natural language to FPL |
-| `faramesh policy simulate` | Simulate a policy decision with deterministic trace output |
-| `faramesh policy backtest` | Replay deterministic policy fixtures and fail on regressions |
-| `faramesh audit tail` | Stream live decisions |
-| `faramesh audit verify <path>` | Verify DPR chain integrity (WAL preferred, SQLite fallback) |
-| `faramesh audit wal-inspect` | Report FWAL frame-version distribution |
-| `faramesh audit export` | Export DPR records for compliance evidence workflows |
-| `faramesh agent approve <token>` | Approve a deferred action |
-| `faramesh agent kill <id>` | Emergency kill switch |
-| `faramesh credential register <name>` | Register a credential with the broker |
-| `faramesh credential vault up` | Provision local dev Vault for brokered secrets |
-| `faramesh credential vault put <tool-id>` | Prompt for key and store at broker Vault path |
-| `faramesh credential vault status` | Check Vault health and local provisioning state |
-| `faramesh credential vault down` | Stop local dev Vault provisioned by Faramesh |
-| `faramesh session open` | Open a governance session |
-| `faramesh offboard --path <dir>` | Automatically remove Faramesh runtime wiring from agent code (dry-run by default) |
-| `faramesh incident declare <desc>` | Declare a governance incident |
-| `faramesh mcp wrap <server>` | Wrap an MCP server with governance |
+| `faramesh suggest` | Generate starter policy from observed inventory |
+| `faramesh agent` | Agent control workflows (pending/history/kill/unkill) |
+| `faramesh identity` | Workload and agent identity controls |
+| `faramesh incident` | Incident declaration/isolation workflows |
+| `faramesh provenance` | Provenance attestations and drift checks |
+| `faramesh pack` | Search/install/manage policy packs |
+| `faramesh mcp` | Wrap MCP servers with governance |
+
+### Advanced Top-Level Commands (Visible)
+
+| Command | Primary role |
+|---------|--------------|
+| `faramesh detect` | Detect local framework/runtime characteristics |
+| `faramesh init` | Scaffold baseline Faramesh files in a project |
+| `faramesh explain` | Explain a decision record in detail |
+| `faramesh compliance` | Export compliance-oriented artifacts |
+| `faramesh fleet` | Multi-instance fleet operations |
+| `faramesh delegate` | Agent-to-agent delegation chains |
+| `faramesh federation` | Cross-organization federation and trust relationships |
+| `faramesh schedule` | Scheduled tool execution workflows |
+
+### Internal Top-Level Commands (Hidden)
+
+`chaos-test`, `compensate`, `demo`, `hub`, `model`, `ops`, `sbom`, `session`, `sign`, `verify`
 
 Operator note: set `faramesh serve --dpr-hmac-key <secret>` from stable secret storage in production. If omitted, Faramesh generates an ephemeral DPR HMAC key per daemon run, so HMAC signatures are not stable across restarts.
 

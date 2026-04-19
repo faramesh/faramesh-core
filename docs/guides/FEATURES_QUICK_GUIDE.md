@@ -52,21 +52,22 @@ You do not need to read everything to get started.
 
 | Feature | What it does | Quick command | Learn more |
 |---|---|---|---|
-| Install | Installs Faramesh | `curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh \| bash` | [01_INSTALL.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/01_INSTALL.md) |
-| Setup lifecycle | Start, stop, status, offboard | `bash scripts/faramesh_setup.sh start` | [00_START_HERE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/00_START_HERE.md) |
+| Install | Installs Faramesh | `brew install faramesh/tap/faramesh` | [01_INSTALL.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/01_INSTALL.md) |
+| Setup lifecycle | Guided first-run + runtime controls | `faramesh wizard first-run` | [00_START_HERE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/00_START_HERE.md) |
 | Agent governance run | Checks every tool call by policy | `faramesh run -- python your_agent.py` | [02_QUICKSTART.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/02_QUICKSTART.md) |
 | LangChain usage | Governs LangChain tool calls | `faramesh run -- python your_langchain_agent.py` | [LANGCHAIN_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/frameworks/LANGCHAIN_QUICK_GUIDE.md) |
 | LangGraph usage | Governs LangGraph graph/tool actions | `faramesh run -- python your_langgraph_app.py` | [LANGGRAPH_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/frameworks/LANGGRAPH_QUICK_GUIDE.md) |
 | Deep Agents usage | Governs deep-agent execution and delegation | `faramesh run -- python -m deep_agents.main` | [DEEP_AGENTS_QUICK_GUIDE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/frameworks/DEEP_AGENTS_QUICK_GUIDE.md) |
 | Policy writing (FPL) | Lets you define rules | `faramesh policy validate examples/starter.fpl` | [03_POLICY_SIMPLE.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/03_POLICY_SIMPLE.md) |
 | Live monitoring | Shows permit/deny/defer in real time | `faramesh audit tail` | [04_RUN_AND_MONITOR.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/04_RUN_AND_MONITOR.md) |
-| Human approvals | Approve deferred actions | `faramesh agent approve <token>` | [05_APPROVALS.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/05_APPROVALS.md) |
+| Human approvals | Review and resolve deferred actions | `faramesh approvals` | [05_APPROVALS.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/05_APPROVALS.md) |
+| Action explain | Explain what happened for one governed action | `faramesh explain <action-id>` | [04_RUN_AND_MONITOR.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/04_RUN_AND_MONITOR.md) |
 | MCP governance | Governs MCP `tools/call` | `faramesh mcp wrap -- node server.js` | [MCP_INTERCEPTION_GOVERNANCE_PLAN.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/MCP_INTERCEPTION_GOVERNANCE_PLAN.md) |
 | Runtime adapters | Connects to common agent runtime paths | `faramesh run -- <your command>` | [06_ADAPTERS.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/06_ADAPTERS.md) |
-| Production setup | Adds stronger controls | `bash scripts/faramesh_setup.sh onboard --policy policy.fpl` | [07_PRODUCTION_SETUP.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/07_PRODUCTION_SETUP.md) |
+| Production setup | Adds stronger controls | `faramesh onboard --policy policy.fpl` | [07_PRODUCTION_SETUP.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/07_PRODUCTION_SETUP.md) |
 | Troubleshooting | Fixes common issues fast | `faramesh audit verify` | [08_TROUBLESHOOTING.md](https://github.com/faramesh/faramesh-core/blob/main/docs/simple/08_TROUBLESHOOTING.md) |
-| Credential broker | Keeps secrets away from agent env | `faramesh credential vault up` | [Docs Index](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
-| Workload identity | Uses SPIFFE identity checks | `faramesh identity verify --spiffe spiffe://example.org/agent` | [Docs Index](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| Credential broker | Keeps secrets away from agent env | `faramesh credential enable` | [Docs Index](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
+| Workload identity | Uses SPIFFE identity checks | `faramesh identity status` | [Docs Index](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
 | Observability | Exposes metrics endpoint | `faramesh serve --metrics-port 9090` | [Docs Index](https://github.com/faramesh/faramesh-core/blob/main/docs/README.md) |
 | Network hardening | Adds governed proxy and rollout controls | `faramesh serve --proxy-port 18080 --proxy-forward` | [NETWORK_HARDENING_CANARY_RUNBOOK.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/NETWORK_HARDENING_CANARY_RUNBOOK.md) |
 | Chain exfil hardening | Tests and blocks cross-step exfil patterns | see runbook stages | [CHAIN_EXFIL_HARDENING_PLAYBOOK.md](https://github.com/faramesh/faramesh-core/blob/main/docs/guides/CHAIN_EXFIL_HARDENING_PLAYBOOK.md) |
@@ -104,7 +105,7 @@ faramesh mcp wrap -- node your-mcp-server.js
 ### Existing repo integration
 
 ```bash
-bash scripts/faramesh_setup.sh start
+faramesh wizard first-run
 ```
 
 ## Simple first-day rollout plan

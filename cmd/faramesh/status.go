@@ -12,7 +12,7 @@ import (
 
 var statusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Show Faramesh daemon status",
+	Short: "Show Faramesh runtime status",
 	Args:  cobra.NoArgs,
 	RunE:  runStatus,
 }
@@ -41,14 +41,14 @@ func runStatus(_ *cobra.Command, _ []string) error {
 		UptimeSeconds  int64  `json:"uptime_seconds"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return fmt.Errorf("decode daemon response: %w", err)
+		return fmt.Errorf("decode runtime response: %w", err)
 	}
 
 	bold := color.New(color.Bold)
 	green := color.New(color.FgGreen)
 	red := color.New(color.FgRed)
 
-	bold.Fprintln(os.Stdout, "Faramesh Daemon Status")
+	bold.Fprintln(os.Stdout, "Faramesh Runtime Status")
 	fmt.Println()
 
 	check := func(ok bool, label string) {
@@ -59,13 +59,13 @@ func runStatus(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	check(resp.Running, "Daemon running")
+	check(resp.Running, "Runtime running")
 	if resp.PolicyVersion != "" {
 		check(resp.PolicyLoaded, fmt.Sprintf("Policy loaded (%s)", resp.PolicyVersion))
 	} else {
 		check(resp.PolicyLoaded, "Policy loaded")
 	}
-	check(resp.DPRHealthy, "DPR store healthy")
+	check(resp.DPRHealthy, "Audit store healthy")
 
 	fmt.Println()
 	fmt.Fprintf(os.Stdout, "  Active sessions:  %d\n", resp.ActiveSessions)

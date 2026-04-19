@@ -1,57 +1,82 @@
-# Faramesh: Start Here
+# Faramesh: Start Here (CLI/DX 2.0)
 
 If you only read one file, read this one.
 
-Faramesh is a policy guard for AI agent tool calls.
+Faramesh is a governance control surface for AI agent tool calls.
 It decides:
 
 - `PERMIT`: allow the tool call
 - `DENY`: block the tool call
 - `DEFER`: pause and wait for human approval
 
-## Fast path (5 minutes)
+## Fast path (about 5 minutes)
 
 1. Install/build Faramesh: see `01_INSTALL.md`
 2. Create policy file: see `03_POLICY_SIMPLE.md`
-3. Start daemon:
+3. Run guided first-run setup:
 
 ```bash
-faramesh serve --policy policy.yaml
+faramesh wizard first-run
 ```
 
-4. Watch live decisions:
+4. Or run the explicit default path manually:
+
+```bash
+faramesh credential enable --policy policy.yaml
+faramesh up --policy policy.yaml
+```
+
+5. Stream live decisions:
 
 ```bash
 faramesh audit tail
 ```
 
-5. Test with built-in demo:
+6. Run your real agent through governance:
 
 ```bash
-faramesh demo
+faramesh run --broker -- python your_agent.py
 ```
 
-## What users normally do
+## Typical roles
 
 - Policy authors: write and validate policy files.
-- Operators: run `faramesh serve`, tail decisions, verify chain.
+- Operators: run `faramesh up`, stream decisions, resolve approvals, and verify evidence.
 - Approvers: approve or deny deferred actions.
 
-## Core commands to remember
+## Core commands to remember (default path)
 
 ```bash
-faramesh policy validate policy.yaml
-faramesh serve --policy policy.yaml
+faramesh up --policy policy.yaml
+faramesh wizard first-run
+faramesh status
+faramesh credential enable --policy policy.yaml
+faramesh run --broker -- python your_agent.py
+faramesh approvals
+faramesh approvals watch
+faramesh approvals approve <approval-id>
 faramesh audit tail
-faramesh discover --source ./
-faramesh attach --agent-id my-agent --cmd "python agent.py"
-faramesh coverage --agent-id my-agent
-faramesh gaps --agent-id my-agent
-faramesh agent approve <defer-token>
-faramesh agent deny <defer-token>
-faramesh explain --last-deny
-faramesh pack shadow faramesh/<pack>
-faramesh pack enforce faramesh/<pack>
+faramesh audit show <action-id>
+faramesh explain <action-id>
+faramesh explain approval <approval-id>
+faramesh audit verify
+faramesh policy validate policy.yaml
+faramesh credential status
+```
+
+## Operator workflows (power path)
+
+```bash
+faramesh start --policy policy.yaml
+faramesh serve --policy policy.yaml --metrics-port 9108
+faramesh discover --cwd .
+faramesh attach --cwd . --observation-window 30s
+faramesh coverage
+faramesh gaps
+faramesh suggest --out suggested-policy.yaml
+faramesh incident declare --agent my-agent --severity high --title "unexpected data egress"
+faramesh identity status
+faramesh identity verify --spiffe spiffe://example.org/agent/my-agent
 ```
 
 ## Next files to read

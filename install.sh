@@ -286,21 +286,12 @@ success "faramesh ${INSTALLED_VERSION} installed successfully"
 if [ "${INTERACTIVE}" = true ] && [ -t 0 ]; then
     step "Getting started"
 
-    printf "${BOLD}Run the 30-second demo?${RESET} [Y/n] "
-    read -r DEMO_ANSWER </dev/tty
-    DEMO_ANSWER="${DEMO_ANSWER:-Y}"
-    if [[ "${DEMO_ANSWER}" =~ ^[Yy]$ ]]; then
+    printf "${BOLD}Launch the guided first-run wizard now?${RESET} [Y/n] "
+    read -r WIZARD_ANSWER </dev/tty
+    WIZARD_ANSWER="${WIZARD_ANSWER:-Y}"
+    if [[ "${WIZARD_ANSWER}" =~ ^[Yy]$ ]]; then
         printf "\n"
-        "${INSTALL_DIR}/${INSTALL_BINARY_NAME}" demo || warn "Demo exited with non-zero status."
-        printf "\n"
-    fi
-
-    printf "${BOLD}Auto-detect your environment?${RESET} [Y/n] "
-    read -r DETECT_ANSWER </dev/tty
-    DETECT_ANSWER="${DETECT_ANSWER:-Y}"
-    if [[ "${DETECT_ANSWER}" =~ ^[Yy]$ ]]; then
-        printf "\n"
-        "${INSTALL_DIR}/${INSTALL_BINARY_NAME}" init --auto-detect || warn "Auto-detect exited with non-zero status."
+        "${INSTALL_DIR}/${INSTALL_BINARY_NAME}" wizard first-run || warn "Wizard exited with non-zero status."
         printf "\n"
     fi
 fi
@@ -309,15 +300,13 @@ fi
 
 step "Next steps"
 
-printf "  ${BOLD}Normal quick start:${RESET}\n"
-printf "     ${CYAN}faramesh up${RESET}\n"
-printf "     ${CYAN}python3 -m pip install --upgrade faramesh-sdk${RESET} ${DIM}(in the same Python env as your agent)${RESET}\n"
-printf "     ${CYAN}python3 -c \"import faramesh.autopatch\"${RESET} ${DIM}(bootstrap preflight)${RESET}\n"
-printf "     ${CYAN}faramesh run --broker -- python my_agent.py${RESET}\n"
-printf "     ${DIM}If run is blocked, follow remediation output; use --best-effort only for explicit reduced coverage.${RESET}\n"
-printf "     ${CYAN}faramesh approvals list${RESET}\n"
-printf "     ${CYAN}faramesh audit tail${RESET}\n"
-printf "     ${CYAN}faramesh down${RESET}\n"
+printf "  ${BOLD}Faramesh 2.0 quick path:${RESET}\n"
+printf "     ${CYAN}1) faramesh wizard first-run${RESET}\n"
+printf "     ${CYAN}2) faramesh run --broker -- python your_agent.py${RESET}\n"
+printf "     ${CYAN}3) faramesh approvals${RESET}\n"
+printf "     ${CYAN}4) faramesh explain <action-id>${RESET}\n"
+printf "     ${CYAN}5) faramesh audit tail${RESET}\n"
+printf "     ${CYAN}6) faramesh down${RESET}\n"
 printf "\n"
 printf "  ${BOLD}Source checkout lifecycle:${RESET}\n"
 printf "     ${CYAN}faramesh setup flow${RESET}\n"
@@ -326,5 +315,5 @@ printf "  ${DIM}Documentation:${RESET}  ${BLUE}https://docs.faramesh.dev${RESET}
 printf "  ${DIM}GitHub:${RESET}         ${BLUE}https://github.com/${REPO}${RESET}\n"
 printf "  ${DIM}Community:${RESET}      ${BLUE}https://discord.gg/faramesh${RESET}\n"
 printf "\n"
-success "You're all set. Happy governing!"
+success "Faramesh CLI is ready. Happy governing!"
 printf "\n"

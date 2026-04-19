@@ -12,24 +12,10 @@ Advanced operator runtime path (optional):
 faramesh serve --policy policy.yaml
 ```
 
-Advanced flags for explicit infrastructure control:
-
-- `--data-dir`: where WAL/DB files are stored
-- `--socket`: Unix socket path for SDK adapter
-- `--log-level`: debug|info|warn|error
-- `--metrics-port`: exposes `/metrics`
-- `--proxy-port`: starts HTTP proxy adapter
-- `--grpc-port`: starts gRPC daemon adapter
-- `--mcp-proxy-port` and `--mcp-target`: starts MCP HTTP gateway
-
-Example:
+Operator extension example (metrics enabled):
 
 ```bash
-faramesh serve \
-  --policy /etc/faramesh/policy.yaml \
-  --data-dir /var/lib/faramesh \
-  --socket /var/run/faramesh.sock \
-  --metrics-port 9108
+faramesh serve --policy policy.yaml --metrics-port 9108
 ```
 
 ## Stream live decisions
@@ -55,12 +41,14 @@ faramesh approvals approve <approval-id>
 faramesh approvals deny <approval-id>
 ```
 
+Default approvals output is summary-first (queue/detail) with raw payloads available via `--json`.
+
 ## Observe-first commands
 
 Use these to baseline before moving from shadow to enforce:
 
 ```bash
-faramesh discover --source ./
+faramesh discover --cwd .
 faramesh attach --cwd . --observation-window 30s
 faramesh coverage
 faramesh gaps
@@ -77,13 +65,19 @@ faramesh pack enforce faramesh/<pack>
 
 ## Verify chain integrity
 
-For full chain validation (genesis markers, hash chains, and CRC per agent), use the WAL file:
+Default runtime-aware verification:
+
+```bash
+faramesh audit verify
+```
+
+Operator path for explicit WAL location (full chain validation):
 
 ```bash
 faramesh audit verify /var/lib/faramesh/faramesh.wal
 ```
 
-If the WAL file is unavailable, you can verify per-record hashes from the SQLite store (this does not check chain links between records):
+If the WAL file is unavailable, verify from SQLite store (this does not check chain links between records):
 
 ```bash
 faramesh audit verify /var/lib/faramesh/faramesh.db
@@ -107,10 +101,10 @@ This keeps one telemetry endpoint while supporting multiple backends.
 faramesh policy reload
 ```
 
-Advanced operator path when managing a non-default daemon data directory:
+Operator note: reload policy after updates without restarting runtime:
 
 ```bash
-faramesh policy reload --data-dir /var/lib/faramesh
+faramesh policy reload
 ```
 
 ## See deny reason details
@@ -121,6 +115,8 @@ faramesh audit trace --action-id <action-id>
 faramesh explain <action-id>
 faramesh explain approval <approval-id>
 ```
+
+`audit show`, `audit trace`, and `explain` now print human-readable summaries first, with `--json` for raw payload views.
 
 ## Typical triage sequence
 

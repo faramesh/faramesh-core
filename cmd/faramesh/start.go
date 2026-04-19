@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 )
 
 type runtimeStartState struct {
@@ -48,11 +46,12 @@ type daemonStartOptions struct {
 }
 
 type daemonStartResult struct {
-	State          runtimeStartState
-	StateDir       string
-	PIDPath        string
-	MetaPath       string
-	AlreadyRunning bool
+	State              runtimeStartState
+	StateDir           string
+	PIDPath            string
+	MetaPath           string
+	AlreadyRunning     bool
+	BootstrappedPolicy bool
 }
 
 var (
@@ -72,7 +71,7 @@ var (
 func init() {
 	startCmd.Flags().StringVar(&startPolicy, "policy", "", "policy path (auto-detected when omitted)")
 	startCmd.Flags().StringVar(&startMode, "mode", "enforce", "runtime mode: enforce|shadow|audit")
-	startCmd.Flags().StringVar(&startSocket, "socket", sdk.SocketPath, "daemon Unix socket path")
+	startCmd.Flags().StringVar(&startSocket, "socket", "", "daemon Unix socket path (defaults to --daemon-socket)")
 	startCmd.Flags().StringVar(&startDataDir, "data-dir", "", "daemon data directory")
 	startCmd.Flags().StringVar(&startStateDir, "state-dir", "", "runtime state directory")
 	_ = startCmd.Flags().MarkHidden("socket")
@@ -102,6 +101,9 @@ func runStart(_ *cobra.Command, _ []string) error {
 	fmt.Printf("daemon pid: %d\n", result.State.DaemonPID)
 	fmt.Printf("socket: %s\n", result.State.SocketPath)
 	fmt.Printf("policy: %s\n", result.State.PolicyPath)
+	if result.BootstrappedPolicy {
+		fmt.Printf("policy bootstrap: created starter policy at %s\n", result.State.PolicyPath)
+	}
 	fmt.Printf("mode: %s\n", result.State.Mode)
 	fmt.Printf("log: %s\n", result.State.LogPath)
 	return nil
@@ -116,11 +118,22 @@ func ensureDaemonStarted(opts daemonStartOptions) (daemonStartResult, error) {
 		return daemonStartResult{}, fmt.Errorf("invalid --mode %q (expected enforce|shadow|audit)", mode)
 	}
 
+	stateDir, err := resolveRuntimeStateDir(opts.StateDir)
+	if err != nil {
+		return daemonStartResult{}, err
+	}
+
 	policyPath := strings.TrimSpace(opts.PolicyPath)
+	bootstrappedPolicy := false
 	if policyPath == "" {
 		policyPath = detectDefaultPolicyPath()
 		if policyPath == "" {
-			return daemonStartResult{}, fmt.Errorf("no policy file found (tried: faramesh/policy.fpl, policies/default.fpl, faramesh/policy.yaml, policy.yaml)")
+			generatedPath, created, err := ensureBootstrapPolicy(stateDir)
+			if err != nil {
+				return daemonStartResult{}, err
+			}
+			policyPath = generatedPath
+			bootstrappedPolicy = created
 		}
 	}
 	absPolicyPath, err := filepath.Abs(policyPath)
@@ -128,14 +141,12 @@ func ensureDaemonStarted(opts daemonStartOptions) (daemonStartResult, error) {
 		return daemonStartResult{}, fmt.Errorf("resolve policy path: %w", err)
 	}
 
-	stateDir, err := resolveRuntimeStateDir(opts.StateDir)
-	if err != nil {
-		return daemonStartResult{}, err
-	}
-
 	socketPath := strings.TrimSpace(opts.SocketPath)
 	if socketPath == "" {
-		socketPath = sdk.SocketPath
+		socketPath = resolveDaemonSocketPreference(strings.TrimSpace(os.Getenv("FARAMESH_SOCKET")))
+	}
+	if socketPath == "" {
+		socketPath = defaultDaemonSocketPath()
 	}
 
 	dataDir := strings.TrimSpace(opts.DataDir)
@@ -163,11 +174,12 @@ func ensureDaemonStarted(opts daemonStartOptions) (daemonStartResult, error) {
 			}
 			_ = writeRuntimeStartState(metaPath, state)
 			return daemonStartResult{
-				State:          state,
-				StateDir:       stateDir,
-				PIDPath:        pidPath,
-				MetaPath:       metaPath,
-				AlreadyRunning: true,
+				State:              state,
+				StateDir:           stateDir,
+				PIDPath:            pidPath,
+				MetaPath:           metaPath,
+				AlreadyRunning:     true,
+				BootstrappedPolicy: bootstrappedPolicy,
 			}, nil
 		}
 		if err := terminatePID(pid); err != nil {
@@ -188,6 +200,10 @@ func ensureDaemonStarted(opts daemonStartOptions) (daemonStartResult, error) {
 		"--socket", socketPath,
 		"--data-dir", dataDir,
 		"--mode", mode,
+	}
+
+	if profile, profileErr := loadRuntimeProfile(); profileErr == nil {
+		args = applyCredentialProfileToServeArgs(args, profile)
 	}
 
 	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -230,12 +246,32 @@ func ensureDaemonStarted(opts daemonStartOptions) (daemonStartResult, error) {
 	}
 
 	return daemonStartResult{
-		State:          state,
-		StateDir:       stateDir,
-		PIDPath:        pidPath,
-		MetaPath:       metaPath,
-		AlreadyRunning: false,
+		State:              state,
+		StateDir:           stateDir,
+		PIDPath:            pidPath,
+		MetaPath:           metaPath,
+		AlreadyRunning:     false,
+		BootstrappedPolicy: bootstrappedPolicy,
 	}, nil
+}
+
+func ensureBootstrapPolicy(stateDir string) (string, bool, error) {
+	path := filepath.Join(stateDir, "policy.bootstrap.yaml")
+	if _, err := os.Stat(path); err == nil {
+		return path, false, nil
+	} else if !os.IsNotExist(err) {
+		return "", false, fmt.Errorf("check starter policy path: %w", err)
+	}
+
+	starter := strings.TrimSpace(`faramesh-version: '1.0'
+agent-id: starter-agent
+default_effect: permit
+rules: []
+`) + "\n"
+	if err := os.WriteFile(path, []byte(starter), 0o600); err != nil {
+		return "", false, fmt.Errorf("write starter policy: %w", err)
+	}
+	return path, true, nil
 }
 
 func writeRuntimeStartState(path string, state runtimeStartState) error {
