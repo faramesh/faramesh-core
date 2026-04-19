@@ -25,6 +25,11 @@ var runCmd = &cobra.Command{
 enforcement layers available in the current environment, then replaces the
 process with the child command.
 
+Governance mode semantics:
+	- default path is fail-closed for required governance checks
+	- --best-effort (or --allow-reduced-governance) is explicit opt-in reduced mode
+	- blocked runs print remediation and do not execute the child process
+
 Enforcement layers activated automatically when available:
   L1  Framework auto-patch (FARAMESH_AUTOLOAD=1 in child env)
   L3  Network namespace + iptables REDIRECT (Linux + root)
@@ -37,23 +42,26 @@ Usage:
   faramesh run --json                       # print detection only
   faramesh run -- python agent.py           # govern + exec
 	faramesh run --policy p.fpl -- python a.py   # with explicit policy
-  faramesh run --enforce full -- python a.py   # all layers`,
+	faramesh run --enforce full -- python a.py   # all layers
+	faramesh run --best-effort -- python a.py    # explicit reduced governance`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runRunE,
 }
 
 var (
-	runJSON       bool
-	runPolicy     string
-	runEnforce    string
-	runBrokerOn   bool
-	runAutoStart  bool
-	runAutoMode   string
-	runAgentID    string
-	runNoSeccomp  bool
-	runNoLandlock bool
-	runNoNetns    bool
-	runWorkspace  string
+	runJSON                   bool
+	runPolicy                 string
+	runEnforce                string
+	runBrokerOn               bool
+	runBestEffort             bool
+	runAllowReducedGovernance bool
+	runAutoStart              bool
+	runAutoMode               string
+	runAgentID                string
+	runNoSeccomp              bool
+	runNoLandlock             bool
+	runNoNetns                bool
+	runWorkspace              string
 )
 
 func init() {
@@ -61,6 +69,8 @@ func init() {
 	runCmd.Flags().StringVar(&runPolicy, "policy", "", "policy path (set FARAMESH_POLICY_PATH)")
 	runCmd.Flags().StringVar(&runEnforce, "enforce", "auto", "enforcement level: auto|full|minimal|none")
 	runCmd.Flags().BoolVar(&runBrokerOn, "broker", false, "enable credential broker (strip ambient API keys)")
+	runCmd.Flags().BoolVar(&runBestEffort, "best-effort", false, "allow execution with reduced governance coverage when full governance checks fail")
+	runCmd.Flags().BoolVar(&runAllowReducedGovernance, "allow-reduced-governance", false, "alias for --best-effort")
 	runCmd.Flags().BoolVar(&runAutoStart, "auto-start", true, "auto-start runtime daemon when socket is unreachable")
 	runCmd.Flags().StringVar(&runAutoMode, "auto-start-mode", "enforce", "daemon mode used by --auto-start: enforce|shadow|audit")
 	runCmd.Flags().StringVar(&runAgentID, "agent-id", "", "agent identity injected as FARAMESH_AGENT_ID (default: inferred from command)")
@@ -118,9 +128,6 @@ func runRunE(_ *cobra.Command, args []string) error {
 		}
 
 		autoPolicyPath := resolveAutoStartPolicyPath(policyPath)
-		if strings.TrimSpace(autoPolicyPath) == "" {
-			return fmt.Errorf("daemon socket %s is not reachable and no policy path is available for auto-start; provide --policy or run faramesh up --policy <path>", childSocket)
-		}
 
 		result, err := ensureDaemonStarted(daemonStartOptions{
 			PolicyPath: autoPolicyPath,
@@ -134,6 +141,9 @@ func runRunE(_ *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "Faramesh runtime detected on %s (pid=%d)\n", result.State.SocketPath, result.State.DaemonPID)
 		} else {
 			fmt.Fprintf(os.Stderr, "Faramesh runtime auto-started on %s (pid=%d)\n", result.State.SocketPath, result.State.DaemonPID)
+		}
+		if result.BootstrappedPolicy {
+			fmt.Fprintf(os.Stderr, "Faramesh policy bootstrap created starter policy at %s\n", result.State.PolicyPath)
 		}
 	}
 
@@ -151,12 +161,31 @@ func runRunE(_ *cobra.Command, args []string) error {
 	env := buildRunEnv(det, policyPath)
 
 	report := &enforcementReport{}
+	report.governanceMode = "full"
+	if explicitReducedEnforcementRequested() {
+		report.governanceMode = "best_effort"
+		report.governanceModeReason = fmt.Sprintf("requested reduced enforcement via --enforce %s", strings.TrimSpace(runEnforce))
+	}
 	env = applyRunRuntimeWiring(env, det, cwd, args, report)
 
 	if shouldEnforce(runEnforce) {
 		env = applyEnforcementStack(det, env, cwd, args, report)
 		if err := ensurePythonGovernanceBootstrap(name, args, env, report); err != nil {
-			return err
+			if bestEffortRequested() {
+				report.governanceMode = "best_effort"
+				report.governanceModeReason = err.Error()
+				report.trustLevel = "REDUCED"
+			} else {
+				return formatGovernanceBlockedError(err)
+			}
+		}
+	}
+
+	if strings.TrimSpace(report.trustLevel) == "" {
+		if report.governanceMode == "best_effort" {
+			report.trustLevel = "REDUCED"
+		} else {
+			report.trustLevel = det.TrustLevel
 		}
 	}
 
@@ -169,6 +198,8 @@ type enforcementReport struct {
 	autoload                bool
 	childSocket             string
 	childAgentID            string
+	governanceMode          string
+	governanceModeReason    string
 	pythonAutoloadAttempted bool
 	pythonAutoloadPath      string
 	pythonAutoloadVerified  bool
@@ -414,10 +445,10 @@ func applyEnforcementStack(det *runtimeenv.DetectedEnvironment, env []string, cw
 	env = mergeEnv(env, []string{"FARAMESH_AUTOLOAD=1"})
 	r.autoload = true
 
-	// Python bootstrap: make sure startup hook is importable for source checkouts.
+	// Python bootstrap: optional explicit local override for source checkouts.
 	if looksLikePythonCommand(childArgs) {
 		r.pythonAutoloadAttempted = true
-		if sdkPath, ok := resolvePythonSDKPath(cwd); ok {
+		if sdkPath, ok := resolvePythonSDKPath(); ok {
 			env = prependPathListEnv(env, "PYTHONPATH", sdkPath)
 			r.pythonAutoloadPath = sdkPath
 		}
@@ -553,7 +584,22 @@ func ensurePythonGovernanceBootstrap(execPath string, childArgs []string, env []
 	}
 	r.pythonAutoloadErr = fmt.Errorf("%s", trimmed)
 
-	return fmt.Errorf("python governance bootstrap is unavailable for %s: %s; install faramesh-sdk in the target environment (pip install faramesh-sdk) or set FARAMESH_PYTHON_SDK_PATH, then retry", filepath.Base(execPath), trimmed)
+	msg := fmt.Sprintf("python governance bootstrap is unavailable for %s: %s", filepath.Base(execPath), trimmed)
+	return fmt.Errorf("%s", msg)
+}
+
+func bestEffortRequested() bool {
+	return runBestEffort || runAllowReducedGovernance
+}
+
+func explicitReducedEnforcementRequested() bool {
+	mode := strings.ToLower(strings.TrimSpace(runEnforce))
+	return mode == "none" || mode == "minimal"
+}
+
+func formatGovernanceBlockedError(cause error) error {
+	msg := strings.TrimSpace(cause.Error())
+	return fmt.Errorf("governance: blocked\n%s\n\nRemediation:\n  1) In this exact Python environment, install or upgrade Faramesh Python support: python -m pip install --upgrade faramesh-sdk\n  2) Verify bootstrap import: python -c \"import faramesh.autopatch\"\n  3) Re-run this command. If you explicitly accept reduced governance coverage, add --best-effort\n\nAdvanced local development override only: set FARAMESH_PYTHON_SDK_PATH to a local sdk/python checkout", msg)
 }
 
 func isPythonInterpreter(execPath string) bool {
@@ -608,6 +654,15 @@ func printEnforcementReport(det *runtimeenv.DetectedEnvironment, r *enforcementR
 	green := color.New(color.FgGreen)
 	yellow := color.New(color.FgYellow)
 	red := color.New(color.FgRed)
+	mode := strings.TrimSpace(r.governanceMode)
+	if mode == "" {
+		mode = "full"
+	}
+
+	fmt.Fprintf(os.Stderr, "governance: %s\n", mode)
+	if mode == "best_effort" && strings.TrimSpace(r.governanceModeReason) != "" {
+		yellow.Fprintf(os.Stderr, "governance detail: %s\n", strings.TrimSpace(r.governanceModeReason))
+	}
 
 	bold.Fprintf(os.Stderr, "\nFaramesh Enforcement Report\n")
 	fmt.Fprintf(os.Stderr, "  Runtime:     %s\n", det.Runtime)
@@ -646,7 +701,7 @@ func printEnforcementReport(det *runtimeenv.DetectedEnvironment, r *enforcementR
 		if r.pythonAutoloadErr != nil {
 			yellow.Fprintf(os.Stderr, "  ○ Python startup hook verification warning (%v)\n", r.pythonAutoloadErr)
 		} else if r.pythonAutoloadPath == "" {
-			yellow.Fprintf(os.Stderr, "  ○ Python startup hook path not detected (set FARAMESH_PYTHON_SDK_PATH or install faramesh-sdk)\n")
+			yellow.Fprintf(os.Stderr, "  ○ Python startup hook path not detected (install faramesh-sdk in this Python environment)\n")
 		}
 	}
 	if len(r.credentialStrip) > 0 {
@@ -723,35 +778,13 @@ func proxyReady(port int) bool {
 	return true
 }
 
-func resolvePythonSDKPath(cwd string) (string, bool) {
+func resolvePythonSDKPath() (string, bool) {
 	if override := strings.TrimSpace(os.Getenv("FARAMESH_PYTHON_SDK_PATH")); override != "" {
 		if abs, err := filepath.Abs(override); err == nil {
 			override = abs
 		}
 		if dirExists(override) {
 			return override, true
-		}
-	}
-
-	candidates := []string{
-		filepath.Join(cwd, "faramesh-core", "sdk", "python"),
-		filepath.Join(cwd, "sdk", "python"),
-	}
-	if exe, err := os.Executable(); err == nil {
-		exeDir := filepath.Dir(exe)
-		candidates = append(candidates,
-			filepath.Join(exeDir, "sdk", "python"),
-			filepath.Join(exeDir, "..", "sdk", "python"),
-			filepath.Join(exeDir, "..", "..", "sdk", "python"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		if abs, err := filepath.Abs(candidate); err == nil {
-			candidate = abs
-		}
-		if dirExists(candidate) {
-			return candidate, true
 		}
 	}
 	return "", false

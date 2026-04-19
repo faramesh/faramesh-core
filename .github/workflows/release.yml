@@ -464,7 +464,7 @@ jobs:
     needs: github-release
     environment:
       name: pypi
-      url: https://pypi.org/p/faramesh
+      url: https://pypi.org/project/faramesh-sdk/
     permissions:
       id-token: write
 
@@ -482,20 +482,70 @@ jobs:
       - name: Set SDK version
         working-directory: sdk/python
         run: |
-          sed -i 's/^version = .*/version = "${{ steps.version.outputs.version }}"/' pyproject.toml
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          version = "${{ steps.version.outputs.version }}"
+          pyproject = Path("pyproject.toml")
+          pyproject_text = pyproject.read_text(encoding="utf-8")
+          pyproject_text, pyproject_count = re.subn(
+              r'^version\s*=\s*"[^"]+"',
+              f'version = "{version}"',
+              pyproject_text,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          if pyproject_count != 1:
+              raise RuntimeError("failed to set sdk version in pyproject.toml")
+          pyproject.write_text(
+              pyproject_text,
+              encoding="utf-8",
+          )
+
+          client = Path("faramesh/client.py")
+          client_text = client.read_text(encoding="utf-8")
+          client_text, client_count = re.subn(
+              r'^__version__\s*=\s*"[^"]+"',
+              f'__version__ = "{version}"',
+              client_text,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          if client_count != 1:
+              raise RuntimeError("failed to set sdk version in faramesh/client.py")
+          client.write_text(
+              client_text,
+              encoding="utf-8",
+          )
+          PY
 
       - name: Build SDK wheel
         working-directory: sdk/python
         run: |
-          pip install hatchling build
+          pip install build
           python -m build
+
+      - name: Verify wheel bootstrap import
+        working-directory: sdk/python
+        run: |
+          python -m venv /tmp/faramesh-release-wheel-check
+          /tmp/faramesh-release-wheel-check/bin/python -m pip install --upgrade pip
+          /tmp/faramesh-release-wheel-check/bin/python -m pip install dist/*.whl
+          /tmp/faramesh-release-wheel-check/bin/python - <<'PY'
+          import importlib.util
+          from faramesh.client import __version__
+
+          assert importlib.util.find_spec("faramesh.autopatch") is not None, "missing faramesh.autopatch"
+          import faramesh.autopatch  # noqa: F401
+          print("release wheel version:", __version__)
+          PY
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: sdk/python/dist/
           print-hash: true
-        continue-on-error: true
 
   # ─── Node CLI wrapper to npm ───────────────────────────────────────────────
   publish-npm:
