@@ -158,7 +158,7 @@ func resolveChaosPID() (int, error) {
 	}
 	dataDir := strings.TrimSpace(chaosDataDir)
 	if dataDir == "" {
-		dataDir = filepath.Join(os.TempDir(), "faramesh")
+		dataDir = filepath.Join(runtimeStateDirPath(""), "data")
 	}
 	pid, err := chaosFindDaemonPID(dataDir)
 	if err != nil {

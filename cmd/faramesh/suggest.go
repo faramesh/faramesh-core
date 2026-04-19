@@ -125,5 +125,5 @@ func defaultSuggestDataDir(dataDir string) string {
 	if strings.TrimSpace(dataDir) != "" {
 		return dataDir
 	}
-	return filepath.Join(os.TempDir(), "faramesh")
+	return filepath.Join(runtimeStateDirPath(""), "data")
 }

@@ -11,18 +11,22 @@ faramesh policy validate policy.yaml
 If valid, run with debug logs:
 
 ```bash
+faramesh up --policy policy.yaml
 faramesh serve --policy policy.yaml --log-level debug
 ```
 
 ## `audit tail` cannot connect
 
-Usually daemon is not running or socket path is wrong.
+Usually runtime is not running.
 
 ```bash
-faramesh audit tail --socket /tmp/faramesh.sock
+faramesh status
+faramesh up --policy policy.yaml
+faramesh audit tail
 ```
 
-Use the same socket path you passed to `faramesh serve --socket`.
+Advanced operator case: if you intentionally run multiple runtimes with custom sockets,
+target the intended runtime explicitly.
 
 ## Lots of DEFERs, nothing executes
 
@@ -31,7 +35,8 @@ This usually means policy is intentionally requiring manual approval.
 Approve manually:
 
 ```bash
-faramesh agent approve <defer-token>
+faramesh approvals
+faramesh approvals approve <approval-id>
 ```
 
 ## Denies are hard to understand
@@ -39,18 +44,20 @@ faramesh agent approve <defer-token>
 Use explain:
 
 ```bash
-faramesh explain --last-deny
-```
-
-Or explain by token:
-
-```bash
-faramesh explain --token dnl_xxxxxxxx
+faramesh explain <action-id>
+faramesh explain approval <approval-id>
+faramesh explain agent <agent-id>
 ```
 
 ## Chain verify fails
 
 Run:
+
+```bash
+faramesh audit verify
+```
+
+Advanced operator case for explicit WAL path:
 
 ```bash
 faramesh audit verify /path/to/faramesh.wal

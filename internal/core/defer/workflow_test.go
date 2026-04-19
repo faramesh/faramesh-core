@@ -2,6 +2,7 @@ package deferwork
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -143,8 +144,8 @@ func TestStatusPendingResolvedAndUnknown(t *testing.T) {
 	}
 
 	unknownStatus, unknownPending := w.Status("does-not-exist")
-	if unknownStatus != StatusExpired || unknownPending {
-		t.Fatalf("unknown status = (%q, %v), want (%q, false)", unknownStatus, unknownPending, StatusExpired)
+	if unknownStatus != StatusUnknown || unknownPending {
+		t.Fatalf("unknown status = (%q, %v), want (%q, false)", unknownStatus, unknownPending, StatusUnknown)
 	}
 }
 
@@ -615,5 +616,43 @@ func TestRestoreResolutionSeedsApprovalEnvelope(t *testing.T) {
 	st, pending := w.Status("tok-replay")
 	if pending || st != StatusApproved {
 		t.Fatalf("restored status = (%q, %v), want approved false", st, pending)
+	}
+}
+
+func TestResolvedRetentionPrunesOldestEntries(t *testing.T) {
+	w := NewWorkflow("")
+
+	total := maxResolvedRetention + 32
+	for i := 0; i < total; i++ {
+		token := fmt.Sprintf("tok-retention-%05d", i)
+		h, err := w.DeferWithToken(token, "agent-r", "tool-r", "retention")
+		if err != nil {
+			t.Fatalf("DeferWithToken(%q) error = %v", token, err)
+		}
+		if err := w.Resolve(token, true, "approver", "ok"); err != nil {
+			t.Fatalf("Resolve(%q) error = %v", token, err)
+		}
+		if _, ok := Wait(h); !ok {
+			t.Fatalf("Wait(%q) ok = false, want true", token)
+		}
+	}
+
+	if got := len(w.resolved); got != maxResolvedRetention {
+		t.Fatalf("len(resolved) = %d, want %d", got, maxResolvedRetention)
+	}
+	if got := len(w.resolvedOrder); got != maxResolvedRetention {
+		t.Fatalf("len(resolvedOrder) = %d, want %d", got, maxResolvedRetention)
+	}
+
+	oldestPrunedToken := fmt.Sprintf("tok-retention-%05d", 0)
+	st, pending := w.Status(oldestPrunedToken)
+	if pending || st != StatusUnknown {
+		t.Fatalf("oldest token status = (%q,%v), want (%q,false)", st, pending, StatusUnknown)
+	}
+
+	latestToken := fmt.Sprintf("tok-retention-%05d", total-1)
+	st, pending = w.Status(latestToken)
+	if pending || st != StatusApproved {
+		t.Fatalf("latest token status = (%q,%v), want (%q,false)", st, pending, StatusApproved)
 	}
 }

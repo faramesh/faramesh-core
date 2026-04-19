@@ -11,63 +11,66 @@ import (
 type commandTier string
 
 const (
-	commandTierStable   commandTier = "stable"
+	commandTierCore     commandTier = "core"
+	commandTierOperator commandTier = "operator"
 	commandTierAdvanced commandTier = "advanced"
 	commandTierInternal commandTier = "internal"
 )
 
 var commandTierByName = map[string]commandTier{
-	"agent":      commandTierInternal,
-	"attach":     commandTierStable,
-	"approvals":  commandTierStable,
-	"audit":      commandTierStable,
-	"auth":       commandTierStable,
+	"agent":      commandTierOperator,
+	"attach":     commandTierOperator,
+	"approvals":  commandTierCore,
+	"audit":      commandTierCore,
+	"auth":       commandTierCore,
 	"chaos-test": commandTierInternal,
-	"completion": commandTierStable,
+	"completion": commandTierCore,
 	"compliance": commandTierAdvanced,
 	"compensate": commandTierInternal,
-	"coverage":   commandTierStable,
-	"credential": commandTierStable,
-	"delegate":   commandTierInternal,
+	"coverage":   commandTierOperator,
+	"credential": commandTierCore,
+	"delegate":   commandTierAdvanced,
 	"demo":       commandTierInternal,
 	"detect":     commandTierAdvanced,
-	"discover":   commandTierStable,
-	"down":       commandTierStable,
-	"explain":    commandTierAdvanced,
-	"federation": commandTierInternal,
+	"discover":   commandTierOperator,
+	"down":       commandTierCore,
+	"explain":    commandTierCore,
+	"federation": commandTierAdvanced,
 	"fleet":      commandTierAdvanced,
-	"gaps":       commandTierStable,
-	"help":       commandTierStable,
+	"gaps":       commandTierOperator,
+	"help":       commandTierCore,
 	"hub":        commandTierInternal,
-	"identity":   commandTierInternal,
-	"incident":   commandTierInternal,
+	"identity":   commandTierOperator,
+	"incident":   commandTierOperator,
 	"init":       commandTierAdvanced,
-	"mcp":        commandTierStable,
+	"mcp":        commandTierOperator,
 	"model":      commandTierInternal,
-	"offboard":   commandTierAdvanced,
-	"onboard":    commandTierAdvanced,
+	"offboard":   commandTierOperator,
+	"onboard":    commandTierOperator,
 	"ops":        commandTierInternal,
-	"pack":       commandTierStable,
-	"policy":     commandTierStable,
-	"provenance": commandTierInternal,
-	"run":        commandTierStable,
+	"pack":       commandTierOperator,
+	"policy":     commandTierCore,
+	"provenance": commandTierOperator,
+	"run":        commandTierCore,
 	"sbom":       commandTierInternal,
-	"schedule":   commandTierInternal,
-	"serve":      commandTierAdvanced,
+	"schedule":   commandTierAdvanced,
+	"serve":      commandTierOperator,
 	"session":    commandTierInternal,
-	"setup":      commandTierStable,
+	"setup":      commandTierOperator,
 	"sign":       commandTierInternal,
-	"start":      commandTierAdvanced,
-	"status":     commandTierStable,
-	"stop":       commandTierAdvanced,
-	"suggest":    commandTierStable,
-	"up":         commandTierStable,
+	"start":      commandTierOperator,
+	"status":     commandTierCore,
+	"stop":       commandTierOperator,
+	"suggest":    commandTierOperator,
+	"up":         commandTierCore,
 	"verify":     commandTierInternal,
+	"wizard":     commandTierCore,
 }
 
 var commandGroups = []*cobra.Group{
-	{ID: string(commandTierStable), Title: "Stable Commands"},
-	{ID: string(commandTierAdvanced), Title: "Advanced Commands"},
+	{ID: string(commandTierCore), Title: "Core Commands (Start Here)"},
+	{ID: string(commandTierOperator), Title: "Operator Commands (Power Path)"},
+	{ID: string(commandTierAdvanced), Title: "Advanced Commands (Expert)"},
 }
 
 func init() {
@@ -124,9 +127,12 @@ func configureCommandSurface() {
 		c.Annotations["faramesh-tier"] = string(tier)
 
 		switch tier {
-		case commandTierStable:
+		case commandTierCore:
 			c.Hidden = false
-			c.GroupID = string(commandTierStable)
+			c.GroupID = string(commandTierCore)
+		case commandTierOperator:
+			c.Hidden = false
+			c.GroupID = string(commandTierOperator)
 		case commandTierAdvanced:
 			c.Hidden = false
 			c.GroupID = string(commandTierAdvanced)

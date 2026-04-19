@@ -51,12 +51,16 @@ type attachReport struct {
 func init() {
 	attachCmd.Flags().BoolVar(&attachJSON, "json", false, "print JSON")
 	attachCmd.Flags().StringVar(&attachCwd, "cwd", "", "working directory to scan (default: current directory)")
-	attachCmd.Flags().StringVar(&attachDataDir, "data-dir", "", "Faramesh data directory used for inventory and shadow bootstrap files")
+	attachCmd.Flags().StringVar(&attachDataDir, "data-dir", "", "Faramesh data directory used for inventory and shadow bootstrap files (default: ~/.faramesh/runtime/attach)")
 	attachCmd.Flags().StringVar(&attachPolicyPath, "policy", "", "existing policy path to use instead of generating an observe-first shadow bootstrap policy")
 	attachCmd.Flags().StringVar(&attachSocketPath, "socket", "", "daemon socket path (default: <data-dir>/faramesh-attach.sock)")
 	attachCmd.Flags().DurationVar(&attachObservationWindow, "observation-window", 15*time.Second, "how long to observe before printing coverage")
 	attachCmd.Flags().BoolVar(&attachStartDaemon, "start-daemon", true, "start a bounded shadow-mode daemon for the observation window")
 	attachCmd.Flags().BoolVar(&attachInteractive, "interactive", true, "prompt before starting the shadow daemon when attached to a terminal")
+}
+
+func defaultAttachDataDir() string {
+	return filepath.Join(runtimeStateDirPath(""), "attach")
 }
 
 func runAttachE(_ *cobra.Command, _ []string) error {
@@ -68,11 +72,11 @@ func runAttachE(_ *cobra.Command, _ []string) error {
 			return err
 		}
 	}
-	dataDir := attachDataDir
-	if strings.TrimSpace(dataDir) == "" {
-		dataDir = filepath.Join(os.TempDir(), "faramesh")
+	dataDir := strings.TrimSpace(attachDataDir)
+	if dataDir == "" {
+		dataDir = defaultAttachDataDir()
 	}
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
 	socketPath := strings.TrimSpace(attachSocketPath)

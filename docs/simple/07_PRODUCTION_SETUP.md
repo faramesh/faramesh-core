@@ -17,7 +17,7 @@ faramesh serve \
   --policy /etc/faramesh/policy.yaml \
   --data-dir /var/lib/faramesh \
   --socket /var/run/faramesh.sock \
-  --dpr-hmac-key "$(openssl rand -hex 32)" \
+  --dpr-hmac-key <DPR_HMAC_KEY> \
   --metrics-port 9108 \
   --log-level info
 ```
@@ -46,52 +46,35 @@ faramesh serve \
 
 Use this flow when you want keys outside agent process memory by default.
 
-### Local Vault provisioned by Faramesh
+### Local Vault provisioned by Faramesh (command-native)
 
 ```bash
-# Start local dev Vault managed by Faramesh
-faramesh credential vault up
+faramesh credential enable --policy /etc/faramesh/policy.fpl
 
-# Prompt for secret and store at broker lookup path for a tool
-faramesh credential vault put stripe/refund
-
-# Load generated Vault env exports
-source ~/.faramesh/local-vault/vault.env
-
-# Start daemon with Vault broker backend
-faramesh serve \
-  --policy /etc/faramesh/policy.fpl \
-  --data-dir /var/lib/faramesh \
-  --dpr-hmac-key "$FARAMESH_DPR_HMAC_KEY" \
-  --vault-addr "$FARAMESH_CREDENTIAL_VAULT_ADDR" \
-  --vault-token "$FARAMESH_CREDENTIAL_VAULT_TOKEN" \
-  --vault-mount secret
+faramesh up --policy /etc/faramesh/policy.fpl
 
 # Run agent with ambient key stripping
 faramesh run --broker --agent-id payments-prod -- python your_agent.py
 ```
 
+Advanced operator path (optional): add backend and provider mappings explicitly when your environment requires manual Vault routing.
+
 ### External Vault
 
 ```bash
-faramesh credential vault put stripe/refund \
-  --external \
-  --vault-addr https://vault.company.internal:8200 \
-  --vault-token "$VAULT_TOKEN" \
-  --vault-mount secret
-
-faramesh serve \
+faramesh credential enable \
   --policy /etc/faramesh/policy.fpl \
-  --data-dir /var/lib/faramesh \
-  --dpr-hmac-key "$FARAMESH_DPR_HMAC_KEY" \
+  --backend vault \
   --vault-addr https://vault.company.internal:8200 \
-  --vault-token "$VAULT_TOKEN" \
-  --vault-mount secret
+  --vault-token "$VAULT_TOKEN"
+
+faramesh up --policy /etc/faramesh/policy.fpl
 ```
 
 Operational helpers:
 
 ```bash
+faramesh credential status
 faramesh credential vault status
 faramesh credential vault down
 ```
@@ -99,8 +82,12 @@ faramesh credential vault down
 ## Health and audit checks
 
 ```bash
-curl -sS http://127.0.0.1:9108/metrics | head
+faramesh status
+faramesh approvals history --agent payments-prod
+faramesh explain agent payments-prod
+faramesh explain run <run-or-session-id>
 faramesh audit verify /var/lib/faramesh/faramesh.wal
+faramesh audit show <action-id>
 ```
 
 ## Identity hardening (SPIFFE/SPIRE)
@@ -117,6 +104,7 @@ faramesh serve \
 Then validate identity and trust material:
 
 ```bash
+faramesh identity status
 faramesh identity verify --spiffe spiffe://example.org/agent/faramesh
 faramesh identity trust --domain example.org --bundle /etc/spiffe/bundle.pem
 ```

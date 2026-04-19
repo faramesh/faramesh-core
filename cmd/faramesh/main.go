@@ -14,8 +14,17 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:          "faramesh",
-	Short:        "Faramesh — agent action governance (daemon, policy, run wrapper)",
+	Use:   "faramesh",
+	Short: "Faramesh — govern AI agent actions with policy and approvals",
+	Long: `Faramesh is the governance control surface for AI agent actions.
+
+Start with the default workflow:
+  faramesh wizard first-run
+  faramesh run --broker -- python your_agent.py`,
+	Example: `  faramesh wizard first-run
+  faramesh up --policy policy.yaml
+  faramesh approvals
+  faramesh explain <action-id>`,
 	SilenceUsage: true,
 	Version:      version,
 }

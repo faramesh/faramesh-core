@@ -74,7 +74,7 @@ func runCoverageE(_ *cobra.Command, _ []string) error {
 	}
 	dataDir := coverageDataDir
 	if dataDir == "" {
-		dataDir = filepath.Join(os.TempDir(), "faramesh")
+		dataDir = filepath.Join(runtimeStateDirPath(""), "data")
 	}
 
 	discovery := runtimeenv.DiscoverProject(cwd)

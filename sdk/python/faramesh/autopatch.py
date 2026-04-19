@@ -34,6 +34,7 @@ import importlib
 import logging
 import os
 import sys
+import time
 from typing import Any, Callable
 
 logger = logging.getLogger("faramesh.autopatch")
@@ -115,15 +116,12 @@ def _govern_call(tool_id: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def _govern_via_socket(socket_path: str, tool_id: str, args: dict[str, Any]) -> dict[str, Any]:
     """Governance via Unix domain socket to faramesh daemon."""
-    import json
-    import socket as _socket
-
     parts = tool_id.rsplit("/", 1)
     tool = parts[0] if len(parts) > 1 else tool_id
     operation = parts[1] if len(parts) > 1 else "invoke"
     principal_token = os.environ.get("FARAMESH_PRINCIPAL_TOKEN", "")
 
-    payload = json.dumps({
+    payload = {
         "jsonrpc": "2.0",
         "id": 1,
         "method": "govern",
@@ -134,29 +132,10 @@ def _govern_via_socket(socket_path: str, tool_id: str, args: dict[str, Any]) -> 
             "args": args,
             "principal_token": principal_token,
         },
-    }).encode("utf-8")
+    }
 
     try:
-        sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
-        sock.settimeout(5.0)
-        sock.connect(socket_path)
-        sock.sendall(payload + b"\n")
-        resp_data = b""
-        while True:
-            chunk = sock.recv(4096)
-            if not chunk:
-                break
-            resp_data += chunk
-            if b"\n" in resp_data:
-                break
-        sock.close()
-
-        if not resp_data.strip():
-            raise RuntimeError("empty response from Faramesh daemon")
-
-        resp = json.loads(resp_data.strip())
-        if not isinstance(resp, dict):
-            raise RuntimeError("invalid JSON-RPC response shape")
+        resp = _socket_json_request(socket_path, payload, timeout_seconds=5.0)
 
         rpc_err = resp.get("error")
         if rpc_err:
@@ -181,6 +160,102 @@ def _govern_via_socket(socket_path: str, tool_id: str, args: dict[str, Any]) -> 
         raise RuntimeError(f"Faramesh governance denied: {exc}") from exc
 
 
+def _socket_json_request(socket_path: str, payload: dict[str, Any], *, timeout_seconds: float) -> dict[str, Any]:
+    """Send one newline-delimited JSON payload over the daemon socket and return one JSON response."""
+    import json
+    import socket as _socket
+
+    raw = json.dumps(payload).encode("utf-8") + b"\n"
+
+    sock = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+    try:
+        sock.settimeout(timeout_seconds)
+        sock.connect(socket_path)
+        sock.sendall(raw)
+        resp_data = b""
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            resp_data += chunk
+            if b"\n" in resp_data:
+                break
+    finally:
+        sock.close()
+
+    if not resp_data.strip():
+        raise RuntimeError("empty response from Faramesh daemon")
+
+    line = resp_data.split(b"\n", 1)[0].strip()
+    resp = json.loads(line)
+    if not isinstance(resp, dict):
+        raise RuntimeError("invalid JSON response shape")
+    return resp
+
+
+def _read_float_env(name: str, fallback: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return fallback
+    try:
+        value = float(raw)
+    except ValueError:
+        return fallback
+    if value <= 0:
+        return fallback
+    return value
+
+
+def _poll_defer_status(socket_path: str, agent_id: str, defer_token: str) -> str:
+    """Poll current DEFER status from daemon."""
+    response = _socket_json_request(
+        socket_path,
+        {
+            "type": "poll_defer",
+            "agent_id": agent_id,
+            "defer_token": defer_token,
+        },
+        timeout_seconds=5.0,
+    )
+    err = str(response.get("error") or "").strip()
+    if err:
+        raise RuntimeError(err)
+
+    status = str(response.get("status") or "pending").strip().lower()
+    if status not in {"pending", "approved", "denied", "expired"}:
+        raise RuntimeError(f"unexpected defer status: {status}")
+    return status
+
+
+def _require_defer_approval(tool_id: str, result: dict[str, Any]) -> None:
+    """Block on DEFER until approved/denied/expired, then enforce final outcome."""
+    defer_token = str(result.get("defer_token") or "").strip()
+    if not defer_token:
+        raise RuntimeError(f"Faramesh DEFER missing token (tool={tool_id})")
+
+    socket_path = os.environ.get("FARAMESH_SOCKET", "/tmp/faramesh.sock")
+    if not os.path.exists(socket_path):
+        raise RuntimeError(f"Faramesh DEFER cannot be polled: socket not found at {socket_path}")
+
+    agent_id = os.environ.get("FARAMESH_AGENT_ID", "auto-patched")
+    timeout_seconds = _read_float_env("FARAMESH_DEFER_WAIT_TIMEOUT_SECONDS", 900.0)
+    poll_interval_seconds = _read_float_env("FARAMESH_DEFER_POLL_INTERVAL_SECONDS", 1.0)
+    deadline = time.monotonic() + timeout_seconds
+
+    while True:
+        status = _poll_defer_status(socket_path, agent_id, defer_token)
+        if status == "approved":
+            return
+        if status == "denied":
+            raise RuntimeError(f"Faramesh DENY: deferred request denied (token={defer_token}, tool={tool_id})")
+        if status == "expired":
+            raise RuntimeError(f"Faramesh DENY: deferred request expired (token={defer_token}, tool={tool_id})")
+
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"Faramesh DEFER timeout: pending approval (token={defer_token}, tool={tool_id})")
+        time.sleep(poll_interval_seconds)
+
+
 def _wrap_method(cls: type, method_name: str, framework: str, tool_id_fn: Callable) -> bool:
     """Wrap a class method with Faramesh governance. Returns True if patched."""
     original = getattr(cls, method_name, None)
@@ -199,8 +274,7 @@ def _wrap_method(cls: type, method_name: str, framework: str, tool_id_fn: Callab
             reason = result.get("reason_code") or "POLICY_DENY"
             raise RuntimeError(f"Faramesh DENY: {reason} (tool={tid})")
         if effect == "DEFER":
-            token = result.get("defer_token", "")
-            raise RuntimeError(f"Faramesh DEFER: approval required (token={token}, tool={tid})")
+            _require_defer_approval(tid, result)
         return original(self, *args, **kwargs)
 
     wrapper._faramesh_patched = True

@@ -18,8 +18,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 )
 
 type stackServiceMode string
@@ -33,16 +31,16 @@ const (
 var (
 	upCmd = &cobra.Command{
 		Use:   "up",
-		Short: "Start Faramesh runtime services",
-		Long:  "Starts the governance runtime and optional local visibility and approvals services when available.",
+		Short: "Start the Faramesh runtime",
+		Long:  "Start runtime governance services for policy enforcement, approvals, and evidence capture.",
 		Args:  cobra.NoArgs,
 		RunE:  runUp,
 	}
 
 	downCmd = &cobra.Command{
 		Use:   "down",
-		Short: "Stop Faramesh runtime services",
-		Long:  "Stops managed visibility and dashboard services and shuts down the governance runtime.",
+		Short: "Stop the Faramesh runtime",
+		Long:  "Stop runtime governance services and shut down managed local components.",
 		Args:  cobra.NoArgs,
 		RunE:  runDown,
 	}
@@ -100,7 +98,7 @@ type dashboardServiceConfig struct {
 
 func init() {
 	upCmd.Flags().StringVar(&upPolicy, "policy", "", "policy path (auto-detected when omitted)")
-	upCmd.Flags().StringVar(&upMode, "mode", "enforce", "runtime mode: enforce|shadow|audit")
+	upCmd.Flags().StringVar(&upMode, "mode", "enforce", "governance mode (advanced): enforce|shadow|audit")
 	upCmd.Flags().StringVar(&upSocket, "socket", "", "daemon Unix socket path (defaults to --daemon-socket)")
 	upCmd.Flags().StringVar(&upDataDir, "data-dir", "", "daemon data directory")
 	upCmd.Flags().StringVar(&upStateDir, "state-dir", "", "runtime state directory")
@@ -121,6 +119,28 @@ func init() {
 	downCmd.Flags().StringVar(&downStateDir, "state-dir", "", "runtime state directory")
 	downCmd.Flags().BoolVar(&downRuntimeOnly, "runtime-only", false, "stop only the governance runtime")
 	downCmd.Flags().BoolVar(&downPurgeState, "purge-state", false, "remove runtime metadata and pid files after shutdown")
+
+	// Keep infrastructure controls for advanced/operator workflows only.
+	_ = upCmd.Flags().MarkHidden("socket")
+	_ = upCmd.Flags().MarkHidden("data-dir")
+	_ = upCmd.Flags().MarkHidden("state-dir")
+	_ = upCmd.Flags().MarkHidden("mode")
+	_ = upCmd.Flags().MarkHidden("runtime-only")
+	_ = upCmd.Flags().MarkHidden("visibility")
+	_ = upCmd.Flags().MarkHidden("dashboard")
+	_ = upCmd.Flags().MarkHidden("visibility-host")
+	_ = upCmd.Flags().MarkHidden("visibility-port")
+	_ = upCmd.Flags().MarkHidden("visibility-dir")
+	_ = upCmd.Flags().MarkHidden("dashboard-host")
+	_ = upCmd.Flags().MarkHidden("dashboard-port")
+	_ = upCmd.Flags().MarkHidden("dashboard-dir")
+	_ = upCmd.Flags().MarkHidden("refresh-visibility-deps")
+	_ = upCmd.Flags().MarkHidden("refresh-dashboard-deps")
+	_ = upCmd.Flags().MarkHidden("require-healthy-services")
+
+	_ = downCmd.Flags().MarkHidden("state-dir")
+	_ = downCmd.Flags().MarkHidden("runtime-only")
+	_ = downCmd.Flags().MarkHidden("purge-state")
 
 	rootCmd.AddCommand(upCmd)
 	rootCmd.AddCommand(downCmd)
@@ -146,7 +166,7 @@ func runUp(_ *cobra.Command, _ []string) error {
 		socketPath = resolveDaemonSocketPreference(strings.TrimSpace(os.Getenv("FARAMESH_SOCKET")))
 	}
 	if socketPath == "" {
-		socketPath = sdk.SocketPath
+		socketPath = defaultDaemonSocketPath()
 	}
 
 	daemonResult, err := ensureDaemonStarted(daemonStartOptions{
@@ -236,6 +256,9 @@ func runUp(_ *cobra.Command, _ []string) error {
 		fmt.Printf("runtime: started (pid=%d, socket=%s)\n", state.DaemonPID, state.SocketPath)
 	}
 	fmt.Printf("policy: %s\n", state.PolicyPath)
+	if daemonResult.BootstrappedPolicy {
+		fmt.Printf("policy bootstrap: created starter policy at %s\n", state.PolicyPath)
+	}
 	fmt.Printf("mode: %s\n", state.Mode)
 
 	printManagedServiceSummary("visibility", visibilityState)

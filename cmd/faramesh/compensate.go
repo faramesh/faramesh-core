@@ -268,7 +268,7 @@ func resolveCompensateDBPath() string {
 	}
 	dataDir := strings.TrimSpace(compensateDataDir)
 	if dataDir == "" {
-		dataDir = filepath.Join(os.TempDir(), "faramesh")
+		dataDir = filepath.Join(runtimeStateDirPath(""), "data")
 	}
 	return filepath.Join(dataDir, "faramesh.db")
 }

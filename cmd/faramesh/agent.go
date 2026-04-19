@@ -235,18 +235,24 @@ func sendApproval(token string, approved bool, reason string) error {
 	}
 
 	if ok, _ := resp["ok"].(bool); ok {
-		word := "approved"
+		decision := "approved"
 		if !approved {
-			word = "denied"
+			decision = "denied"
 		}
-		color.New(color.FgGreen, color.Bold).Printf("✓ ")
-		fmt.Printf("DEFER token %s %s\n", token, word)
-	} else {
-		errMsg, _ := resp["error"].(string)
-		color.New(color.FgRed, color.Bold).Printf("✗ ")
-		fmt.Printf("Failed: %s\n", errMsg)
+		printSuccessLine(fmt.Sprintf("Approval %s %s", token, decision))
+		if strings.TrimSpace(reason) != "" {
+			printNoteLine("Decision reason: " + strings.TrimSpace(reason))
+		}
+		printNextStepLine("Review linked evidence: faramesh explain approval " + token)
+		return nil
 	}
-	return nil
+
+	errMsg, _ := resp["error"].(string)
+	errMsg = strings.TrimSpace(errMsg)
+	if errMsg == "" {
+		errMsg = "approval decision request was rejected"
+	}
+	return fmt.Errorf("%s", errMsg)
 }
 
 func runAgentKill(cmd *cobra.Command, args []string) error {

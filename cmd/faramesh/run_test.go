@@ -186,11 +186,40 @@ func TestResolveChildSocket_UsesRuntimeStateWhenFlagAndEnvUnset(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
+	tmpSocketFile, err := os.CreateTemp("/tmp", "fmrt-*.sock")
+	if err != nil {
+		t.Fatalf("create temp socket path: %v", err)
+	}
+	runtimeSocket := tmpSocketFile.Name()
+	_ = tmpSocketFile.Close()
+	_ = os.Remove(runtimeSocket)
+	defer os.Remove(runtimeSocket)
+
+	ln, err := net.Listen("unix", runtimeSocket)
+	if err != nil {
+		t.Fatalf("listen runtime socket: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, acceptErr := ln.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 256)
+				_, _ = c.Read(buf)
+				_, _ = c.Write([]byte(`{"status":"ok"}`))
+			}(conn)
+		}
+	}()
+
 	runtimeDir := filepath.Join(home, ".faramesh", "runtime")
 	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
 		t.Fatalf("mkdir runtime dir: %v", err)
 	}
-	if err := writeRuntimeStartState(filepath.Join(runtimeDir, "runtime.json"), runtimeStartState{SocketPath: "/tmp/runtime.sock"}); err != nil {
+	if err := writeRuntimeStartState(filepath.Join(runtimeDir, "runtime.json"), runtimeStartState{SocketPath: runtimeSocket}); err != nil {
 		t.Fatalf("write runtime state: %v", err)
 	}
 
@@ -207,7 +236,7 @@ func TestResolveChildSocket_UsesRuntimeStateWhenFlagAndEnvUnset(t *testing.T) {
 	f.Changed = false
 
 	got := resolveChildSocket(nil)
-	if got != "/tmp/runtime.sock" {
+	if got != runtimeSocket {
 		t.Fatalf("resolveChildSocket runtime-preferred = %q", got)
 	}
 }

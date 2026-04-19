@@ -7,6 +7,7 @@ package session
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -472,6 +473,16 @@ type Manager struct {
 	dailyStore DailyCostStore
 }
 
+// AgentSnapshot is a read-only summary of a managed agent session state.
+type AgentSnapshot struct {
+	AgentID        string  `json:"agent_id"`
+	CallCount      int64   `json:"call_count"`
+	SessionCostUSD float64 `json:"session_cost_usd"`
+	DailyCostUSD   float64 `json:"daily_cost_usd"`
+	Killed         bool    `json:"killed"`
+	HistoryCount   int     `json:"history_count"`
+}
+
 // NewManager creates a new session manager.
 func NewManager() *Manager {
 	return &Manager{states: make(map[string]*State)}
@@ -542,6 +553,61 @@ func (m *Manager) Count() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.states)
+}
+
+// AgentIDs returns a deterministic snapshot of agent IDs currently tracked in memory.
+func (m *Manager) AgentIDs() []string {
+	m.mu.RLock()
+	ids := make([]string, 0, len(m.states))
+	for agentID := range m.states {
+		ids = append(ids, agentID)
+	}
+	m.mu.RUnlock()
+	sort.Strings(ids)
+	return ids
+}
+
+// Snapshot returns a summary view of one tracked agent session.
+func (m *Manager) Snapshot(agentID string) (AgentSnapshot, bool) {
+	m.mu.RLock()
+	state, ok := m.states[agentID]
+	m.mu.RUnlock()
+	if !ok {
+		return AgentSnapshot{}, false
+	}
+	history := state.History()
+	return AgentSnapshot{
+		AgentID:        agentID,
+		CallCount:      state.CallCount(),
+		SessionCostUSD: state.CurrentCostUSD(),
+		DailyCostUSD:   state.DailyCostUSD(),
+		Killed:         state.IsKilled(),
+		HistoryCount:   len(history),
+	}, true
+}
+
+// AgentHistory returns evaluation history for one tracked agent.
+func (m *Manager) AgentHistory(agentID string) ([]HistoryEntry, bool) {
+	m.mu.RLock()
+	state, ok := m.states[agentID]
+	m.mu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+	return state.History(), true
+}
+
+// Snapshots returns summaries for all currently tracked agents.
+func (m *Manager) Snapshots() []AgentSnapshot {
+	ids := m.AgentIDs()
+	out := make([]AgentSnapshot, 0, len(ids))
+	for _, agentID := range ids {
+		snap, ok := m.Snapshot(agentID)
+		if ok {
+			out = append(out, snap)
+		}
+	}
+	return out
 }
 
 func matchPattern(pattern, toolID string) bool {
