@@ -1,6 +1,6 @@
 {
   "name": "@faramesh/sdk",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Faramesh Node.js SDK - Alpha client for the Faramesh Execution Governor API",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
