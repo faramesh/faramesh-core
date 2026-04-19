@@ -19,7 +19,7 @@ var (
 	approvalsCmd = &cobra.Command{
 		Use:   "approvals",
 		Short: "Manage pending governance approvals",
-		Long:  "List pending deferred actions, resolve approvals, and open the approvals UI.",
+		Long:  "List pending approvals, resolve decisions, and open the approvals UI.",
 		Args:  cobra.NoArgs,
 		RunE:  runApprovalsList,
 	}
@@ -38,9 +38,31 @@ var (
 		RunE:  runApprovalsList,
 	}
 
+	approvalsShowCmd = &cobra.Command{
+		Use:     "show <approval-id>",
+		Aliases: []string{"inspect"},
+		Short:   "Show status/details for one approval",
+		Args:    cobra.ExactArgs(1),
+		RunE:    runApprovalsShow,
+	}
+
+	approvalsWatchCmd = &cobra.Command{
+		Use:   "watch",
+		Short: "Watch pending approvals in real time",
+		Args:  cobra.NoArgs,
+		RunE:  runApprovalsWatch,
+	}
+
+	approvalsHistoryCmd = &cobra.Command{
+		Use:   "history",
+		Short: "Show approval/evaluation history for one agent",
+		Args:  cobra.NoArgs,
+		RunE:  runApprovalsHistory,
+	}
+
 	approvalsApproveCmd = &cobra.Command{
-		Use:   "approve <defer-token>",
-		Short: "Approve a pending deferred action",
+		Use:   "approve <approval-id>",
+		Short: "Approve a pending approval",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return sendApproval(args[0], true, strings.TrimSpace(approvalsReason))
@@ -48,8 +70,8 @@ var (
 	}
 
 	approvalsDenyCmd = &cobra.Command{
-		Use:   "deny <defer-token>",
-		Short: "Deny a pending deferred action",
+		Use:   "deny <approval-id>",
+		Short: "Deny a pending approval",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return sendApproval(args[0], false, strings.TrimSpace(approvalsReason))
@@ -65,6 +87,11 @@ var (
 
 	approvalsAgentFilter   string
 	approvalsReason        string
+	approvalsWatchAgent    string
+	approvalsWatchInterval time.Duration
+	approvalsWatchOnce     bool
+	approvalsHistoryAgent  string
+	approvalsHistoryWindow string
 	approvalsUIURL         string
 	approvalsUIOpen        bool
 	approvalsUIRequireLive bool
@@ -73,6 +100,12 @@ var (
 
 func init() {
 	approvalsListCmd.Flags().StringVar(&approvalsAgentFilter, "agent", "", "filter by agent ID")
+	approvalsShowCmd.Flags().StringVar(&approvalsAgentFilter, "agent", "", "agent hint for status polling")
+	approvalsWatchCmd.Flags().StringVar(&approvalsWatchAgent, "agent", "", "filter by agent ID")
+	approvalsWatchCmd.Flags().DurationVar(&approvalsWatchInterval, "interval", 2*time.Second, "poll interval")
+	approvalsWatchCmd.Flags().BoolVar(&approvalsWatchOnce, "once", false, "print one snapshot and exit")
+	approvalsHistoryCmd.Flags().StringVar(&approvalsHistoryAgent, "agent", "", "agent ID for history query")
+	approvalsHistoryCmd.Flags().StringVar(&approvalsHistoryWindow, "window", "", "time window (for example 1h, 24h)")
 	approvalsApproveCmd.Flags().StringVar(&approvalsReason, "reason", "", "approval reason")
 	approvalsDenyCmd.Flags().StringVar(&approvalsReason, "reason", "", "denial reason")
 	approvalsUICmd.Flags().StringVar(&approvalsUIURL, "url", "", "approvals UI URL override")
@@ -82,6 +115,9 @@ func init() {
 
 	approvalsCmd.AddCommand(approvalsListCmd)
 	approvalsCmd.AddCommand(approvalsPendingCmd)
+	approvalsCmd.AddCommand(approvalsShowCmd)
+	approvalsCmd.AddCommand(approvalsWatchCmd)
+	approvalsCmd.AddCommand(approvalsHistoryCmd)
 	approvalsCmd.AddCommand(approvalsApproveCmd)
 	approvalsCmd.AddCommand(approvalsDenyCmd)
 	approvalsCmd.AddCommand(approvalsUICmd)
@@ -89,6 +125,37 @@ func init() {
 	rootCmd.AddCommand(approvalsCmd)
 }
 
+func runApprovalsHistory(_ *cobra.Command, _ []string) error {
+	agentID := strings.TrimSpace(approvalsHistoryAgent)
+	if agentID == "" {
+		agentID = strings.TrimSpace(approvalsAgentFilter)
+	}
+	if agentID == "" {
+		return fmt.Errorf("agent id is required (use --agent)")
+	}
+
+	socketReq := map[string]any{
+		"type": "agent",
+		"op":   "history",
+		"id":   agentID,
+	}
+	query := map[string]string{"id": agentID}
+	if window := strings.TrimSpace(approvalsHistoryWindow); window != "" {
+		socketReq["window"] = window
+		query["window"] = window
+	}
+
+	raw, err := daemonSocketRequestAt(resolveApprovalsSocketPath(), socketReq)
+	if err != nil && daemonHTTPFallback && strings.TrimSpace(daemonAddr) != "" {
+		raw, err = daemonGetWithQuery("/api/v1/agent/history", query)
+	}
+	if err != nil {
+		return err
+	}
+
+	printResponse("Approval History", raw)
+	return nil
+}
 func runApprovalsList(_ *cobra.Command, _ []string) error {
 	socketReq := map[string]any{
 		"type": "agent",
@@ -109,6 +176,94 @@ func runApprovalsList(_ *cobra.Command, _ []string) error {
 	}
 	printResponse("Pending Approvals", raw)
 	return nil
+}
+
+func runApprovalsShow(_ *cobra.Command, args []string) error {
+	token := strings.TrimSpace(args[0])
+	if token == "" {
+		return fmt.Errorf("approval id is required")
+	}
+
+	items, err := fetchPendingApprovals("")
+	if err != nil {
+		return err
+	}
+
+	var match map[string]string
+	for _, item := range items {
+		if approvalTokenFromItem(item) == token {
+			match = item
+			break
+		}
+	}
+
+	agentHint := strings.TrimSpace(approvalsAgentFilter)
+	if agentHint == "" && match != nil {
+		agentHint = strings.TrimSpace(match["agent_id"])
+	}
+
+	status, statusErr := requestDeferStatus(token, agentHint)
+	statusValue := strings.TrimSpace(fmt.Sprint(status["status"]))
+	if statusValue == "" {
+		statusValue = "unknown"
+	}
+
+	if match == nil && statusValue == "unknown" {
+		if statusErr != nil {
+			return statusErr
+		}
+		return fmt.Errorf("approval id not found: %s", token)
+	}
+
+	out := map[string]any{
+		"approval_id": token,
+		"status":      statusValue,
+		"pending":     match != nil,
+	}
+	out["defer_token"] = token
+	if match != nil {
+		out["item"] = match
+	}
+	if statusErr != nil {
+		out["status_warning"] = statusErr.Error()
+	}
+
+	raw, _ := json.Marshal(out)
+	printResponse("Approval Detail", raw)
+	return nil
+}
+
+func runApprovalsWatch(_ *cobra.Command, _ []string) error {
+	interval := approvalsWatchInterval
+	if interval < 250*time.Millisecond {
+		interval = 250 * time.Millisecond
+	}
+
+	lastFingerprint := ""
+	for {
+		items, err := fetchPendingApprovals(approvalsWatchAgent)
+		if err != nil {
+			return err
+		}
+
+		fingerprintBytes, _ := json.Marshal(items)
+		fingerprint := string(fingerprintBytes)
+		if fingerprint != lastFingerprint {
+			payload := map[string]any{
+				"timestamp": time.Now().UTC().Format(time.RFC3339),
+				"count":     len(items),
+				"items":     items,
+			}
+			raw, _ := json.Marshal(payload)
+			printResponse("Pending Approvals Watch", raw)
+			lastFingerprint = fingerprint
+		}
+
+		if approvalsWatchOnce {
+			return nil
+		}
+		time.Sleep(interval)
+	}
 }
 
 func runApprovalsUI(_ *cobra.Command, _ []string) error {
@@ -245,14 +400,14 @@ func renderApprovalsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, item := range items {
-		token := html.EscapeString(strings.TrimSpace(item["defer_token"]))
+		token := html.EscapeString(approvalTokenFromItem(item))
 		agent := html.EscapeString(firstNonEmpty(item["agent_id"], "unknown-agent"))
 		tool := html.EscapeString(firstNonEmpty(item["tool_id"], item["tool"], "unknown-tool"))
 		reason := html.EscapeString(firstNonEmpty(item["reason"], item["message"], ""))
 
 		_, _ = fmt.Fprint(w, "<section class=\"card\">")
 		_, _ = fmt.Fprintf(w, "<div class=\"row\"><span class=\"pill\">agent %s</span><span class=\"pill\">tool %s</span></div>", agent, tool)
-		_, _ = fmt.Fprintf(w, "<div class=\"kv\"><strong>defer token:</strong> %s</div>", token)
+		_, _ = fmt.Fprintf(w, "<div class=\"kv\"><strong>approval id:</strong> %s</div>", token)
 		if reason != "" {
 			_, _ = fmt.Fprintf(w, "<div class=\"kv\"><strong>context:</strong> %s</div>", reason)
 		}
@@ -318,13 +473,48 @@ func fetchPendingApprovals(agent string) ([]map[string]string, error) {
 		return nil, fmt.Errorf("decode pending approvals: %w", err)
 	}
 
-	return payload.Items, nil
+	normalized := make([]map[string]string, 0, len(payload.Items))
+	for _, item := range payload.Items {
+		row := map[string]string{}
+		for k, v := range item {
+			row[k] = v
+		}
+		token := approvalTokenFromItem(row)
+		if token != "" {
+			row["defer_token"] = token
+			row["token"] = token
+		}
+		normalized = append(normalized, row)
+	}
+
+	return normalized, nil
+}
+
+func approvalTokenFromItem(item map[string]string) string {
+	return strings.TrimSpace(firstNonEmpty(item["defer_token"], item["token"], item["id"]))
+}
+
+func requestDeferStatus(token, agentHint string) (map[string]any, error) {
+	raw, err := daemonSocketRequestAt(resolveApprovalsSocketPath(), map[string]any{
+		"type":        "poll_defer",
+		"defer_token": strings.TrimSpace(token),
+		"agent_id":    strings.TrimSpace(agentHint),
+	})
+	if err != nil {
+		return map[string]any{"status": "unknown"}, err
+	}
+
+	status := map[string]any{}
+	if err := json.Unmarshal(raw, &status); err != nil {
+		return map[string]any{"status": "unknown"}, fmt.Errorf("decode defer status: %w", err)
+	}
+	return status, nil
 }
 
 func submitApprovalsDecision(token string, approved bool, reason string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return fmt.Errorf("defer token is required")
+		return fmt.Errorf("approval id is required")
 	}
 
 	raw, err := daemonSocketRequestAt(resolveApprovalsSocketPath(), map[string]any{
