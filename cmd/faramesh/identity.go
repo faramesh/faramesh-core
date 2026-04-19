@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -29,6 +31,66 @@ var identityCmd = &cobra.Command{
 	Short: "Manage workload and agent identity",
 	Long: `Verify, attest, and federate agent identities. Supports SPIFFE-based
 workload identity, trust bundle management, and external IdP federation.`,
+	Args: cobra.NoArgs,
+	RunE: runIdentityStatus,
+}
+
+var identityStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show identity readiness summary",
+	Args:  cobra.NoArgs,
+	RunE:  runIdentityStatus,
+}
+
+func runIdentityStatus(_ *cobra.Command, _ []string) error {
+	out := map[string]any{}
+	warnings := map[string]string{}
+
+	if raw, err := identitySocketRequestWithHTTPFallback("whoami", map[string]any{}, "GET", "/api/v1/identity/whoami"); err != nil {
+		warnings["whoami"] = err.Error()
+	} else {
+		out["whoami"] = decodeIdentityStatusPayload(raw)
+	}
+
+	if raw, err := identitySocketRequestWithHTTPFallback("trust_level", map[string]any{}, "GET", "/api/v1/identity/trust-level"); err != nil {
+		warnings["trust_level"] = err.Error()
+	} else {
+		out["trust_level"] = decodeIdentityStatusPayload(raw)
+	}
+
+	if raw, err := identitySocketRequestWithHTTPFallback("verify", map[string]any{}, "POST", "/api/v1/identity/verify"); err != nil {
+		warnings["verify"] = err.Error()
+	} else {
+		out["verify"] = decodeIdentityStatusPayload(raw)
+	}
+
+	if len(out) == 0 {
+		for _, key := range []string{"whoami", "trust_level", "verify"} {
+			if msg := strings.TrimSpace(warnings[key]); msg != "" {
+				return fmt.Errorf("identity status unavailable: %s", msg)
+			}
+		}
+		return fmt.Errorf("identity status unavailable")
+	}
+
+	if len(warnings) > 0 {
+		out["warnings"] = warnings
+	}
+
+	body, _ := json.Marshal(out)
+	printResponse("Identity Status", body)
+	if len(warnings) > 0 {
+		printWarningLine("partial identity status; review warnings field")
+	}
+	return nil
+}
+
+func decodeIdentityStatusPayload(raw json.RawMessage) any {
+	var payload any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return strings.TrimSpace(string(raw))
+	}
+	return payload
 }
 
 // ── identity verify ─────────────────────────────────────────────────────────
@@ -234,6 +296,7 @@ func init() {
 	identityFederationCmd.AddCommand(identityFederationListCmd)
 	identityFederationCmd.AddCommand(identityFederationRevokeCmd)
 
+	identityCmd.AddCommand(identityStatusCmd)
 	identityCmd.AddCommand(identityVerifyCmd)
 	identityCmd.AddCommand(identityTrustCmd)
 	identityCmd.AddCommand(identityWhoamiCmd)

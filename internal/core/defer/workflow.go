@@ -35,6 +35,9 @@ const (
 	StatusApproved DeferStatus = "approved"
 	StatusDenied   DeferStatus = "denied"
 	StatusExpired  DeferStatus = "expired"
+	StatusUnknown  DeferStatus = "unknown"
+
+	maxResolvedRetention = 4096
 )
 
 // Handle represents a pending deferred call.
@@ -120,6 +123,7 @@ type Workflow struct {
 	mu                  sync.Mutex
 	pending             map[string]*Handle
 	resolved            map[string]*resolvedHandle // keeps last N resolved for status queries
+	resolvedOrder       []string
 	slackURL            string
 	log                 *zap.Logger
 	pagerDutyRoutingKey string
@@ -226,7 +230,7 @@ func (w *Workflow) RestoreResolution(token string, res Resolution) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	delete(w.pending, token)
-	w.resolved[token] = &resolvedHandle{resolution: res}
+	w.storeResolvedLocked(token, res)
 	return nil
 }
 
@@ -464,7 +468,7 @@ func (w *Workflow) resolveInternal(token string, res Resolution) (bool, error) {
 			}
 		}
 		if backendResolved {
-			w.resolved[token] = &resolvedHandle{resolution: res}
+			w.storeResolvedLocked(token, res)
 			w.mu.Unlock()
 			if w.triage != nil {
 				w.triage.Remove(token)
@@ -475,7 +479,7 @@ func (w *Workflow) resolveInternal(token string, res Resolution) (bool, error) {
 		return false, fmt.Errorf("%w %q", errUnknownDeferToken, token)
 	}
 	delete(w.pending, token)
-	w.resolved[token] = &resolvedHandle{resolution: res}
+	w.storeResolvedLocked(token, res)
 	w.mu.Unlock()
 
 	if w.triage != nil {
@@ -500,7 +504,7 @@ func (w *Workflow) resolveInternal(token string, res Resolution) (bool, error) {
 }
 
 // Status returns the current detailed status of a DEFER token.
-// Returns: "pending", "approved", "denied", or "expired".
+// Returns: "pending", "approved", "denied", "expired", or "unknown".
 func (w *Workflow) Status(token string) (DeferStatus, bool) {
 	if w.backend != nil {
 		if st, pending, ok := w.statusFromBackend(token); ok {
@@ -515,7 +519,7 @@ func (w *Workflow) Status(token string) (DeferStatus, bool) {
 	if r, ok := w.resolved[token]; ok {
 		return r.resolution.Status, false
 	}
-	return StatusExpired, false // unknown token treated as expired
+	return StatusUnknown, false
 }
 
 // Wait blocks the caller until the DEFER is resolved or expires.
@@ -614,7 +618,7 @@ func (w *Workflow) resolveLocalOnly(token string, res Resolution) (bool, error) 
 			w.mu.Unlock()
 			return false, &ResolveConflictError{Token: token, Code: ResolveConflictCode, Status: finalized.resolution.Status}
 		}
-		w.resolved[token] = &resolvedHandle{resolution: res}
+		w.storeResolvedLocked(token, res)
 		w.mu.Unlock()
 		if w.triage != nil {
 			w.triage.Remove(token)
@@ -622,7 +626,7 @@ func (w *Workflow) resolveLocalOnly(token string, res Resolution) (bool, error) 
 		return true, nil
 	}
 	delete(w.pending, token)
-	w.resolved[token] = &resolvedHandle{resolution: res}
+	w.storeResolvedLocked(token, res)
 	w.mu.Unlock()
 
 	if w.triage != nil {
@@ -699,6 +703,26 @@ func (w *Workflow) normalizeResolution(token string, res Resolution) Resolution 
 		}
 	}
 	return res
+}
+
+func (w *Workflow) storeResolvedLocked(token string, res Resolution) {
+	if strings.TrimSpace(token) == "" {
+		return
+	}
+	if _, exists := w.resolved[token]; !exists {
+		w.resolvedOrder = append(w.resolvedOrder, token)
+	}
+	w.resolved[token] = &resolvedHandle{resolution: res}
+	if len(w.resolvedOrder) <= maxResolvedRetention {
+		return
+	}
+	overflow := len(w.resolvedOrder) - maxResolvedRetention
+	for i := 0; i < overflow; i++ {
+		delete(w.resolved, w.resolvedOrder[i])
+	}
+	trimmed := make([]string, len(w.resolvedOrder)-overflow)
+	copy(trimmed, w.resolvedOrder[overflow:])
+	w.resolvedOrder = trimmed
 }
 
 // VerifyApprovalEnvelope checks the HMAC signature for a signed approval envelope.

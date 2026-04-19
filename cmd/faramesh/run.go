@@ -20,30 +20,16 @@ import (
 
 var runCmd = &cobra.Command{
 	Use:   "run",
-	Short: "Exec a child process under Faramesh governance with full enforcement stack",
-	Long: `Detects runtime, framework, and agent harness. Installs the strongest
-enforcement layers available in the current environment, then replaces the
-process with the child command.
+	Short: "Run your existing agent command under Faramesh governance",
+	Long: `Run your existing local agent command under policy governance.
 
-Governance mode semantics:
-	- default path is fail-closed for required governance checks
-	- --best-effort (or --allow-reduced-governance) is explicit opt-in reduced mode
-	- blocked runs print remediation and do not execute the child process
+Recommended path:
+  faramesh run --broker -- python my_agent.py
 
-Enforcement layers activated automatically when available:
-  L1  Framework auto-patch (FARAMESH_AUTOLOAD=1 in child env)
-  L3  Network namespace + iptables REDIRECT (Linux + root)
-  L4  Credential broker (strips ambient API keys from env)
-  L5  seccomp-BPF (immutable syscall filter, Linux)
-  L6  Landlock LSM (filesystem allowlist, Linux 5.13+)
-  L9  Faramesh policy engine (via FARAMESH_SOCKET)
+With explicit policy:
+  faramesh run --policy policy.fpl --broker -- python my_agent.py
 
-Usage:
-  faramesh run --json                       # print detection only
-  faramesh run -- python agent.py           # govern + exec
-	faramesh run --policy p.fpl -- python a.py   # with explicit policy
-	faramesh run --enforce full -- python a.py   # all layers
-	faramesh run --best-effort -- python a.py    # explicit reduced governance`,
+Use --best-effort only for controlled fallback scenarios.`,
 	Args: cobra.ArbitraryArgs,
 	RunE: runRunE,
 }
@@ -66,18 +52,29 @@ var (
 
 func init() {
 	runCmd.Flags().BoolVar(&runJSON, "json", false, "print DetectedEnvironment as JSON")
-	runCmd.Flags().StringVar(&runPolicy, "policy", "", "policy path (set FARAMESH_POLICY_PATH)")
+	runCmd.Flags().StringVar(&runPolicy, "policy", "", "policy path for this governed run (sets FARAMESH_POLICY_PATH)")
 	runCmd.Flags().StringVar(&runEnforce, "enforce", "auto", "enforcement level: auto|full|minimal|none")
-	runCmd.Flags().BoolVar(&runBrokerOn, "broker", false, "enable credential broker (strip ambient API keys)")
-	runCmd.Flags().BoolVar(&runBestEffort, "best-effort", false, "allow execution with reduced governance coverage when full governance checks fail")
+	runCmd.Flags().BoolVar(&runBrokerOn, "broker", false, "enable credential sequestration broker for this run")
+	runCmd.Flags().BoolVar(&runBestEffort, "best-effort", false, "continue when full governance coverage cannot be established")
 	runCmd.Flags().BoolVar(&runAllowReducedGovernance, "allow-reduced-governance", false, "alias for --best-effort")
 	runCmd.Flags().BoolVar(&runAutoStart, "auto-start", true, "auto-start runtime daemon when socket is unreachable")
 	runCmd.Flags().StringVar(&runAutoMode, "auto-start-mode", "enforce", "daemon mode used by --auto-start: enforce|shadow|audit")
-	runCmd.Flags().StringVar(&runAgentID, "agent-id", "", "agent identity injected as FARAMESH_AGENT_ID (default: inferred from command)")
+	runCmd.Flags().StringVar(&runAgentID, "agent-id", "", "agent identity for this run (default: inferred from command)")
 	runCmd.Flags().BoolVar(&runNoSeccomp, "no-seccomp", false, "skip seccomp-BPF installation")
 	runCmd.Flags().BoolVar(&runNoLandlock, "no-landlock", false, "skip Landlock filesystem restrictions")
 	runCmd.Flags().BoolVar(&runNoNetns, "no-netns", false, "skip network namespace isolation")
 	runCmd.Flags().StringVar(&runWorkspace, "workspace", "", "workspace directory for Landlock (default: cwd)")
+
+	// Keep low-level runtime toggles for advanced/operator workflows only.
+	_ = runCmd.Flags().MarkHidden("json")
+	_ = runCmd.Flags().MarkHidden("enforce")
+	_ = runCmd.Flags().MarkHidden("allow-reduced-governance")
+	_ = runCmd.Flags().MarkHidden("auto-start")
+	_ = runCmd.Flags().MarkHidden("auto-start-mode")
+	_ = runCmd.Flags().MarkHidden("no-seccomp")
+	_ = runCmd.Flags().MarkHidden("no-landlock")
+	_ = runCmd.Flags().MarkHidden("no-netns")
+	_ = runCmd.Flags().MarkHidden("workspace")
 }
 
 func runRunE(_ *cobra.Command, args []string) error {
@@ -96,7 +93,7 @@ func runRunE(_ *cobra.Command, args []string) error {
 		return nil
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("missing command: use faramesh run -- <command> [args...], or faramesh run --json for detection only")
+		return fmt.Errorf("missing command. Use: faramesh run -- <command> [args...]. Example: faramesh run --broker -- python your_agent.py")
 	}
 
 	if det.Framework == "" {

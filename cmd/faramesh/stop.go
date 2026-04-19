@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -11,7 +12,7 @@ import (
 
 var stopCmd = &cobra.Command{
 	Use:   "stop",
-	Short: "Gracefully stop the Faramesh daemon",
+	Short: "Gracefully stop the Faramesh runtime",
 	Args:  cobra.NoArgs,
 	RunE:  runStop,
 }
@@ -21,9 +22,12 @@ func init() {
 }
 
 func runStop(_ *cobra.Command, _ []string) error {
-	raw, err := daemonPost("/api/v1/shutdown", nil)
+	raw, err := daemonSocketRequest(map[string]any{"type": "shutdown"})
+	if err != nil && daemonHTTPFallback && strings.TrimSpace(daemonAddr) != "" {
+		raw, err = daemonPost("/api/v1/shutdown", nil)
+	}
 	if err != nil {
-		return fmt.Errorf("stop daemon: %w", err)
+		return fmt.Errorf("stop runtime: %w", err)
 	}
 
 	var resp struct {
@@ -35,7 +39,7 @@ func runStop(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	color.New(color.Bold, color.FgGreen).Fprintln(os.Stdout, "✓ Daemon shutdown initiated")
+	color.New(color.Bold, color.FgGreen).Fprintln(os.Stdout, "✓ Runtime shutdown initiated")
 	if resp.Message != "" {
 		fmt.Fprintf(os.Stdout, "  %s\n", resp.Message)
 	}

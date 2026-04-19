@@ -17,22 +17,22 @@ import (
 )
 
 var (
-	gapsJSON     bool
-	gapsCwd      string
-	gapsDataDir  string
-	gapsPolicy   string
+	gapsJSON    bool
+	gapsCwd     string
+	gapsDataDir string
+	gapsPolicy  string
 )
 
 type gapsReport struct {
-	Root                  string   `json:"root"`
-	DataDir               string   `json:"data_dir"`
-	PolicyPath            string   `json:"policy_path,omitempty"`
-	StaticNotObserved     []string `json:"static_not_observed"`
-	ObservedNotStatic     []string `json:"observed_not_static"`
-	ObservedNotPolicy     []string `json:"observed_not_policy_visible"`
-	StaticNotPolicy       []string `json:"static_not_policy_visible"`
-	ShadowOnlyGovernance  []string `json:"shadow_only_governance"`
-	Warnings              []string `json:"warnings,omitempty"`
+	Root                 string   `json:"root"`
+	DataDir              string   `json:"data_dir"`
+	PolicyPath           string   `json:"policy_path,omitempty"`
+	StaticNotObserved    []string `json:"static_not_observed"`
+	ObservedNotStatic    []string `json:"observed_not_static"`
+	ObservedNotPolicy    []string `json:"observed_not_policy_visible"`
+	StaticNotPolicy      []string `json:"static_not_policy_visible"`
+	ShadowOnlyGovernance []string `json:"shadow_only_governance"`
+	Warnings             []string `json:"warnings,omitempty"`
 }
 
 var gapsCmd = &cobra.Command{
@@ -60,7 +60,7 @@ func runGapsE(_ *cobra.Command, _ []string) error {
 	}
 	dataDir := gapsDataDir
 	if dataDir == "" {
-		dataDir = filepath.Join(os.TempDir(), "faramesh")
+		dataDir = filepath.Join(runtimeStateDirPath(""), "data")
 	}
 
 	discovery := runtimeenv.DiscoverProject(cwd)

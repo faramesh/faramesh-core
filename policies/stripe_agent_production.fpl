@@ -8,11 +8,11 @@ agent stripe-interactive {
     max_scope stripe
   }
 
-  # Optional outbound API tool credential routing (for penrouter and similar HTTP calls).
-  credential penrouter_secret {
+  # Optional outbound API tool credential routing (for openrouter and similar HTTP calls).
+  credential openrouter_secret {
     scope make_web_request make_web_request/*
     backend vault
-    max_scope penrouter
+    max_scope openrouter
   }
 
   rules {
@@ -42,9 +42,11 @@ agent stripe-interactive {
     defer stripe_create_invoice reason: "invoice creation requires operator approval"
     defer stripe_create_invoice/* reason: "invoice creation requires operator approval"
 
-    # Money movement is always defer-gated.
-    defer stripe_refund reason: "refund requires explicit operator approval"
-    defer stripe_refund/* reason: "refund requires explicit operator approval"
+    # Refunds are denied by default in this policy profile.
+    deny stripe_refund reason: "refund execution is blocked in this profile"
+    deny stripe_refund/* reason: "refund execution is blocked in this profile"
+
+    # Transfers remain defer-gated for operator approval.
     defer stripe_transfer_test reason: "transfer requires explicit operator approval"
     defer stripe_transfer_test/* reason: "transfer requires explicit operator approval"
 

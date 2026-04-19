@@ -432,7 +432,7 @@ def _build_payload(
 
 
 def _enforce_policy(*, tool_id: str, payload: dict[str, Any], fail_open: bool) -> None:
-    from faramesh.autopatch import _govern_call, _normalize_effect
+    from faramesh.autopatch import _govern_call, _normalize_effect, _require_defer_approval
 
     try:
         result = _govern_call(tool_id, payload)
@@ -451,10 +451,13 @@ def _enforce_policy(*, tool_id: str, payload: dict[str, Any], fail_open: bool) -
         raise RuntimeError(f"Faramesh DENY: {reason} (tool={tool_id})")
 
     if effect == "DEFER":
-        token = result.get("defer_token", "")
-        raise RuntimeError(
-            f"Faramesh DEFER: approval required (token={token}, tool={tool_id})"
-        )
+        try:
+            _require_defer_approval(tool_id, result)
+        except Exception:
+            if fail_open:
+                logger.warning("faramesh: defer approval wait failed for %s (fail-open)", tool_id)
+                return
+            raise
 
 
 

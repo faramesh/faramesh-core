@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -132,16 +133,16 @@ type Config struct {
 	PolicyAdminToken            string
 	// StandingAdminToken authenticates standing_grant_* SDK messages. If empty,
 	// serve resolves it from FARAMESH_STANDING_ADMIN_TOKEN or falls back to PolicyAdminToken.
-	StandingAdminToken string
-	EnableEBPF                  bool
-	EBPFObjectPath              string
-	EBPFAttachTracepoints       bool
-	SPIFFESocketPath            string
-	StrictPreflight             bool
-	IDPProvider                 string
-	IntegrityManifestPath       string
-	IntegrityBaseDir            string
-	BuildInfoExpectedPath       string
+	StandingAdminToken    string
+	EnableEBPF            bool
+	EBPFObjectPath        string
+	EBPFAttachTracepoints bool
+	SPIFFESocketPath      string
+	StrictPreflight       bool
+	IDPProvider           string
+	IntegrityManifestPath string
+	IntegrityBaseDir      string
+	BuildInfoExpectedPath string
 	// AllowEnvCredentialFallback permits env-based credential brokering as an explicit
 	// development escape hatch. Keep false in production strict mode.
 	AllowEnvCredentialFallback bool
@@ -215,7 +216,7 @@ func New(cfg Config) (*Daemon, error) {
 		cfg.Log = log
 	}
 	if cfg.DataDir == "" {
-		cfg.DataDir = filepath.Join(os.TempDir(), "faramesh")
+		cfg.DataDir = filepath.Join(defaultRuntimeDir(), "data")
 	}
 	if cfg.SocketPath == "" {
 		cfg.SocketPath = sdk.SocketPath
@@ -290,6 +291,14 @@ func New(cfg Config) (*Daemon, error) {
 		return nil, fmt.Errorf("MCP SSE replay max age must be >= 0")
 	}
 	return &Daemon{cfg: cfg, log: cfg.Log}, nil
+}
+
+func defaultRuntimeDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return filepath.Join(os.TempDir(), "faramesh", "runtime")
+	}
+	return filepath.Join(home, ".faramesh", "runtime")
 }
 
 // Run starts the daemon and blocks until a signal is received.
@@ -778,6 +787,17 @@ func (d *Daemon) start() error {
 	// Start SDK socket server.
 	server := sdk.NewServer(pipeline, d.log)
 	server.SetPrincipalResolver(principalResolver)
+	server.SetShutdownFunc(func() {
+		d.log.Info("shutdown requested via SDK socket")
+		proc, err := os.FindProcess(os.Getpid())
+		if err != nil {
+			d.log.Error("resolve daemon process for shutdown signal", zap.Error(err))
+			return
+		}
+		if err := proc.Signal(syscall.SIGTERM); err != nil {
+			d.log.Error("signal daemon shutdown", zap.Error(err))
+		}
+	})
 	server.SetStandingAdminToken(strings.TrimSpace(d.cfg.StandingAdminToken))
 	if strings.TrimSpace(d.cfg.StandingAdminToken) != "" {
 		d.log.Info("standing grant admin authentication enabled (SDK standing_grant_* requires admin_token)")

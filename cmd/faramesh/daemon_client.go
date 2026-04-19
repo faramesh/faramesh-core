@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/fatih/color"
 	"io"
 	"net"
 	"net/http"
@@ -13,9 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
-	"github.com/fatih/color"
 )
 
 var (
@@ -27,8 +25,13 @@ var (
 
 func init() {
 	rootCmd.PersistentFlags().StringVar(&daemonAddr, "addr", "", "daemon HTTP address (used only with --http-fallback)")
-	rootCmd.PersistentFlags().StringVar(&daemonSocket, "daemon-socket", sdk.SocketPath, "daemon Unix socket path")
+	rootCmd.PersistentFlags().StringVar(&daemonSocket, "daemon-socket", "", "daemon Unix socket path (default: ~/.faramesh/runtime/faramesh.sock)")
 	rootCmd.PersistentFlags().BoolVar(&daemonHTTPFallback, "http-fallback", false, "allow fallback to HTTP control API when socket control call fails")
+
+	// Keep advanced runtime-targeting overrides available but out of default help.
+	_ = rootCmd.PersistentFlags().MarkHidden("addr")
+	_ = rootCmd.PersistentFlags().MarkHidden("daemon-socket")
+	_ = rootCmd.PersistentFlags().MarkHidden("http-fallback")
 }
 
 func daemonURL(path string) string {
@@ -121,7 +124,7 @@ func daemonSocketRequestWithPath(socketPath string, msg map[string]any) (json.Ra
 	}
 	socketPath = strings.TrimSpace(socketPath)
 	if socketPath == "" {
-		socketPath = sdk.SocketPath
+		socketPath = defaultDaemonSocketPath()
 	}
 
 	conn, err := net.DialTimeout("unix", socketPath, 3*time.Second)
@@ -171,7 +174,7 @@ func daemonSocketRequestAt(socketPath string, msg map[string]any) (json.RawMessa
 func resolveDaemonSocketPreference(envSocket string) string {
 	configuredSocket := strings.TrimSpace(daemonSocket)
 	if configuredSocket == "" {
-		configuredSocket = sdk.SocketPath
+		configuredSocket = defaultDaemonSocketPath()
 	}
 	envSocket = strings.TrimSpace(envSocket)
 
@@ -183,10 +186,17 @@ func resolveDaemonSocketPreference(envSocket string) string {
 	}
 	if state, ok := readCurrentRuntimeStartState(); ok {
 		if socket := strings.TrimSpace(state.SocketPath); socket != "" {
-			return socket
+			if socketStatusOK(socket) {
+				return socket
+			}
+			return configuredSocket
 		}
 	}
 	return configuredSocket
+}
+
+func defaultDaemonSocketPath() string {
+	return filepath.Join(runtimeStateDirPath(""), "faramesh.sock")
 }
 
 func isPersistentFlagExplicitlySet(name string) bool {

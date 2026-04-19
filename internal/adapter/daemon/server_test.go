@@ -154,6 +154,89 @@ default_effect: deny
 	}
 }
 
+func TestResolvePrincipalFromTokenFallbackIsUnverified(t *testing.T) {
+	srv := &Server{}
+
+	id := srv.resolvePrincipalFromToken("token-a")
+	if id == nil {
+		t.Fatal("expected fallback identity when resolver is missing")
+	}
+	if id.Verified {
+		t.Fatalf("expected missing-resolver fallback to be unverified, got verified=%v", id.Verified)
+	}
+
+	srv.principalResolver = func(ctx context.Context, token string) (*principal.Identity, error) {
+		_ = ctx
+		_ = token
+		return nil, errors.New("resolver failed")
+	}
+	id = srv.resolvePrincipalFromToken("token-b")
+	if id == nil || id.Verified {
+		t.Fatalf("expected resolver-error fallback to be unverified, got %#v", id)
+	}
+
+	srv.principalResolver = func(ctx context.Context, token string) (*principal.Identity, error) {
+		_ = ctx
+		_ = token
+		return &principal.Identity{ID: "user-1", Verified: false, Method: "okta_oidc"}, nil
+	}
+	id = srv.resolvePrincipalFromToken("token-c")
+	if id == nil || id.Verified {
+		t.Fatalf("expected invalid-resolved fallback to be unverified, got %#v", id)
+	}
+}
+
+func TestGovernPrincipalTokenWithoutResolverFailsClosed(t *testing.T) {
+	doc, version, err := policy.LoadBytes([]byte(`
+faramesh-version: '1.0'
+agent-id: daemon-principal-fail-closed
+default_effect: permit
+rules: []
+`))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	engine, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	pipeline := core.NewPipeline(core.Config{Engine: policy.NewAtomicEngine(engine)})
+
+	srv := NewServer(Config{Pipeline: pipeline})
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer lis.Close()
+	go func() { _ = srv.Serve(lis) }()
+	defer srv.GracefulStop()
+
+	conn, err := Dial(lis.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	client := NewFarameshDaemonClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	resp, err := client.Govern(ctx, &GovernRequest{
+		CallId:         "govern-principal-fail",
+		AgentId:        "agent-1",
+		SessionId:      "session-1",
+		ToolId:         "read_customer",
+		PrincipalToken: "any-token",
+		ArgsJson:       `{"id":"cust-1"}`,
+	})
+	if err != nil {
+		t.Fatalf("govern call failed: %v", err)
+	}
+	if strings.ToUpper(resp.Effect) != "DENY" {
+		t.Fatalf("expected DENY when principal token cannot be verified, got %s (%s)", resp.Effect, resp.Reason)
+	}
+}
+
 func TestGovernAcceptsMatchingMajorAPIVersion(t *testing.T) {
 	srv, lis := testDaemonServer(t)
 	defer lis.Close()

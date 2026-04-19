@@ -19,13 +19,13 @@ import (
 
 var auditCmd = &cobra.Command{
 	Use:   "audit",
-	Short: "Audit operations: live tail, verify, compact WAL, and explain DPR records",
+	Short: "Inspect governance evidence and verify tamper-evident audit integrity",
 }
 
 var auditTailCmd = &cobra.Command{
 	Use:   "tail",
-	Short: "Stream live governance decisions from a running daemon",
-	Long: `faramesh audit tail connects to the running daemon and streams every
+	Short: "Stream live governance decisions",
+	Long: `faramesh audit tail connects to the running runtime and streams every
 governance decision to the terminal in real time, with color-coded effects.
 
   faramesh audit tail
@@ -35,10 +35,10 @@ governance decision to the terminal in real time, with color-coded effects.
 
 var auditVerifyCmd = &cobra.Command{
 	Use:   "verify [db-or-wal-path]",
-	Short: "Verify chain integrity of a DPR WAL file or SQLite store",
-	Long: `Verify DPR chain integrity. Accepts either a .wal file (preferred,
-full chain validation with genesis/link/hash checks) or a .db file
-(fallback, per-agent chain link verification from SQLite).
+	Short: "Verify tamper-evident audit integrity",
+	Long: `Verify audit integrity from the active runtime by default.
+
+Operator workflows may also pass an explicit .wal or .db path.
 
 	faramesh audit verify
   faramesh audit verify /var/lib/faramesh/faramesh.wal
@@ -49,7 +49,7 @@ full chain validation with genesis/link/hash checks) or a .db file
 
 var auditCompactCmd = &cobra.Command{
 	Use:   "compact <wal-path>",
-	Short: "Offline compaction of a DPR WAL file (retention + chain rebase + verify)",
+	Short: "Compact a DPR WAL file and re-verify integrity (advanced)",
 	Long: `Rewrites a binary FWAL file in place using the same retention rules as the
 daemon (recent record cap + age window). Archives the previous file to a
 timestamped .bak sibling, then rewrites retained records with recomputed hash
@@ -65,7 +65,7 @@ copy the WAL elsewhere before compacting the live file.`,
 
 var auditWalInspectCmd = &cobra.Command{
 	Use:   "wal-inspect <wal-path>",
-	Short: "Report per-frame version byte counts for a binary FWAL file",
+	Short: "Inspect WAL frame versions (advanced)",
 	Long: `Walks the WAL without decoding DPR JSON and prints how many frames exist
 per header version byte. Use before upgrading WAL readers or when validating
 operator backups.
@@ -117,6 +117,9 @@ var (
 func init() {
 	auditTailCmd.Flags().StringVar(&tailAgent, "agent", "", "filter by agent ID (empty = all agents)")
 	auditTailCmd.Flags().StringVar(&tailSocket, "socket", sdk.SocketPath, "daemon Unix socket path")
+	_ = auditTailCmd.Flags().MarkHidden("socket")
+	auditCompactCmd.Hidden = true
+	auditWalInspectCmd.Hidden = true
 	auditCmd.AddCommand(auditTailCmd)
 	auditCmd.AddCommand(auditVerifyCmd)
 	auditCmd.AddCommand(auditCompactCmd)
@@ -131,12 +134,12 @@ func runAuditTail(cmd *cobra.Command, args []string) error {
 		socketPath = resolveDaemonSocketPreference(strings.TrimSpace(os.Getenv("FARAMESH_SOCKET")))
 	}
 	if socketPath == "" {
-		socketPath = sdk.SocketPath
+		socketPath = defaultDaemonSocketPath()
 	}
 
 	conn, err := net.DialTimeout("unix", socketPath, 3*time.Second)
 	if err != nil {
-		return fmt.Errorf("connect to daemon at %s: %w\n\nIs the daemon running? Try: faramesh up --policy policy.yaml", socketPath, err)
+		return fmt.Errorf("connect to runtime at %s: %w\n\nIs the runtime running? Try: faramesh up (or faramesh up --policy <path>)", socketPath, err)
 	}
 	defer conn.Close()
 
@@ -212,6 +215,9 @@ func runAuditVerify(cmd *cobra.Command, args []string) error {
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("file not found: %s", path)
 	}
+
+	printHeader("Audit Integrity Verification")
+	printNoteLine("Verifying tamper-evident DPR chain")
 
 	bold := color.New(color.Bold)
 	green := color.New(color.FgGreen)
@@ -318,12 +324,14 @@ func verifyWAL(path string, bold, green, red *color.Color) error {
 
 	if err != nil {
 		red.Printf("\n✗ CHAIN VIOLATION: %v\n", err)
-		fmt.Printf("Records verified before failure: %d\n\n", count)
-		os.Exit(1)
+		fmt.Printf("Records verified before failure: %d\n", count)
+		printNextStepLine("Inspect latest evidence: faramesh audit show <action-id>")
+		return fmt.Errorf("audit chain verification failed after %d records: %w", count, err)
 	}
 
 	green.Printf("\n✓ Chain integrity verified. %d records, 0 violations.\n", count)
 	fmt.Println("  Checked: per-frame CRC32, canonical hash, genesis markers, chain links")
+	printSuccessLine("Audit integrity verification completed")
 	fmt.Println()
 	return nil
 }
@@ -356,9 +364,11 @@ func verifyDB(dbPath string, bold, green, red *color.Color) error {
 
 	if violations == 0 {
 		green.Printf("✓ Hash integrity verified. %d records, 0 violations.\n\n", len(records))
+		printSuccessLine("Audit integrity verification completed")
 	} else {
 		red.Printf("✗ %d hash integrity violation(s) detected.\n\n", violations)
-		os.Exit(1)
+		printNextStepLine("Inspect latest evidence: faramesh audit show <action-id>")
+		return fmt.Errorf("detected %d hash integrity violation(s)", violations)
 	}
 	return nil
 }

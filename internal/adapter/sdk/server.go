@@ -8,7 +8,7 @@
 //	Server → Client: {"call_id":"...","effect":"PERMIT|DENY|DEFER","denial_token":"...","retry_permitted":false,"defer_token":"...","latency_ms":11}\n
 //
 //	Client → Server: {"type":"poll_defer","agent_id":"...","defer_token":"..."}\n
-//	Server → Client: {"defer_token":"...","status":"pending|approved|denied|expired"}\n
+//	Server → Client: {"defer_token":"...","status":"pending|approved|denied|expired|unknown"}\n
 //
 //	Client → Server: {"type":"approve_defer","defer_token":"...","approved":true,"reason":"..."}\n
 //	Server → Client: {"ok":true}\n
@@ -24,7 +24,7 @@
 //
 //	admin_token must match the daemon's configured standing/policy admin token (see SetStandingAdminToken). If the daemon has no admin token configured, standing grant APIs are disabled.
 //
-//	Client → Server: {"type":"kill","agent_id":"..."}\n
+//	Client → Server: {"type":"kill","agent_id":"...","admin_token":"<daemon secret>"}\n
 //	Server → Client: {"ok":true}\n
 //
 //	Client → Server: {"type":"audit_subscribe"}\n
@@ -45,6 +45,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -54,6 +55,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/faramesh/faramesh-core/internal/core"
+	"github.com/faramesh/faramesh-core/internal/core/credential"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/principal"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
@@ -61,7 +63,15 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-const SocketPath = "/tmp/faramesh.sock"
+var SocketPath = defaultSocketPath()
+
+func defaultSocketPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return filepath.Join(os.TempDir(), "faramesh", "runtime", "faramesh.sock")
+	}
+	return filepath.Join(home, ".faramesh", "runtime", "faramesh.sock")
+}
 
 // governRequest is the client → server message for a tool call.
 type governRequest struct {
@@ -305,13 +315,18 @@ type identityState struct {
 }
 
 type credentialRequest struct {
-	Type     string `json:"type"`
-	Op       string `json:"op"`
-	Name     string `json:"name,omitempty"`
-	Key      string `json:"key,omitempty"`
-	Scope    string `json:"scope,omitempty"`
-	MaxScope string `json:"max_scope,omitempty"`
-	Window   string `json:"window,omitempty"`
+	Type      string `json:"type"`
+	Op        string `json:"op"`
+	Name      string `json:"name,omitempty"`
+	Key       string `json:"key,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	MaxScope  string `json:"max_scope,omitempty"`
+	Window    string `json:"window,omitempty"`
+	ToolID    string `json:"tool_id,omitempty"`
+	Operation string `json:"operation,omitempty"`
+	AgentID   string `json:"agent_id,omitempty"`
+	HandleID  string `json:"handle_id,omitempty"`
+	Required  *bool  `json:"required,omitempty"`
 }
 
 type credentialRecord struct {
@@ -323,6 +338,10 @@ type credentialRecord struct {
 	Audit     []string `json:"audit,omitempty"`
 	CreatedAt string   `json:"created_at"`
 	UpdatedAt string   `json:"updated_at"`
+}
+
+type credentialLease struct {
+	Handle *credential.CredentialHandle
 }
 
 type incidentRequest struct {
@@ -355,6 +374,15 @@ type compensateRequest struct {
 	FromStep string `json:"from_step,omitempty"`
 }
 
+type agentRequest struct {
+	Type       string `json:"type"`
+	Op         string `json:"op"`
+	Agent      string `json:"agent,omitempty"`
+	ID         string `json:"id,omitempty"`
+	Window     string `json:"window,omitempty"`
+	AdminToken string `json:"admin_token,omitempty"`
+}
+
 type compensateRecord struct {
 	ID        string `json:"id"`
 	Agent     string `json:"agent,omitempty"`
@@ -382,6 +410,8 @@ type Server struct {
 	identity          identityState
 	credMu            sync.RWMutex
 	credentials       map[string]*credentialRecord
+	leaseMu           sync.Mutex
+	credentialLeases  map[string]*credentialLease
 	incidentMu        sync.RWMutex
 	incidents         map[string]*incidentRecord
 	incidentCounter   int
@@ -399,6 +429,7 @@ type Server struct {
 	// standing_grant_* JSON requests (constant-time compare). When empty,
 	// standing grant APIs are disabled (fail closed).
 	standingAdminToken string
+	shutdownFunc       func()
 }
 
 // NewServer creates a new SDK socket server.
@@ -415,11 +446,12 @@ func NewServer(pipeline *core.Pipeline, log *zap.Logger) *Server {
 			VerificationMethod: "unknown",
 			Federations:        make(map[string]identityFederation),
 		},
-		credentials:   make(map[string]*credentialRecord),
-		incidents:     make(map[string]*incidentRecord),
-		compensations: make(map[string]*compensateRecord),
-		rl:            make(map[string]*rate.Limiter),
-		connTokens:    make(chan struct{}, 256),
+		credentials:      make(map[string]*credentialRecord),
+		credentialLeases: make(map[string]*credentialLease),
+		incidents:        make(map[string]*incidentRecord),
+		compensations:    make(map[string]*compensateRecord),
+		rl:               make(map[string]*rate.Limiter),
+		connTokens:       make(chan struct{}, 256),
 	}
 }
 
@@ -434,6 +466,11 @@ func (s *Server) SetPrincipalResolver(resolver func(context.Context, string) (*p
 // --standing-admin-token or share --policy-admin-token via daemon flags / env).
 func (s *Server) SetStandingAdminToken(token string) {
 	s.standingAdminToken = strings.TrimSpace(token)
+}
+
+// SetShutdownFunc configures the callback used by socket shutdown requests.
+func (s *Server) SetShutdownFunc(fn func()) {
+	s.shutdownFunc = fn
 }
 
 // Listen binds the Unix socket and starts accepting connections.
@@ -600,7 +637,56 @@ func (s *Server) Close() error {
 	case <-time.After(5 * time.Second):
 		s.log.Warn("SDK adapter graceful drain timeout reached; closing anyway")
 	}
+
+	s.releaseCredentialLeases()
 	return closeErr
+}
+
+func (s *Server) releaseCredentialLeases() {
+	s.leaseMu.Lock()
+	leases := s.credentialLeases
+	s.credentialLeases = make(map[string]*credentialLease)
+	s.leaseMu.Unlock()
+
+	if len(leases) == 0 {
+		return
+	}
+
+	const (
+		leaseReleaseTimeout = 2 * time.Second
+		leaseDrainTimeout   = 5 * time.Second
+	)
+
+	var wg sync.WaitGroup
+	for handleID, lease := range leases {
+		if lease == nil || lease.Handle == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(id string, handle *credential.CredentialHandle) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), leaseReleaseTimeout)
+			defer cancel()
+			if err := handle.Release(ctx); err != nil {
+				s.log.Warn("credential lease release failed during shutdown",
+					zap.String("handle_id", id),
+					zap.Error(err),
+				)
+			}
+		}(handleID, lease.Handle)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(leaseDrainTimeout):
+		s.log.Warn("credential lease drain timeout reached; continuing shutdown")
+	}
 }
 
 func (s *Server) accept(ln net.Listener, acceptDone chan struct{}) {
@@ -683,6 +769,10 @@ func (s *Server) handle(conn net.Conn) {
 			s.handleStandingGrantList(conn, line)
 		case "kill":
 			s.handleKill(conn, line)
+		case "agent":
+			s.handleAgent(conn, line)
+		case "shutdown":
+			s.handleShutdown(conn, line)
 		case "scan_output":
 			s.handleScanOutput(conn, line)
 		case "govern_output":
@@ -709,6 +799,18 @@ func (s *Server) resolveGovernRequest(req governRequest) (governResponse, core.D
 		req.CallID = uuid.New().String()
 	}
 	resolvedPrincipal := s.resolvePrincipalFromToken(req.AgentID, req.PrincipalToken)
+	if strings.TrimSpace(req.PrincipalToken) != "" && (resolvedPrincipal == nil || !resolvedPrincipal.Verified) {
+		decision := core.Decision{
+			Effect:     core.EffectDeny,
+			ReasonCode: reasons.PrincipalVerificationUntrusted,
+			Reason:     "principal token could not be verified",
+		}
+		return governResponse{
+			CallID:    req.CallID,
+			Effect:    string(decision.Effect),
+			LatencyMs: 0,
+		}, decision, resolvedPrincipal, nil
+	}
 
 	car := core.CanonicalActionRequest{
 		CallID:             req.CallID,
@@ -789,7 +891,7 @@ func (s *Server) resolvePrincipalFromToken(agentID, principalToken string) *prin
 		s.log.Warn("principal token provided but no idp resolver is configured",
 			zap.String("agent_id", agentID),
 		)
-		return &principal.Identity{ID: "idp:unverified", Verified: true, Method: "idp_untrusted"}
+		return &principal.Identity{ID: "idp:unverified", Verified: false, Method: "idp_untrusted"}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -800,13 +902,13 @@ func (s *Server) resolvePrincipalFromToken(agentID, principalToken string) *prin
 			zap.String("agent_id", agentID),
 			zap.Error(err),
 		)
-		return &principal.Identity{ID: "idp:unverified", Verified: true, Method: "idp_untrusted"}
+		return &principal.Identity{ID: "idp:unverified", Verified: false, Method: "idp_untrusted"}
 	}
 	if resolved == nil || strings.TrimSpace(resolved.ID) == "" || !resolved.Verified {
 		s.log.Warn("principal token resolver returned invalid identity",
 			zap.String("agent_id", agentID),
 		)
-		return &principal.Identity{ID: "idp:unverified", Verified: true, Method: "idp_untrusted"}
+		return &principal.Identity{ID: "idp:unverified", Verified: false, Method: "idp_untrusted"}
 	}
 	return resolved
 }
@@ -1345,8 +1447,9 @@ func (s *Server) handleCredential(conn net.Conn, line []byte) {
 		writeJSON(conn, map[string]any{"error": "invalid credential request"})
 		return
 	}
+	op := strings.ToLower(strings.TrimSpace(req.Op))
 
-	if req.Op == "routing_map" || req.Op == "broker_map" {
+	if op == "routing_map" || op == "broker_map" {
 		if s.pipeline == nil {
 			writeJSON(conn, map[string]any{"error": "pipeline unavailable"})
 			return
@@ -1355,12 +1458,22 @@ func (s *Server) handleCredential(conn net.Conn, line []byte) {
 		return
 	}
 
+	if op == "acquire" {
+		s.handleCredentialAcquire(conn, req)
+		return
+	}
+
+	if op == "release" {
+		s.handleCredentialRelease(conn, req)
+		return
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	s.credMu.Lock()
 	defer s.credMu.Unlock()
 
-	switch req.Op {
+	switch op {
 	case "register":
 		if strings.TrimSpace(req.Name) == "" {
 			writeJSON(conn, map[string]any{"error": "name is required"})
@@ -1431,6 +1544,112 @@ func (s *Server) handleCredential(conn net.Conn, line []byte) {
 	default:
 		writeJSON(conn, map[string]any{"error": "unknown credential op: " + req.Op})
 	}
+}
+
+func credentialRequestRequired(req credentialRequest) bool {
+	if req.Required == nil {
+		return true
+	}
+	return *req.Required
+}
+
+func (s *Server) handleCredentialAcquire(conn net.Conn, req credentialRequest) {
+	if s.pipeline == nil {
+		writeJSON(conn, map[string]any{"error": "pipeline unavailable"})
+		return
+	}
+
+	toolID := strings.TrimSpace(req.ToolID)
+	if toolID == "" {
+		toolID = strings.TrimSpace(req.Name)
+	}
+	if toolID == "" {
+		writeJSON(conn, map[string]any{"error": "tool_id is required"})
+		return
+	}
+
+	required := credentialRequestRequired(req)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	handle, err := s.pipeline.AcquireCredentialHandle(ctx, credential.FetchRequest{
+		ToolID:    toolID,
+		Operation: strings.TrimSpace(req.Operation),
+		Scope:     strings.TrimSpace(req.Scope),
+		AgentID:   strings.TrimSpace(req.AgentID),
+	}, required)
+	if err != nil {
+		writeJSON(conn, map[string]any{"error": "credential acquire failed: " + err.Error()})
+		return
+	}
+	if handle == nil || handle.Credential == nil {
+		writeJSON(conn, map[string]any{"ok": true, "brokered": false, "required": required})
+		return
+	}
+
+	value := handle.Credential.Value
+	if strings.TrimSpace(value) == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := handle.Release(ctx)
+		cancel()
+		if err != nil {
+			s.log.Warn("credential acquire returned empty value and release failed",
+				zap.String("tool_id", toolID),
+				zap.Error(err),
+			)
+		}
+		if required {
+			writeJSON(conn, map[string]any{"error": "credential acquire returned empty value"})
+			return
+		}
+		writeJSON(conn, map[string]any{"ok": true, "brokered": false, "required": required})
+		return
+	}
+
+	handleID := "credh_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	s.leaseMu.Lock()
+	s.credentialLeases[handleID] = &credentialLease{Handle: handle}
+	s.leaseMu.Unlock()
+
+	resp := map[string]any{
+		"ok":        true,
+		"brokered":  true,
+		"required":  required,
+		"handle_id": handleID,
+		"value":     value,
+		"source":    strings.TrimSpace(handle.Credential.Source),
+		"scope":     strings.TrimSpace(handle.Credential.Scope),
+	}
+	if !handle.Credential.ExpiresAt.IsZero() {
+		resp["expires_at"] = handle.Credential.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+	writeJSON(conn, resp)
+}
+
+func (s *Server) handleCredentialRelease(conn net.Conn, req credentialRequest) {
+	handleID := strings.TrimSpace(req.HandleID)
+	if handleID == "" {
+		writeJSON(conn, map[string]any{"error": "handle_id is required"})
+		return
+	}
+
+	s.leaseMu.Lock()
+	lease := s.credentialLeases[handleID]
+	delete(s.credentialLeases, handleID)
+	s.leaseMu.Unlock()
+
+	if lease == nil || lease.Handle == nil {
+		writeJSON(conn, map[string]any{"ok": true, "released": false, "handle_id": handleID})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := lease.Handle.Release(ctx); err != nil {
+		writeJSON(conn, map[string]any{"error": "credential release failed: " + err.Error()})
+		return
+	}
+
+	writeJSON(conn, map[string]any{"ok": true, "released": true, "handle_id": handleID})
 }
 
 func (s *Server) handleIncident(conn net.Conn, line []byte) {
@@ -1627,7 +1846,8 @@ func (s *Server) handlePollDefer(conn net.Conn, line []byte) {
 		return
 	}
 	status, _ := s.pipeline.DeferWorkflow().Status(req.DeferToken)
-	if status != "pending" {
+	switch status {
+	case "approved", "denied", "expired":
 		var approved *bool
 		switch status {
 		case "approved":
@@ -1756,15 +1976,163 @@ func (s *Server) handleGovernOutput(conn net.Conn, line []byte) {
 
 func (s *Server) handleKill(conn net.Conn, line []byte) {
 	var req struct {
-		AgentID string `json:"agent_id"`
+		AgentID    string `json:"agent_id"`
+		AdminToken string `json:"admin_token,omitempty"`
 	}
 	if err := json.Unmarshal(line, &req); err != nil {
 		writeJSON(conn, map[string]any{"error": "invalid kill request"})
 		return
 	}
+	if !s.authorizeControlAdmin(conn, strings.TrimSpace(req.AdminToken)) {
+		return
+	}
+	if strings.TrimSpace(req.AgentID) == "" {
+		writeJSON(conn, map[string]any{"error": "agent_id is required"})
+		return
+	}
 	s.pipeline.SessionManager().Kill(req.AgentID)
 	s.log.Warn("kill switch activated", zap.String("agent", req.AgentID))
 	writeJSON(conn, map[string]any{"ok": true})
+}
+
+func (s *Server) handleAgent(conn net.Conn, line []byte) {
+	if s.pipeline == nil {
+		writeJSON(conn, map[string]any{"error": "pipeline unavailable"})
+		return
+	}
+
+	var req agentRequest
+	if err := json.Unmarshal(line, &req); err != nil {
+		writeJSON(conn, map[string]any{"error": "invalid agent request"})
+		return
+	}
+
+	op := strings.ToLower(strings.TrimSpace(req.Op))
+	if op != "pending" {
+		if !s.authorizeControlAdmin(conn, strings.TrimSpace(req.AdminToken)) {
+			return
+		}
+	}
+
+	sessionManager := s.pipeline.SessionManager()
+	if sessionManager == nil {
+		writeJSON(conn, map[string]any{"error": "session manager unavailable"})
+		return
+	}
+
+	switch op {
+	case "pending":
+		pending := s.pipeline.DeferWorkflow().Pending()
+		agentFilter := strings.TrimSpace(req.Agent)
+		if agentFilter != "" {
+			filtered := make([]map[string]string, 0, len(pending))
+			for _, item := range pending {
+				if item["agent_id"] == agentFilter {
+					filtered = append(filtered, item)
+				}
+			}
+			pending = filtered
+		}
+		writeJSON(conn, map[string]any{"items": pending})
+
+	case "list":
+		writeJSON(conn, map[string]any{"items": sessionManager.Snapshots()})
+
+	case "inspect":
+		agentID := strings.TrimSpace(req.ID)
+		if agentID == "" {
+			agentID = strings.TrimSpace(req.Agent)
+		}
+		if agentID == "" {
+			writeJSON(conn, map[string]any{"error": "agent id is required"})
+			return
+		}
+		snapshot, ok := sessionManager.Snapshot(agentID)
+		if !ok {
+			writeJSON(conn, map[string]any{"error": "agent not found"})
+			return
+		}
+		writeJSON(conn, snapshot)
+
+	case "history":
+		agentID := strings.TrimSpace(req.ID)
+		if agentID == "" {
+			agentID = strings.TrimSpace(req.Agent)
+		}
+		if agentID == "" {
+			writeJSON(conn, map[string]any{"error": "agent id is required"})
+			return
+		}
+		history, ok := sessionManager.AgentHistory(agentID)
+		if !ok {
+			writeJSON(conn, map[string]any{"error": "agent not found"})
+			return
+		}
+		window := strings.TrimSpace(req.Window)
+		if window != "" {
+			dur, err := time.ParseDuration(window)
+			if err != nil {
+				writeJSON(conn, map[string]any{"error": "invalid window"})
+				return
+			}
+			cutoff := time.Now().Add(-dur)
+			filtered := history[:0]
+			for _, entry := range history {
+				if entry.Timestamp.After(cutoff) {
+					filtered = append(filtered, entry)
+				}
+			}
+			history = filtered
+		}
+		writeJSON(conn, map[string]any{"agent_id": agentID, "history": history})
+
+	case "killed":
+		snapshots := sessionManager.Snapshots()
+		killed := make([]any, 0, len(snapshots))
+		for _, snapshot := range snapshots {
+			if snapshot.Killed {
+				killed = append(killed, snapshot)
+			}
+		}
+		writeJSON(conn, map[string]any{"items": killed})
+
+	case "unkill":
+		agentID := strings.TrimSpace(req.Agent)
+		if agentID == "" {
+			agentID = strings.TrimSpace(req.ID)
+		}
+		if agentID == "" {
+			writeJSON(conn, map[string]any{"error": "agent id is required"})
+			return
+		}
+		sessionManager.Reset(agentID, "kill_switch")
+		writeJSON(conn, map[string]any{"ok": true, "agent_id": agentID})
+
+	default:
+		writeJSON(conn, map[string]any{"error": "unknown agent op: " + op})
+	}
+}
+
+func (s *Server) handleShutdown(conn net.Conn, line []byte) {
+	var req struct {
+		AdminToken string `json:"admin_token,omitempty"`
+	}
+	if err := json.Unmarshal(line, &req); err != nil {
+		writeJSON(conn, map[string]any{"error": "invalid shutdown request"})
+		return
+	}
+	if !s.authorizeControlAdmin(conn, strings.TrimSpace(req.AdminToken)) {
+		return
+	}
+	if s.shutdownFunc == nil {
+		writeJSON(conn, map[string]any{"error": "shutdown unavailable"})
+		return
+	}
+	writeJSON(conn, map[string]any{"ok": true, "message": "shutdown initiated"})
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		s.shutdownFunc()
+	}()
 }
 
 // handleAuditSubscribe streams every decision to this connection until it closes.

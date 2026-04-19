@@ -14,6 +14,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/faramesh/faramesh-core/internal/core/policy"
@@ -77,6 +79,10 @@ type Sender struct {
 	client *http.Client
 	queue  chan Event
 	done   chan struct{}
+	stop   chan struct{}
+
+	closeOnce sync.Once
+	closed    atomic.Bool
 }
 
 // NewSender creates a webhook sender from policy configuration.
@@ -96,6 +102,7 @@ func NewSender(cfg policy.WebhookConfig) *Sender {
 		},
 		queue:  make(chan Event, 256),
 		done:   make(chan struct{}),
+		stop:   make(chan struct{}),
 	}
 	go s.deliverLoop()
 	return s
@@ -103,6 +110,9 @@ func NewSender(cfg policy.WebhookConfig) *Sender {
 
 // Send enqueues an event for delivery if the event type is subscribed.
 func (s *Sender) Send(evt Event) {
+	if s.closed.Load() {
+		return
+	}
 	if !s.subscribedTo(evt.Type) {
 		return
 	}
@@ -111,6 +121,8 @@ func (s *Sender) Send(evt Event) {
 		return
 	}
 	select {
+	case <-s.stop:
+		return
 	case s.queue <- evt:
 	default:
 		// Queue full — drop event silently. The /metrics endpoint
@@ -120,8 +132,11 @@ func (s *Sender) Send(evt Event) {
 
 // Close stops the delivery goroutine and drains remaining events.
 func (s *Sender) Close() {
-	close(s.queue)
-	<-s.done
+	s.closeOnce.Do(func() {
+		s.closed.Store(true)
+		close(s.stop)
+		<-s.done
+	})
 }
 
 func (s *Sender) subscribedTo(eventType EventType) bool {
@@ -135,8 +150,13 @@ func (s *Sender) subscribedTo(eventType EventType) bool {
 
 func (s *Sender) deliverLoop() {
 	defer close(s.done)
-	for evt := range s.queue {
-		s.deliver(evt)
+	for {
+		select {
+		case <-s.stop:
+			return
+		case evt := <-s.queue:
+			s.deliver(evt)
+		}
 	}
 }
 
@@ -157,7 +177,20 @@ func (s *Sender) deliver(evt Event) {
 	// Retry up to 3 times with exponential backoff.
 	maxRetries := 3
 	for attempt := 0; attempt < maxRetries; attempt++ {
+		select {
+		case <-s.stop:
+			return
+		default:
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), s.client.Timeout)
+		go func() {
+			select {
+			case <-s.stop:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.cfg.URL, bytes.NewReader(body))
 		if err != nil {
 			cancel()
@@ -180,7 +213,16 @@ func (s *Sender) deliver(evt Event) {
 
 		// Backoff: 1s, 2s, 4s
 		if attempt < maxRetries-1 {
-			time.Sleep(time.Duration(1<<uint(attempt)) * time.Second)
+			backoff := time.Duration(1<<uint(attempt)) * time.Second
+			timer := time.NewTimer(backoff)
+			select {
+			case <-s.stop:
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return
+			case <-timer.C:
+			}
 		}
 	}
 }

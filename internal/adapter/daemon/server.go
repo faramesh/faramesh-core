@@ -143,6 +143,16 @@ func (s *Server) Govern(ctx context.Context, req *GovernRequest) (*GovernRespons
 		callID = uuid.New().String()
 	}
 	resolvedPrincipal := s.resolvePrincipalFromToken(req.PrincipalToken)
+	if strings.TrimSpace(req.PrincipalToken) != "" && (resolvedPrincipal == nil || !resolvedPrincipal.Verified) {
+		resp := &GovernResponse{
+			Effect:           string(core.EffectDeny),
+			ReasonCode:       reasons.PrincipalVerificationUntrusted,
+			Reason:           "principal token could not be verified",
+			DaemonApiVersion: APIVersion,
+		}
+		_ = grpc.SetHeader(ctx, metadata.Pairs("x-faramesh-api-version", APIVersion))
+		return resp, nil
+	}
 
 	car := core.CanonicalActionRequest{
 		CallID:             callID,
@@ -206,17 +216,17 @@ func (s *Server) resolvePrincipalFromToken(principalToken string) *principal.Ide
 		return nil
 	}
 	if s.principalResolver == nil {
-		return &principal.Identity{ID: "idp:unverified", Verified: true, Method: "idp_untrusted"}
+		return &principal.Identity{ID: "idp:unverified", Verified: false, Method: "idp_untrusted"}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	resolved, err := s.principalResolver(ctx, token)
 	if err != nil {
-		return &principal.Identity{ID: "idp:unverified", Verified: true, Method: "idp_untrusted"}
+		return &principal.Identity{ID: "idp:unverified", Verified: false, Method: "idp_untrusted"}
 	}
 	if resolved == nil || strings.TrimSpace(resolved.ID) == "" || !resolved.Verified {
-		return &principal.Identity{ID: "idp:unverified", Verified: true, Method: "idp_untrusted"}
+		return &principal.Identity{ID: "idp:unverified", Verified: false, Method: "idp_untrusted"}
 	}
 	return resolved
 }

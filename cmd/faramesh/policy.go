@@ -399,7 +399,7 @@ func truncate(s string, n int) string {
 func runPolicyReload(cmd *cobra.Command, args []string) error {
 	dataDir := reloadDataDir
 	if dataDir == "" {
-		dataDir = filepath.Join(os.TempDir(), "faramesh")
+		dataDir = filepath.Join(runtimeStateDirPath(""), "data")
 	}
 	pidPath := filepath.Join(dataDir, "faramesh.pid")
 	raw, err := os.ReadFile(pidPath)

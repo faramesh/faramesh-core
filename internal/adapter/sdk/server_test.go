@@ -484,6 +484,95 @@ func TestIdentityOpsLifecycleOverSocket(t *testing.T) {
 	}
 }
 
+type brokerAcquireTestBroker struct {
+	name       string
+	value      string
+	revocable  bool
+	fetchCalls int
+	revokeHits int
+}
+
+func (b *brokerAcquireTestBroker) Name() string { return b.name }
+
+func (b *brokerAcquireTestBroker) Fetch(_ context.Context, req credential.FetchRequest) (*credential.Credential, error) {
+	b.fetchCalls++
+	scope := req.Scope
+	if scope == "" {
+		scope = "default"
+	}
+	return &credential.Credential{
+		Value:     b.value,
+		Source:    b.name,
+		Scope:     scope,
+		Revocable: b.revocable,
+	}, nil
+}
+
+func (b *brokerAcquireTestBroker) Revoke(_ context.Context, _ *credential.Credential) error {
+	b.revokeHits++
+	return nil
+}
+
+func TestCredentialAcquireReleaseOverSocket(t *testing.T) {
+	b := &brokerAcquireTestBroker{
+		name:      "vault",
+		value:     "sk_test_broker",
+		revocable: true,
+	}
+	router := credential.NewRouter([]credential.Broker{b}, b)
+	if err := router.AddRoute("*", b.name); err != nil {
+		t.Fatalf("add route: %v", err)
+	}
+
+	srv := NewServer(core.NewPipeline(core.Config{CredentialRouter: router}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"credential","op":"acquire","tool_id":"stripe_get_balance","operation":"invoke","scope":"stripe","agent_id":"stripe-interactive","required":true}`)
+	acquireResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+
+	if ok, _ := acquireResp["ok"].(bool); !ok {
+		t.Fatalf("acquire not ok: %#v", acquireResp)
+	}
+	if got := asString(acquireResp["value"]); got != "sk_test_broker" {
+		t.Fatalf("acquire value=%q", got)
+	}
+	handleID := asString(acquireResp["handle_id"])
+	if handleID == "" {
+		t.Fatalf("missing handle_id: %#v", acquireResp)
+	}
+	if got := asString(acquireResp["source"]); got != "vault" {
+		t.Fatalf("acquire source=%q", got)
+	}
+	if got := asString(acquireResp["scope"]); got != "stripe" {
+		t.Fatalf("acquire scope=%q", got)
+	}
+	if b.fetchCalls != 1 {
+		t.Fatalf("expected one broker fetch, got %d", b.fetchCalls)
+	}
+
+	writeLine(t, client.conn, `{"type":"credential","op":"release","handle_id":"`+handleID+`"}`)
+	releaseResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if ok, _ := releaseResp["ok"].(bool); !ok {
+		t.Fatalf("release not ok: %#v", releaseResp)
+	}
+	if released, _ := releaseResp["released"].(bool); !released {
+		t.Fatalf("expected released=true: %#v", releaseResp)
+	}
+	if b.revokeHits != 1 {
+		t.Fatalf("expected one broker revoke, got %d", b.revokeHits)
+	}
+
+	writeLine(t, client.conn, `{"type":"credential","op":"release","handle_id":"`+handleID+`"}`)
+	secondReleaseResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if ok, _ := secondReleaseResp["ok"].(bool); !ok {
+		t.Fatalf("second release not ok: %#v", secondReleaseResp)
+	}
+	if released, _ := secondReleaseResp["released"].(bool); released {
+		t.Fatalf("expected released=false on second release: %#v", secondReleaseResp)
+	}
+}
+
 func TestCredentialOpsLifecycleOverSocket(t *testing.T) {
 	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
 	client := startSocketHandler(t, srv)
@@ -851,6 +940,180 @@ rules: []
 	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
 	if got := asString(resp["effect"]); got != "DENY" {
 		t.Fatalf("expected DENY when principal token is provided without resolver, got %q (%#v)", got, resp)
+	}
+}
+
+func TestResolvePrincipalFromTokenFallbackIsUnverified(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+
+	id := srv.resolvePrincipalFromToken("agent-a", "token-a")
+	if id == nil {
+		t.Fatal("expected fallback principal identity")
+	}
+	if id.Verified {
+		t.Fatalf("expected fallback identity to be unverified, got verified=%v", id.Verified)
+	}
+	if id.Method != "idp_untrusted" {
+		t.Fatalf("expected fallback method idp_untrusted, got %q", id.Method)
+	}
+
+	srv.SetPrincipalResolver(func(ctx context.Context, token string) (*principal.Identity, error) {
+		_ = ctx
+		_ = token
+		return nil, errors.New("resolver failure")
+	})
+	id = srv.resolvePrincipalFromToken("agent-a", "token-b")
+	if id == nil || id.Verified {
+		t.Fatalf("expected resolver-error fallback to be unverified, got %#v", id)
+	}
+
+	srv.SetPrincipalResolver(func(ctx context.Context, token string) (*principal.Identity, error) {
+		_ = ctx
+		_ = token
+		return &principal.Identity{ID: "user-1", Verified: false, Method: "okta_oidc"}, nil
+	})
+	id = srv.resolvePrincipalFromToken("agent-a", "token-c")
+	if id == nil || id.Verified {
+		t.Fatalf("expected invalid-resolved fallback to be unverified, got %#v", id)
+	}
+}
+
+func TestKillRequiresAdminTokenOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	srv.SetStandingAdminToken("ops-secret")
+
+	agentID := "agent-kill-admin"
+	srv.pipeline.SessionManager().Get(agentID)
+
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+	writeLine(t, client.conn, `{"type":"kill","agent_id":"`+agentID+`"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	errStr := asString(resp["error"])
+	if !strings.Contains(errStr, "unauthorized") {
+		t.Fatalf("expected unauthorized kill response, got %#v", resp)
+	}
+	if srv.pipeline.SessionManager().Get(agentID).IsKilled() {
+		t.Fatalf("agent should not be killed without admin token")
+	}
+
+	client2 := startSocketHandler(t, srv)
+	defer client2.conn.Close()
+	writeLine(t, client2.conn, `{"type":"kill","agent_id":"`+agentID+`","admin_token":"bad-token"}`)
+	resp2 := readJSONWithDeadline(t, client2, 500*time.Millisecond)
+	errStr2 := asString(resp2["error"])
+	if !strings.Contains(errStr2, "unauthorized") {
+		t.Fatalf("expected unauthorized kill response for bad token, got %#v", resp2)
+	}
+	if srv.pipeline.SessionManager().Get(agentID).IsKilled() {
+		t.Fatalf("agent should not be killed with bad admin token")
+	}
+
+	client3 := startSocketHandler(t, srv)
+	defer client3.conn.Close()
+	writeLine(t, client3.conn, `{"type":"kill","agent_id":"`+agentID+`","admin_token":"ops-secret"}`)
+	resp3 := readJSONWithDeadline(t, client3, 500*time.Millisecond)
+	if ok, _ := resp3["ok"].(bool); !ok {
+		t.Fatalf("expected authorized kill to succeed, got %#v", resp3)
+	}
+	if !srv.pipeline.SessionManager().Get(agentID).IsKilled() {
+		t.Fatalf("expected agent to be killed with valid admin token")
+	}
+}
+
+func TestAgentOpsRequireAdminTokenOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	srv.SetStandingAdminToken("ops-secret")
+
+	srv.pipeline.SessionManager().Get("agent-list-admin")
+
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+	writeLine(t, client.conn, `{"type":"agent","op":"list"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	errStr := asString(resp["error"])
+	if !strings.Contains(errStr, "unauthorized") {
+		t.Fatalf("expected unauthorized agent list response, got %#v", resp)
+	}
+
+	client2 := startSocketHandler(t, srv)
+	defer client2.conn.Close()
+	writeLine(t, client2.conn, `{"type":"agent","op":"list","admin_token":"ops-secret"}`)
+	resp2 := readJSONWithDeadline(t, client2, 500*time.Millisecond)
+	if _, ok := resp2["items"].([]any); !ok {
+		t.Fatalf("expected agent list items with valid admin token, got %#v", resp2)
+	}
+}
+
+func TestShutdownRequiresAdminTokenOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	srv.SetStandingAdminToken("ops-secret")
+
+	called := make(chan struct{}, 1)
+	srv.SetShutdownFunc(func() {
+		select {
+		case called <- struct{}{}:
+		default:
+		}
+	})
+
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+	writeLine(t, client.conn, `{"type":"shutdown"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	errStr := asString(resp["error"])
+	if !strings.Contains(errStr, "unauthorized") {
+		t.Fatalf("expected unauthorized shutdown response, got %#v", resp)
+	}
+
+	select {
+	case <-called:
+		t.Fatal("shutdown callback should not run without admin token")
+	case <-time.After(120 * time.Millisecond):
+	}
+
+	client2 := startSocketHandler(t, srv)
+	defer client2.conn.Close()
+	writeLine(t, client2.conn, `{"type":"shutdown","admin_token":"ops-secret"}`)
+	resp2 := readJSONWithDeadline(t, client2, 500*time.Millisecond)
+	if ok, _ := resp2["ok"].(bool); !ok {
+		t.Fatalf("expected authorized shutdown response ok=true, got %#v", resp2)
+	}
+
+	select {
+	case <-called:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected shutdown callback after authorized request")
+	}
+}
+
+func TestPollDeferUnknownStatusAndNoCallback(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+
+	cbClient := startSocketHandler(t, srv)
+	defer cbClient.conn.Close()
+	writeLine(t, cbClient.conn, `{"type":"callback_subscribe"}`)
+	_ = readJSONWithDeadline(t, cbClient, 500*time.Millisecond)
+
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+	writeLine(t, client.conn, `{"type":"poll_defer","agent_id":"agent-x","defer_token":"missing-token"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["status"]); got != "unknown" {
+		t.Fatalf("expected unknown defer status for missing token, got %q (%#v)", got, resp)
+	}
+
+	if err := cbClient.conn.SetReadDeadline(time.Now().Add(150 * time.Millisecond)); err != nil {
+		t.Fatalf("set callback read deadline: %v", err)
+	}
+	defer cbClient.conn.SetReadDeadline(time.Time{})
+	if _, err := cbClient.r.ReadBytes('\n'); err == nil {
+		t.Fatal("unexpected callback event for unknown defer token")
+	} else {
+		ne, ok := err.(net.Error)
+		if !ok || !ne.Timeout() {
+			t.Fatalf("expected callback read timeout, got %T (%v)", err, err)
+		}
 	}
 }
 

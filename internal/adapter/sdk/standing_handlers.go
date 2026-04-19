@@ -48,6 +48,23 @@ func (s *Server) authorizeStandingAdmin(conn net.Conn, got string) bool {
 	return true
 }
 
+func (s *Server) authorizeControlAdmin(conn net.Conn, got string) bool {
+	want := s.standingAdminToken
+	if want == "" {
+		writeJSON(conn, map[string]any{"error": "control_admin_unconfigured: set daemon --standing-admin-token, FARAMESH_STANDING_ADMIN_TOKEN, or --policy-admin-token / FARAMESH_POLICY_ADMIN_TOKEN"})
+		return false
+	}
+	if len(got) != len(want) {
+		writeJSON(conn, map[string]any{"error": "unauthorized control admin request"})
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(got), []byte(want)) != 1 {
+		writeJSON(conn, map[string]any{"error": "unauthorized control admin request"})
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleStandingGrantAdd(conn net.Conn, line []byte) {
 	if s.pipeline == nil {
 		writeJSON(conn, map[string]any{"error": "pipeline unavailable"})
