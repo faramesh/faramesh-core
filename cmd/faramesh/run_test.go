@@ -212,6 +212,29 @@ func TestResolveChildSocket_UsesRuntimeStateWhenFlagAndEnvUnset(t *testing.T) {
 	}
 }
 
+func TestResolveChildSocket_DefaultsToHomeRuntimeSocket(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	oldDaemonSocket := daemonSocket
+	defer func() { daemonSocket = oldDaemonSocket }()
+	daemonSocket = ""
+
+	f := rootCmd.PersistentFlags().Lookup("daemon-socket")
+	if f == nil {
+		t.Fatal("daemon-socket flag missing")
+	}
+	oldChanged := f.Changed
+	defer func() { f.Changed = oldChanged }()
+	f.Changed = false
+
+	got := resolveChildSocket(nil)
+	want := filepath.Join(home, ".faramesh", "runtime", "faramesh.sock")
+	if got != want {
+		t.Fatalf("resolveChildSocket default = %q, want %q", got, want)
+	}
+}
+
 func TestResolveAutoStartPolicyPath_UsesRuntimeState(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -251,6 +274,67 @@ func TestShouldEnforce(t *testing.T) {
 	}
 	if !shouldEnforce("full") {
 		t.Fatal("full should enforce")
+	}
+}
+
+func TestBestEffortRequested(t *testing.T) {
+	oldBestEffort := runBestEffort
+	oldAllowReduced := runAllowReducedGovernance
+	defer func() {
+		runBestEffort = oldBestEffort
+		runAllowReducedGovernance = oldAllowReduced
+	}()
+
+	runBestEffort = false
+	runAllowReducedGovernance = false
+	if bestEffortRequested() {
+		t.Fatal("bestEffortRequested should be false when no flags are set")
+	}
+
+	runBestEffort = true
+	runAllowReducedGovernance = false
+	if !bestEffortRequested() {
+		t.Fatal("bestEffortRequested should be true when --best-effort is set")
+	}
+
+	runBestEffort = false
+	runAllowReducedGovernance = true
+	if !bestEffortRequested() {
+		t.Fatal("bestEffortRequested should be true when --allow-reduced-governance is set")
+	}
+}
+
+func TestExplicitReducedEnforcementRequested(t *testing.T) {
+	oldRunEnforce := runEnforce
+	defer func() { runEnforce = oldRunEnforce }()
+
+	runEnforce = "auto"
+	if explicitReducedEnforcementRequested() {
+		t.Fatal("auto should not request explicit reduced enforcement")
+	}
+
+	runEnforce = "minimal"
+	if !explicitReducedEnforcementRequested() {
+		t.Fatal("minimal should request explicit reduced enforcement")
+	}
+
+	runEnforce = "none"
+	if !explicitReducedEnforcementRequested() {
+		t.Fatal("none should request explicit reduced enforcement")
+	}
+}
+
+func TestFormatGovernanceBlockedErrorIncludesRemediation(t *testing.T) {
+	err := formatGovernanceBlockedError(os.ErrNotExist)
+	msg := err.Error()
+	if !strings.Contains(msg, "governance: blocked") {
+		t.Fatalf("blocked error missing governance header: %q", msg)
+	}
+	if !strings.Contains(msg, "Remediation") {
+		t.Fatalf("blocked error missing remediation guidance: %q", msg)
+	}
+	if !strings.Contains(msg, "--best-effort") {
+		t.Fatalf("blocked error missing explicit best-effort guidance: %q", msg)
 	}
 }
 
@@ -296,7 +380,7 @@ func TestResolvePythonSDKPathFromEnv(t *testing.T) {
 	sdkDir := t.TempDir()
 	t.Setenv("FARAMESH_PYTHON_SDK_PATH", sdkDir)
 
-	got, ok := resolvePythonSDKPath(t.TempDir())
+	got, ok := resolvePythonSDKPath()
 	if !ok {
 		t.Fatal("expected sdk path resolution from env override")
 	}
@@ -307,6 +391,15 @@ func TestResolvePythonSDKPathFromEnv(t *testing.T) {
 	}
 	if got != abs {
 		t.Fatalf("resolvePythonSDKPath = %q, want %q", got, abs)
+	}
+}
+
+func TestResolvePythonSDKPathDoesNotAutoDiscoverLocalRepo(t *testing.T) {
+	t.Setenv("FARAMESH_PYTHON_SDK_PATH", "")
+
+	got, ok := resolvePythonSDKPath()
+	if ok {
+		t.Fatalf("resolvePythonSDKPath should not auto-discover repo paths, got %q", got)
 	}
 }
 
