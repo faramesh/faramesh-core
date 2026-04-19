@@ -1,4 +1,4 @@
-agent stripe-interactive {
+agent interactive-ai {
   default deny
 
   # Stripe tool calls require brokered secrets from Vault.
@@ -16,6 +16,16 @@ agent stripe-interactive {
   }
 
   rules {
+    # Canonical operation IDs emitted by stripe_interactive_ai_agent.py submit_action().
+    permit database/read
+    permit database/read/*
+
+    deny pip/install reason: "package installation is blocked in production"
+    deny pip/install/* reason: "package installation is blocked in production"
+
+    defer stripe/allowlist_destination reason: "destination allowlist requires operator approval"
+    defer stripe/allowlist_destination/* reason: "destination allowlist requires operator approval"
+
     # Read and low-risk Stripe operations.
     permit stripe_get_object
     permit stripe_get_object/*
