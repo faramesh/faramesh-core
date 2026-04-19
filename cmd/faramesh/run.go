@@ -14,7 +14,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 
-	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 	"github.com/faramesh/faramesh-core/internal/core/runtimeenv"
 	"github.com/faramesh/faramesh-core/internal/core/sandbox"
 )
@@ -118,12 +117,9 @@ func runRunE(_ *cobra.Command, args []string) error {
 			return fmt.Errorf("daemon socket %s is not reachable (run faramesh up or faramesh start first)", childSocket)
 		}
 
-		autoPolicyPath := policyPath
+		autoPolicyPath := resolveAutoStartPolicyPath(policyPath)
 		if strings.TrimSpace(autoPolicyPath) == "" {
-			autoPolicyPath = detectDefaultPolicyPath()
-			if strings.TrimSpace(autoPolicyPath) == "" {
-				return fmt.Errorf("daemon socket %s is not reachable and no local policy file was found for auto-start; provide --policy or run faramesh up --policy <path>", childSocket)
-			}
+			return fmt.Errorf("daemon socket %s is not reachable and no policy path is available for auto-start; provide --policy or run faramesh up --policy <path>", childSocket)
 		}
 
 		result, err := ensureDaemonStarted(daemonStartOptions{
@@ -159,6 +155,9 @@ func runRunE(_ *cobra.Command, args []string) error {
 
 	if shouldEnforce(runEnforce) {
 		env = applyEnforcementStack(det, env, cwd, args, report)
+		if err := ensurePythonGovernanceBootstrap(name, args, env, report); err != nil {
+			return err
+		}
 	}
 
 	printEnforcementReport(det, report)
@@ -172,6 +171,8 @@ type enforcementReport struct {
 	childAgentID            string
 	pythonAutoloadAttempted bool
 	pythonAutoloadPath      string
+	pythonAutoloadVerified  bool
+	pythonAutoloadErr       error
 	credentialStrip         []string
 	seccomp                 bool
 	seccompErr              error
@@ -261,20 +262,19 @@ func applyRunRuntimeWiring(env []string, det *runtimeenv.DetectedEnvironment, cw
 }
 
 func resolveChildSocket(env []string) string {
-	envSocket := strings.TrimSpace(envValue(env, "FARAMESH_SOCKET"))
-	if envSocket != "" {
-		if f := rootCmd.PersistentFlags().Lookup("daemon-socket"); f == nil || !f.Changed {
-			return envSocket
+	return resolveDaemonSocketPreference(envValue(env, "FARAMESH_SOCKET"))
+}
+
+func resolveAutoStartPolicyPath(explicitPolicyPath string) string {
+	if policyPath := strings.TrimSpace(explicitPolicyPath); policyPath != "" {
+		return policyPath
+	}
+	if state, ok := readCurrentRuntimeStartState(); ok {
+		if policyPath := strings.TrimSpace(state.PolicyPath); policyPath != "" {
+			return policyPath
 		}
 	}
-
-	if socket := strings.TrimSpace(daemonSocket); socket != "" {
-		return socket
-	}
-	if envSocket != "" {
-		return envSocket
-	}
-	return sdk.SocketPath
+	return detectDefaultPolicyPath()
 }
 
 func resolveChildAgentID(env []string, explicit string, det *runtimeenv.DetectedEnvironment, cwd string, childArgs []string) string {
@@ -528,6 +528,39 @@ func applyEnforcementStack(det *runtimeenv.DetectedEnvironment, env []string, cw
 	return env
 }
 
+func ensurePythonGovernanceBootstrap(execPath string, childArgs []string, env []string, r *enforcementReport) error {
+	if !looksLikePythonCommand(childArgs) {
+		return nil
+	}
+	if !isPythonInterpreter(execPath) {
+		if r.pythonAutoloadPath == "" {
+			r.pythonAutoloadErr = fmt.Errorf("indirect launcher")
+		}
+		return nil
+	}
+
+	cmd := exec.Command(execPath, "-c", "import faramesh.autopatch")
+	cmd.Env = env
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		r.pythonAutoloadVerified = true
+		return nil
+	}
+
+	trimmed := strings.TrimSpace(string(output))
+	if trimmed == "" {
+		trimmed = err.Error()
+	}
+	r.pythonAutoloadErr = fmt.Errorf("%s", trimmed)
+
+	return fmt.Errorf("python governance bootstrap is unavailable for %s: %s; install faramesh-sdk in the target environment (pip install faramesh-sdk) or set FARAMESH_PYTHON_SDK_PATH, then retry", filepath.Base(execPath), trimmed)
+}
+
+func isPythonInterpreter(execPath string) bool {
+	name := strings.ToLower(strings.TrimSpace(filepath.Base(execPath)))
+	return strings.Contains(name, "python")
+}
+
 // stripAmbientCredentials removes well-known API key environment variables
 // from the child process environment. The agent must request credentials
 // through the Faramesh broker instead.
@@ -606,8 +639,15 @@ func printEnforcementReport(det *runtimeenv.DetectedEnvironment, r *enforcementR
 	check("Framework auto-patch (FARAMESH_AUTOLOAD)", r.autoload, nil)
 	if r.pythonAutoloadPath != "" {
 		green.Fprintf(os.Stderr, "  ✓ Python startup hook bootstrap (PYTHONPATH=%s)\n", r.pythonAutoloadPath)
+	}
+	if r.pythonAutoloadVerified {
+		green.Fprintf(os.Stderr, "  ✓ Python startup hook import preflight\n")
 	} else if r.pythonAutoloadAttempted {
-		yellow.Fprintf(os.Stderr, "  ○ Python startup hook path not detected (set FARAMESH_PYTHON_SDK_PATH or install faramesh-sdk)\n")
+		if r.pythonAutoloadErr != nil {
+			yellow.Fprintf(os.Stderr, "  ○ Python startup hook verification warning (%v)\n", r.pythonAutoloadErr)
+		} else if r.pythonAutoloadPath == "" {
+			yellow.Fprintf(os.Stderr, "  ○ Python startup hook path not detected (set FARAMESH_PYTHON_SDK_PATH or install faramesh-sdk)\n")
+		}
 	}
 	if len(r.credentialStrip) > 0 {
 		green.Fprintf(os.Stderr, "  ✓ Credential broker (stripped: %s)\n", strings.Join(r.credentialStrip, ", "))

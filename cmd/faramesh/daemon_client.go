@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -109,14 +110,23 @@ func resolveDaemonHTTPAddr() (string, error) {
 }
 
 func daemonSocketRequest(msg map[string]any) (json.RawMessage, error) {
+	socketPath := resolveDaemonSocketPreference(strings.TrimSpace(os.Getenv("FARAMESH_SOCKET")))
+	return daemonSocketRequestWithPath(socketPath, msg)
+}
+
+func daemonSocketRequestWithPath(socketPath string, msg map[string]any) (json.RawMessage, error) {
 	typ, _ := msg["type"].(string)
 	if strings.TrimSpace(typ) == "" {
 		return nil, fmt.Errorf("socket request missing type")
 	}
+	socketPath = strings.TrimSpace(socketPath)
+	if socketPath == "" {
+		socketPath = sdk.SocketPath
+	}
 
-	conn, err := net.DialTimeout("unix", daemonSocket, 3*time.Second)
+	conn, err := net.DialTimeout("unix", socketPath, 3*time.Second)
 	if err != nil {
-		return nil, fmt.Errorf("cannot reach daemon socket at %s: %w", daemonSocket, err)
+		return nil, fmt.Errorf("cannot reach daemon socket at %s: %w", socketPath, err)
 	}
 	defer conn.Close()
 
@@ -152,17 +162,60 @@ func daemonSocketRequest(msg map[string]any) (json.RawMessage, error) {
 
 func daemonSocketRequestAt(socketPath string, msg map[string]any) (json.RawMessage, error) {
 	socketPath = strings.TrimSpace(socketPath)
-	if socketPath == "" || socketPath == daemonSocket {
+	if socketPath == "" {
 		return daemonSocketRequest(msg)
 	}
+	return daemonSocketRequestWithPath(socketPath, msg)
+}
 
-	original := daemonSocket
-	daemonSocket = socketPath
-	defer func() {
-		daemonSocket = original
-	}()
+func resolveDaemonSocketPreference(envSocket string) string {
+	configuredSocket := strings.TrimSpace(daemonSocket)
+	if configuredSocket == "" {
+		configuredSocket = sdk.SocketPath
+	}
+	envSocket = strings.TrimSpace(envSocket)
 
-	return daemonSocketRequest(msg)
+	if isPersistentFlagExplicitlySet("daemon-socket") {
+		return configuredSocket
+	}
+	if envSocket != "" {
+		return envSocket
+	}
+	if state, ok := readCurrentRuntimeStartState(); ok {
+		if socket := strings.TrimSpace(state.SocketPath); socket != "" {
+			return socket
+		}
+	}
+	return configuredSocket
+}
+
+func isPersistentFlagExplicitlySet(name string) bool {
+	if rootCmd == nil {
+		return false
+	}
+	flag := rootCmd.PersistentFlags().Lookup(name)
+	return flag != nil && flag.Changed
+}
+
+func readCurrentRuntimeStartState() (runtimeStartState, bool) {
+	metaPath := filepath.Join(runtimeStateDirPath(""), "runtime.json")
+	state, err := readRuntimeStartState(metaPath)
+	if err != nil {
+		return runtimeStartState{}, false
+	}
+	return state, true
+}
+
+func runtimeStateDirPath(raw string) string {
+	dir := strings.TrimSpace(raw)
+	if dir != "" {
+		return dir
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return filepath.Join(os.TempDir(), "faramesh", "runtime")
+	}
+	return filepath.Join(home, ".faramesh", "runtime")
 }
 
 func readDaemonResponse(resp *http.Response) (json.RawMessage, error) {

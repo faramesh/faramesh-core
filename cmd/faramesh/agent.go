@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/fatih/color"
@@ -45,7 +47,14 @@ var agentUnkillCmd = &cobra.Command{
 	Short: "Deactivate kill switch for an agent — resume normal evaluation",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		raw, err := daemonPost("/api/v1/agent/unkill", map[string]string{"agent_id": args[0]})
+		raw, err := daemonSocketRequest(map[string]any{
+			"type":  "agent",
+			"op":    "unkill",
+			"agent": args[0],
+		})
+		if err != nil && daemonHTTPFallback && strings.TrimSpace(daemonAddr) != "" {
+			raw, err = daemonPost("/api/v1/agent/unkill", map[string]string{"agent_id": args[0]})
+		}
 		if err != nil {
 			return err
 		}
@@ -59,7 +68,13 @@ var agentKilledCmd = &cobra.Command{
 	Short: "List all agents with an active kill switch",
 	Args:  cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		raw, err := daemonGet("/api/v1/agent/killed")
+		raw, err := daemonSocketRequest(map[string]any{
+			"type": "agent",
+			"op":   "killed",
+		})
+		if err != nil && daemonHTTPFallback && strings.TrimSpace(daemonAddr) != "" {
+			raw, err = daemonGet("/api/v1/agent/killed")
+		}
 		if err != nil {
 			return err
 		}
@@ -76,10 +91,18 @@ var agentPendingCmd = &cobra.Command{
 	Args:  cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
 		q := map[string]string{}
+		socketReq := map[string]any{
+			"type": "agent",
+			"op":   "pending",
+		}
 		if agentPendingAgent != "" {
 			q["agent"] = agentPendingAgent
+			socketReq["agent"] = agentPendingAgent
 		}
-		raw, err := daemonGetWithQuery("/api/v1/agent/pending", q)
+		raw, err := daemonSocketRequest(socketReq)
+		if err != nil && daemonHTTPFallback && strings.TrimSpace(daemonAddr) != "" {
+			raw, err = daemonGetWithQuery("/api/v1/agent/pending", q)
+		}
 		if err != nil {
 			return err
 		}
@@ -93,7 +116,13 @@ var agentListCmd = &cobra.Command{
 	Short: "List all known agents",
 	Args:  cobra.NoArgs,
 	RunE: func(_ *cobra.Command, _ []string) error {
-		raw, err := daemonGet("/api/v1/agent/list")
+		raw, err := daemonSocketRequest(map[string]any{
+			"type": "agent",
+			"op":   "list",
+		})
+		if err != nil && daemonHTTPFallback && strings.TrimSpace(daemonAddr) != "" {
+			raw, err = daemonGet("/api/v1/agent/list")
+		}
 		if err != nil {
 			return err
 		}
@@ -107,7 +136,14 @@ var agentInspectCmd = &cobra.Command{
 	Short: "Show detailed state for a single agent",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		raw, err := daemonGetWithQuery("/api/v1/agent/inspect", map[string]string{"id": args[0]})
+		raw, err := daemonSocketRequest(map[string]any{
+			"type": "agent",
+			"op":   "inspect",
+			"id":   args[0],
+		})
+		if err != nil && daemonHTTPFallback && strings.TrimSpace(daemonAddr) != "" {
+			raw, err = daemonGetWithQuery("/api/v1/agent/inspect", map[string]string{"id": args[0]})
+		}
 		if err != nil {
 			return err
 		}
@@ -124,10 +160,19 @@ var agentHistoryCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
 		q := map[string]string{"id": args[0]}
+		socketReq := map[string]any{
+			"type": "agent",
+			"op":   "history",
+			"id":   args[0],
+		}
 		if agentHistoryWindow != "" {
 			q["window"] = agentHistoryWindow
+			socketReq["window"] = agentHistoryWindow
 		}
-		raw, err := daemonGetWithQuery("/api/v1/agent/history", q)
+		raw, err := daemonSocketRequest(socketReq)
+		if err != nil && daemonHTTPFallback && strings.TrimSpace(daemonAddr) != "" {
+			raw, err = daemonGetWithQuery("/api/v1/agent/history", q)
+		}
 		if err != nil {
 			return err
 		}
@@ -164,7 +209,9 @@ func runAgentDeny(cmd *cobra.Command, args []string) error {
 }
 
 func sendApproval(token string, approved bool, reason string) error {
-	conn, err := net.DialTimeout("unix", agentApproveSocket, 3*time.Second)
+	socketPath := resolveAgentControlSocket()
+
+	conn, err := net.DialTimeout("unix", socketPath, 3*time.Second)
 	if err != nil {
 		return fmt.Errorf("connect to daemon: %w", err)
 	}
@@ -204,7 +251,8 @@ func sendApproval(token string, approved bool, reason string) error {
 
 func runAgentKill(cmd *cobra.Command, args []string) error {
 	agentID := args[0]
-	conn, err := net.DialTimeout("unix", agentApproveSocket, 3*time.Second)
+	socketPath := resolveAgentControlSocket()
+	conn, err := net.DialTimeout("unix", socketPath, 3*time.Second)
 	if err != nil {
 		return fmt.Errorf("connect to daemon: %w", err)
 	}
@@ -231,4 +279,12 @@ func runAgentKill(cmd *cobra.Command, args []string) error {
 		fmt.Println("All subsequent calls from this agent will be DENIED.")
 	}
 	return nil
+}
+
+func resolveAgentControlSocket() string {
+	socketPath := strings.TrimSpace(agentApproveSocket)
+	if socketPath == "" || socketPath == sdk.SocketPath {
+		return resolveDaemonSocketPreference(strings.TrimSpace(os.Getenv("FARAMESH_SOCKET")))
+	}
+	return socketPath
 }

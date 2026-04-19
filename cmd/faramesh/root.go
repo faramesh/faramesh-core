@@ -17,7 +17,7 @@ const (
 )
 
 var commandTierByName = map[string]commandTier{
-	"agent":      commandTierStable,
+	"agent":      commandTierInternal,
 	"attach":     commandTierStable,
 	"approvals":  commandTierStable,
 	"audit":      commandTierStable,
@@ -57,9 +57,9 @@ var commandTierByName = map[string]commandTier{
 	"session":    commandTierInternal,
 	"setup":      commandTierStable,
 	"sign":       commandTierInternal,
-	"start":      commandTierStable,
+	"start":      commandTierAdvanced,
 	"status":     commandTierStable,
-	"stop":       commandTierStable,
+	"stop":       commandTierAdvanced,
 	"suggest":    commandTierStable,
 	"up":         commandTierStable,
 	"verify":     commandTierInternal,

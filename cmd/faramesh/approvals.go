@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -168,22 +169,7 @@ func resolveApprovalsURL(raw string) (string, error) {
 }
 
 func resolveApprovalsSocketPath() string {
-	if socket := strings.TrimSpace(daemonSocket); socket != "" {
-		return socket
-	}
-
-	stateDir, err := resolveRuntimeStateDir("")
-	if err != nil {
-		return daemonSocket
-	}
-	state, err := readRuntimeStartState(filepath.Join(stateDir, "runtime.json"))
-	if err != nil {
-		return daemonSocket
-	}
-	if socket := strings.TrimSpace(state.SocketPath); socket != "" {
-		return socket
-	}
-	return daemonSocket
+	return resolveDaemonSocketPreference(strings.TrimSpace(os.Getenv("FARAMESH_SOCKET")))
 }
 
 func serveEmbeddedApprovalsUI(bind string, openBrowser bool) (string, error) {

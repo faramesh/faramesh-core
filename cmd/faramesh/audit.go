@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fatih/color"
@@ -32,15 +34,16 @@ governance decision to the terminal in real time, with color-coded effects.
 }
 
 var auditVerifyCmd = &cobra.Command{
-	Use:   "verify <db-or-wal-path>",
+	Use:   "verify [db-or-wal-path]",
 	Short: "Verify chain integrity of a DPR WAL file or SQLite store",
 	Long: `Verify DPR chain integrity. Accepts either a .wal file (preferred,
 full chain validation with genesis/link/hash checks) or a .db file
 (fallback, per-agent chain link verification from SQLite).
 
+	faramesh audit verify
   faramesh audit verify /var/lib/faramesh/faramesh.wal
   faramesh audit verify /var/lib/faramesh/faramesh.db`,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MaximumNArgs(1),
 	RunE: runAuditVerify,
 }
 
@@ -123,9 +126,17 @@ func init() {
 // runAuditTail connects to the daemon and streams decisions.
 // The daemon pushes one JSON line per decision; we color-code and print.
 func runAuditTail(cmd *cobra.Command, args []string) error {
-	conn, err := net.DialTimeout("unix", tailSocket, 3*time.Second)
+	socketPath := strings.TrimSpace(tailSocket)
+	if socketFlag := cmd.Flags().Lookup("socket"); socketFlag == nil || !socketFlag.Changed {
+		socketPath = resolveDaemonSocketPreference(strings.TrimSpace(os.Getenv("FARAMESH_SOCKET")))
+	}
+	if socketPath == "" {
+		socketPath = sdk.SocketPath
+	}
+
+	conn, err := net.DialTimeout("unix", socketPath, 3*time.Second)
 	if err != nil {
-		return fmt.Errorf("connect to daemon at %s: %w\n\nIs the daemon running? Try: faramesh serve --policy policy.yaml", tailSocket, err)
+		return fmt.Errorf("connect to daemon at %s: %w\n\nIs the daemon running? Try: faramesh up --policy policy.yaml", socketPath, err)
 	}
 	defer conn.Close()
 
@@ -188,7 +199,16 @@ func runAuditTail(cmd *cobra.Command, args []string) error {
 }
 
 func runAuditVerify(cmd *cobra.Command, args []string) error {
-	path := args[0]
+	path := ""
+	if len(args) > 0 {
+		path = strings.TrimSpace(args[0])
+	} else {
+		resolved, err := resolveDefaultAuditVerifyPath()
+		if err != nil {
+			return err
+		}
+		path = resolved
+	}
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("file not found: %s", path)
 	}
@@ -201,6 +221,28 @@ func runAuditVerify(cmd *cobra.Command, args []string) error {
 		return verifyWAL(path, bold, green, red)
 	}
 	return verifyDB(path, bold, green, red)
+}
+
+func resolveDefaultAuditVerifyPath() (string, error) {
+	state, ok := readCurrentRuntimeStartState()
+	if !ok {
+		return "", fmt.Errorf("no runtime state found; provide a .wal or .db path")
+	}
+	dataDir := strings.TrimSpace(state.DataDir)
+	if dataDir == "" {
+		return "", fmt.Errorf("runtime state does not include a data directory; provide a .wal or .db path")
+	}
+
+	candidates := []string{
+		filepath.Join(dataDir, "faramesh.wal"),
+		filepath.Join(dataDir, "faramesh.db"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no DPR WAL/DB found in %s; provide a .wal or .db path", dataDir)
 }
 
 func runAuditCompact(cmd *cobra.Command, args []string) error {

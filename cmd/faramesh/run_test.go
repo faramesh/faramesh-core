@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 	"github.com/faramesh/faramesh-core/internal/core/runtimeenv"
 )
 
@@ -178,6 +179,55 @@ func TestResolveChildSocket_UsesFlagWhenProvided(t *testing.T) {
 	got := resolveChildSocket([]string{"FARAMESH_SOCKET=/tmp/from-env.sock"})
 	if got != "/tmp/from-flag.sock" {
 		t.Fatalf("resolveChildSocket flag-preferred = %q", got)
+	}
+}
+
+func TestResolveChildSocket_UsesRuntimeStateWhenFlagAndEnvUnset(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	runtimeDir := filepath.Join(home, ".faramesh", "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatalf("mkdir runtime dir: %v", err)
+	}
+	if err := writeRuntimeStartState(filepath.Join(runtimeDir, "runtime.json"), runtimeStartState{SocketPath: "/tmp/runtime.sock"}); err != nil {
+		t.Fatalf("write runtime state: %v", err)
+	}
+
+	oldDaemonSocket := daemonSocket
+	defer func() { daemonSocket = oldDaemonSocket }()
+	daemonSocket = sdk.SocketPath
+
+	f := rootCmd.PersistentFlags().Lookup("daemon-socket")
+	if f == nil {
+		t.Fatal("daemon-socket flag missing")
+	}
+	oldChanged := f.Changed
+	defer func() { f.Changed = oldChanged }()
+	f.Changed = false
+
+	got := resolveChildSocket(nil)
+	if got != "/tmp/runtime.sock" {
+		t.Fatalf("resolveChildSocket runtime-preferred = %q", got)
+	}
+}
+
+func TestResolveAutoStartPolicyPath_UsesRuntimeState(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	runtimeDir := filepath.Join(home, ".faramesh", "runtime")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatalf("mkdir runtime dir: %v", err)
+	}
+	want := "/tmp/runtime-policy.fpl"
+	if err := writeRuntimeStartState(filepath.Join(runtimeDir, "runtime.json"), runtimeStartState{PolicyPath: want}); err != nil {
+		t.Fatalf("write runtime state: %v", err)
+	}
+
+	got := resolveAutoStartPolicyPath("")
+	if got != want {
+		t.Fatalf("resolveAutoStartPolicyPath = %q, want %q", got, want)
 	}
 }
 

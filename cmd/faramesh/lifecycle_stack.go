@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 )
 
 type stackServiceMode string
@@ -141,10 +143,10 @@ func runUp(_ *cobra.Command, _ []string) error {
 
 	socketPath := strings.TrimSpace(upSocket)
 	if socketPath == "" {
-		socketPath = strings.TrimSpace(daemonSocket)
+		socketPath = resolveDaemonSocketPreference(strings.TrimSpace(os.Getenv("FARAMESH_SOCKET")))
 	}
 	if socketPath == "" {
-		socketPath = "/tmp/faramesh.sock"
+		socketPath = sdk.SocketPath
 	}
 
 	daemonResult, err := ensureDaemonStarted(daemonStartOptions{
@@ -282,7 +284,7 @@ func runDown(_ *cobra.Command, _ []string) error {
 
 	socketPath := strings.TrimSpace(state.SocketPath)
 	if socketPath == "" {
-		socketPath = strings.TrimSpace(daemonSocket)
+		socketPath = resolveDaemonSocketPreference(strings.TrimSpace(os.Getenv("FARAMESH_SOCKET")))
 	}
 
 	shutdownErr := requestDaemonShutdown(socketPath)
@@ -790,17 +792,10 @@ func stopManagedService(name string, state *managedServiceState, pidFile string)
 func requestDaemonShutdown(socketPath string) error {
 	socket := strings.TrimSpace(socketPath)
 	if socket == "" {
-		socket = strings.TrimSpace(daemonSocket)
+		socket = resolveDaemonSocketPreference(strings.TrimSpace(os.Getenv("FARAMESH_SOCKET")))
 	}
-	oldSocket := daemonSocket
-	if socket != "" {
-		daemonSocket = socket
-	}
-	defer func() {
-		daemonSocket = oldSocket
-	}()
 
-	_, err := daemonSocketRequest(map[string]any{"type": "shutdown"})
+	_, err := daemonSocketRequestAt(socket, map[string]any{"type": "shutdown"})
 	if err != nil && daemonHTTPFallback && strings.TrimSpace(daemonAddr) != "" {
 		_, err = daemonPost("/api/v1/shutdown", nil)
 	}
