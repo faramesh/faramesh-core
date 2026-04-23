@@ -94,6 +94,31 @@ class EventStoreTests(unittest.TestCase):
         store.ingest_callback_event(
             {
                 "event_type": "decision",
+                "call_id": "call-expired",
+                "agent_id": "agent-a",
+                "tool_id": "payment/refund",
+                "effect": "DEFER",
+                "reason_code": "REFUND_REVIEW",
+                "defer_token": "tok-expired",
+                "timestamp": "2026-04-06T10:00:01.500Z",
+            }
+        )
+        store.ingest_callback_event(
+            {
+                "event_type": "defer_resolved",
+                "defer_token": "tok-expired",
+                "status": "expired",
+                "reason": "token no longer pending",
+                "timestamp": "2026-04-06T10:00:01.600Z",
+            }
+        )
+        expired = store.get_action("call-expired")
+        self.assertIsNotNone(expired)
+        self.assertEqual(expired["state"], "expired")
+
+        store.ingest_callback_event(
+            {
+                "event_type": "decision",
                 "call_id": "call-permit",
                 "agent_id": "agent-a",
                 "tool_id": "http/get",

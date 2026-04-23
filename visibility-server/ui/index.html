@@ -715,6 +715,8 @@
     let actions = [];
     let filtered = [];
     let selectedId = null;
+    let selectedAction = null;
+    let selectionRequestSeq = 0;
     let autoRefreshTimer = null;
     let autoRefreshEnabled = false;
 
@@ -813,6 +815,42 @@
       return "low";
     }
 
+    async function fetchActionDetail(actionId) {
+      const res = await fetch(
+        `${BASE_URL}/v1/actions/${encodeURIComponent(actionId)}`
+      );
+      if (!res.ok) throw new Error(`Failed to fetch action ${actionId}`);
+      return res.json();
+    }
+
+    async function selectAction(action) {
+      if (!action || !action.id) return;
+
+      selectedId = action.id;
+      selectedAction = action;
+      renderTable();
+      renderDetail(selectedAction);
+
+      const requestSeq = ++selectionRequestSeq;
+      try {
+        const detailed = await fetchActionDetail(action.id);
+        if (requestSeq !== selectionRequestSeq || selectedId !== action.id) {
+          return;
+        }
+        selectedAction = detailed;
+
+        const idx = actions.findIndex((item) => item.id === detailed.id);
+        if (idx !== -1) {
+          actions[idx] = { ...actions[idx], ...detailed };
+        }
+
+        renderTable();
+        renderDetail(selectedAction);
+      } catch (err) {
+        console.error(err);
+      }
+    }
+
     function renderTable() {
       const tbody = el("actionsTableBody");
       tbody.innerHTML = "";
@@ -859,9 +897,7 @@
         tr.appendChild(createdTd);
 
         tr.addEventListener("click", () => {
-          selectedId = a.id;
-          renderTable();
-          renderDetail(a);
+          void selectAction(a);
         });
 
         tbody.appendChild(tr);
@@ -1010,8 +1046,37 @@
 
       if (selectedId) {
         const current = actions.find((a) => a.id === selectedId);
-        renderDetail(current || null);
+        if (!current) {
+          selectedId = null;
+          selectedAction = null;
+          renderDetail(null);
+          return;
+        }
+
+        const currentToken =
+          selectedAction && selectedAction.id === selectedId
+            ? selectedAction.approval_token
+            : null;
+
+        selectedAction = { ...current };
+        if (
+          selectedAction.status === "pending_approval" &&
+          currentToken &&
+          !selectedAction.approval_token
+        ) {
+          selectedAction.approval_token = currentToken;
+          if (
+            selectedAction.context &&
+            typeof selectedAction.context === "object" &&
+            !selectedAction.context.defer_token
+          ) {
+            selectedAction.context.defer_token = currentToken;
+          }
+        }
+
+        renderDetail(selectedAction);
       } else {
+        selectedAction = null;
         renderDetail(null);
       }
     }
@@ -1031,8 +1096,25 @@
           }
         );
         if (!res.ok) {
-          const t = await res.text();
-          throw new Error(t || "Approval failed");
+          let message = "Approval failed";
+          try {
+            const payload = await res.json();
+            if (typeof payload?.detail === "string" && payload.detail.trim()) {
+              message = payload.detail.trim();
+            } else if (
+              payload?.detail &&
+              typeof payload.detail.error === "string" &&
+              payload.detail.error.trim()
+            ) {
+              message = payload.detail.error.trim();
+            } else if (typeof payload?.error === "string" && payload.error.trim()) {
+              message = payload.error.trim();
+            }
+          } catch (_err) {
+            const t = await res.text();
+            if (t && t.trim()) message = t.trim();
+          }
+          throw new Error(message);
         }
         const updated = await res.json();
         showToast(approve ? "Action approved" : "Action denied");
@@ -1040,10 +1122,25 @@
         const idx = actions.findIndex((a) => a.id === action.id);
         if (idx !== -1) actions[idx] = updated;
         selectedId = updated.id;
+        selectedAction = updated;
         applyFilters();
       } catch (err) {
         console.error(err);
-        showToast("Approval error", true);
+        const message =
+          err && typeof err.message === "string" && err.message.trim()
+            ? err.message.trim()
+            : "Approval error";
+        showToast(message, true);
+
+        try {
+          const refreshed = await fetchActionDetail(action.id);
+          const idx = actions.findIndex((a) => a.id === action.id);
+          if (idx !== -1) actions[idx] = refreshed;
+          if (selectedId === action.id) selectedAction = refreshed;
+          applyFilters();
+        } catch (refreshErr) {
+          console.error(refreshErr);
+        }
       }
     }
 

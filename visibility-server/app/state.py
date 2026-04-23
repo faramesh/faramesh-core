@@ -42,6 +42,10 @@ def _defer_status_to_state(status: str) -> str:
     normalized = (status or "").lower()
     if normalized == "approved":
         return "approved"
+    if normalized == "pending":
+        return "pending"
+    if normalized == "expired" or normalized == "unknown":
+        return "expired"
     return "denied"
 
 

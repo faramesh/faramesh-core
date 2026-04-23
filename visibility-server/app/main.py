@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import shlex
 import threading
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +15,7 @@ from pydantic import BaseModel
 
 from app.integrity import run_integrity_check
 from app.socket_client import send_json_request, stream_json_lines
-from app.state import EventStore, utc_now_iso
+from app.state import EventStore, parse_timestamp, utc_now_iso
 
 VISIBILITY_DIR = Path(__file__).resolve().parents[1]
 UI_DIR = VISIBILITY_DIR / "ui"
@@ -34,6 +36,12 @@ STATE_DB_PATH = Path(
 EVENT_RETENTION = int(os.getenv("FARAMESH_EVENT_RETENTION", "2000"))
 STREAM_RETRY_SECONDS = float(os.getenv("FARAMESH_STREAM_RETRY_SECONDS", "1.0"))
 INTEGRITY_TIMEOUT_SECONDS = int(os.getenv("FARAMESH_INTEGRITY_TIMEOUT_SECONDS", "30"))
+PENDING_SYNC_INTERVAL_SECONDS = float(
+    os.getenv("FARAMESH_PENDING_SYNC_INTERVAL_SECONDS", "2.0")
+)
+PENDING_UNKNOWN_GRACE_SECONDS = float(
+    os.getenv("FARAMESH_PENDING_UNKNOWN_GRACE_SECONDS", "15.0")
+)
 AUDIT_COMMAND = shlex.split(
     os.getenv("FARAMESH_AUDIT_COMMAND", "go run ./cmd/faramesh audit verify {db_path}")
 )
@@ -45,6 +53,8 @@ STORE = EventStore(
 )
 STOP_EVENT = threading.Event()
 WORKER_THREADS: dict[str, threading.Thread] = {}
+PENDING_SYNC_LOCK = threading.RLock()
+PENDING_SYNC_LAST_AT = 0.0
 
 
 class StreamRuntime:
@@ -137,6 +147,28 @@ def _resolve_defer(token: str, approved: bool, reason: str) -> dict[str, object]
     }
     response = send_json_request(SOCKET_PATH, payload)
     if not bool(response.get("ok")):
+        daemon_error = str(response.get("error") or "").strip()
+        normalized_error = daemon_error.lower()
+        # If runtime no longer tracks this token, convert local action state away
+        # from pending so the UI no longer presents a dead approval.
+        if "unknown defer token" in normalized_error:
+            _record_defer_resolution(
+                token=token,
+                status="expired",
+                reason=(
+                    "approval token is no longer pending in runtime; "
+                    "refresh and request a new action"
+                ),
+            )
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "ok": False,
+                    "error": "approval token is stale or no longer pending",
+                    "code": "stale_approval_token",
+                    "daemon_error": daemon_error,
+                },
+            )
         raise HTTPException(status_code=409, detail=response)
 
     STORE.ingest_callback_event(
@@ -149,6 +181,88 @@ def _resolve_defer(token: str, approved: bool, reason: str) -> dict[str, object]
         }
     )
     return response
+
+
+def _record_defer_resolution(
+    token: str,
+    status: str,
+    reason: str,
+    agent_id: str = "",
+) -> None:
+    STORE.ingest_callback_event(
+        {
+            "event_type": "defer_resolved",
+            "defer_token": token,
+            "status": status,
+            "reason": reason,
+            "agent_id": agent_id,
+            "timestamp": utc_now_iso(),
+        }
+    )
+
+
+def _pending_token_from_item(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for key in ("approval_id", "defer_token", "approval_token", "token", "id"):
+        token = str(item.get(key) or "").strip()
+        if token:
+            return token
+    return ""
+
+
+def _live_pending_token_set() -> set[str] | None:
+    response = _daemon_call({"type": "agent", "op": "pending"}, timeout_seconds=0.75)
+    items = response.get("items")
+    if not isinstance(items, list):
+        return None
+
+    tokens: set[str] = set()
+    for item in items:
+        token = _pending_token_from_item(item)
+        if token:
+            tokens.add(token)
+    return tokens
+
+
+def _sync_pending_actions_with_runtime(force: bool = False) -> None:
+    global PENDING_SYNC_LAST_AT
+
+    now_monotonic = time.monotonic()
+    with PENDING_SYNC_LOCK:
+        if (
+            not force
+            and PENDING_SYNC_LAST_AT > 0
+            and now_monotonic - PENDING_SYNC_LAST_AT < PENDING_SYNC_INTERVAL_SECONDS
+        ):
+            return
+        PENDING_SYNC_LAST_AT = now_monotonic
+
+    live_tokens = _live_pending_token_set()
+    if live_tokens is None:
+        return
+
+    now_utc = datetime.now(timezone.utc)
+    pending_actions = STORE.pending_defers()
+    for action in pending_actions:
+        token = str(action.get("defer_token") or "").strip()
+        if not token or token in live_tokens:
+            continue
+
+        updated_at = parse_timestamp(str(action.get("updated_at") or ""))
+        age_seconds = max(0.0, (now_utc - updated_at).total_seconds())
+        if age_seconds < PENDING_UNKNOWN_GRACE_SECONDS:
+            continue
+
+        _record_defer_resolution(
+            token=token,
+            status="expired",
+            reason=(
+                "approval token is no longer in the runtime pending queue; "
+                "treating as stale"
+            ),
+            agent_id=str(action.get("agent_id") or ""),
+        )
 
 
 def _daemon_call(payload: dict[str, Any], timeout_seconds: float = 1.5) -> dict[str, Any]:
@@ -273,6 +387,8 @@ def get_action(call_id: str) -> dict[str, Any]:
 
 
 def _resolve_action_defer_token(call_id: str, provided_token: str) -> str:
+    _sync_pending_actions_with_runtime(force=True)
+
     action = STORE.get_action(call_id)
     if action is None:
         raise HTTPException(status_code=404, detail="action not found")
@@ -300,6 +416,7 @@ def list_v1_actions(
     tool: str | None = None,
     q: str | None = None,
 ) -> list[dict[str, Any]]:
+    _sync_pending_actions_with_runtime(force=False)
     bounded_limit = max(1, min(limit, 1000))
     return STORE.list_legacy_actions(
         limit=bounded_limit,
@@ -312,6 +429,7 @@ def list_v1_actions(
 
 @app.get("/v1/actions/{call_id:path}")
 def get_v1_action(call_id: str) -> dict[str, Any]:
+    _sync_pending_actions_with_runtime(force=False)
     action = STORE.get_legacy_action(call_id)
     if action is None:
         raise HTTPException(status_code=404, detail="action not found")
@@ -320,6 +438,8 @@ def get_v1_action(call_id: str) -> dict[str, Any]:
 
 @app.post("/v1/actions/{call_id:path}/approval")
 def approve_v1_action(call_id: str, body: ApprovalBody) -> dict[str, Any]:
+    _sync_pending_actions_with_runtime(force=True)
+
     action = STORE.get_legacy_action(call_id)
     if action is None:
         raise HTTPException(status_code=404, detail="action not found")
