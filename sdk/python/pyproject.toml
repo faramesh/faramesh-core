@@ -4,7 +4,7 @@ version = "0.3.2"
 description = "Faramesh Python SDK - Production-ready client for the Faramesh Execution Governor API"
 requires-python = ">=3.9"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "Elastic-2.0" }
 
 authors = [
   { name = "Faramesh Contributors" }

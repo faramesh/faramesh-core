@@ -2,7 +2,7 @@ class Faramesh < Formula
   desc "Pre-execution governance engine for AI agents"
   homepage "https://faramesh.dev"
   url "https://github.com/faramesh/faramesh-core/archive/refs/tags/v#{version}.tar.gz"
-  license "MIT"
+  license "Elastic-2.0"
 
   depends_on "go" => :build
 
