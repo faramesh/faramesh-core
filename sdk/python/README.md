@@ -353,4 +353,4 @@ See `docs/SDK-Python.md` for detailed API reference.
 
 ## License
 
-MIT License
+Elastic License 2.0

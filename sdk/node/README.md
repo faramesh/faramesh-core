@@ -500,4 +500,4 @@ The built files will be in `dist/`.
 
 ## License
 
-MIT License
+Elastic License 2.0

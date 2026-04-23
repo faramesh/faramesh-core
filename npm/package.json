@@ -2,7 +2,7 @@
   "name": "@faramesh/cli",
   "version": "1.2.7",
   "description": "AI agent execution control. Policy-driven governance for every tool call.",
-  "license": "MIT",
+  "license": "Elastic-2.0",
   "homepage": "https://faramesh.dev",
   "repository": {
     "type": "git",
