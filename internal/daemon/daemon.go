@@ -45,6 +45,7 @@ import (
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 	deferbackends "github.com/faramesh/faramesh-core/internal/core/defer/backends"
 	"github.com/faramesh/faramesh-core/internal/core/degraded"
+	"github.com/faramesh/faramesh-core/internal/core/delegate"
 	"github.com/faramesh/faramesh-core/internal/core/dpr"
 	"github.com/faramesh/faramesh-core/internal/core/jobs"
 	"github.com/faramesh/faramesh-core/internal/core/multiagent"
@@ -147,6 +148,10 @@ type Config struct {
 	// development escape hatch. Keep false in production strict mode.
 	AllowEnvCredentialFallback bool
 
+	// DelegateMaxDepth caps delegation chain length. Zero falls back to
+	// delegate.DefaultMaxDepth.
+	DelegateMaxDepth int
+
 	// Credential broker backends.
 	VaultAddr         string
 	VaultToken        string
@@ -194,6 +199,7 @@ type Daemon struct {
 	revocationMgr        *principal.RevocationManager
 	workloadProvider     principal.WorkloadProvider
 	ebpfAdapter          ebpf.Lifecycle
+	delegate             *delegate.Service
 	log                  *zap.Logger
 	fleetPolicyApply     func(context.Context, fleetPolicyReloadEvent) (bool, error)
 }
@@ -605,6 +611,13 @@ func (d *Daemon) start() error {
 		return fmt.Errorf("load DPR HMAC key: %w", err)
 	}
 
+	d.delegate = delegate.NewService(
+		delegate.NewMemoryStore(),
+		delegate.DeriveKey(hmacKey),
+		d.cfg.DelegateMaxDepth,
+		nil,
+	)
+
 	sessionManager := session.NewManager()
 	dailyCostPath := filepath.Join(d.cfg.DataDir, "session_daily_costs.db")
 	if dailyStore, err := session.NewSQLiteDailyCostStore(dailyCostPath); err != nil {
@@ -901,6 +914,7 @@ func (d *Daemon) start() error {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", observe.Default.Handler())
 		mux.HandleFunc("/healthz", d.handleHealthz)
+		d.registerDelegateRoutes(mux)
 		d.metricsSrv = &http.Server{Addr: fmt.Sprintf(":%d", d.cfg.MetricsPort), Handler: mux}
 		go func() {
 			if err := d.metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
