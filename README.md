@@ -301,6 +301,7 @@ Ready-to-use FPL policies in `examples/`:
 | [`infra-bot.fpl`](examples/infra-bot.fpl) | Infrastructure agent with strict sandbox, Terraform governance, and duty delegation |
 | [`customer-support.fpl`](examples/customer-support.fpl) | Support agent with intake/resolve phases, credit limits, and mass-email protection |
 | [`mcp-server.fpl`](examples/mcp-server.fpl) | MCP server wrapper policy for IDE agents (Claude Code, Cursor) |
+| [`coding-agent.fpl`](examples/coding-agent.fpl) | Coding/dev assistant agent — explore + edit phases, blocks destructive shell, defers force pushes and package installs |
 
 ## Repository Map
 
