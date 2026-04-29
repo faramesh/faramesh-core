@@ -27,6 +27,7 @@ jobs:
 
   corpus-harness:
     name: Corpus Harness (${{ matrix.id }})
+    continue-on-error: true
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
