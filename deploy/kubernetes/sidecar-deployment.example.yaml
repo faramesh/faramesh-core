@@ -1,0 +1,77 @@
+# Example: agent workload + faramesh governance daemon as sidecar sharing a Unix socket.
+# Build image: docker build -t faramesh:local -f Dockerfile .
+# Policy: create ConfigMap `faramesh-policy` with key `policy.yaml` (see README in this directory).
+#
+# This is a reference layout — tune images, resources, probes, and securityContext for production.
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: faramesh-policy
+data:
+  policy.yaml: |
+    faramesh-version: "1.0"
+    agent-id: "k8s-agent"
+    default_effect: deny
+    rules:
+      - id: allow-http
+        match: { tool: "http/get" }
+        effect: permit
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: governed-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: governed-agent
+  template:
+    metadata:
+      labels:
+        app: governed-agent
+    spec:
+      containers:
+        - name: agent
+          image: your-agent:latest
+          env:
+            - name: FARAMESH_SOCKET
+              value: /var/run/faramesh/faramesh.sock
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Set from CI/CD or a mutating webhook; vars.region in policy reads FARAMESH_REGION first.
+            - name: FARAMESH_REGION
+              value: "eu-west-1"
+          volumeMounts:
+            - name: faramesh-sock
+              mountPath: /var/run/faramesh
+        - name: faramesh
+          image: faramesh:local
+          args:
+            - serve
+            - --policy
+            - /policy/policy.yaml
+            - --socket
+            - /var/run/faramesh/faramesh.sock
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: FARAMESH_REGION
+              value: "eu-west-1"
+          volumeMounts:
+            - name: faramesh-sock
+              mountPath: /var/run/faramesh
+            - name: policy
+              mountPath: /policy
+              readOnly: true
+      volumes:
+        - name: faramesh-sock
+          emptyDir: {}
+        - name: policy
+          configMap:
+            name: faramesh-policy

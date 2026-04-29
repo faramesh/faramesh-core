@@ -1,0 +1,13 @@
+agent demo {
+  default permit
+
+  rules {
+    deny! shell/run
+      reason: "shell command blocked by policy"
+    defer stripe/refund
+      reason: "refund requires finance approval"
+    deny send_email
+      reason: "email sends require manual review"
+    permit http/get
+  }
+}

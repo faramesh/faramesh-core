@@ -1,0 +1,34 @@
+# Top-level repository entries allowed in git.
+# CI fails if HEAD contains any root entry not listed here.
+.dockerignore
+.gitattributes
+.github
+.gitignore
+CODEOWNERS
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+Dockerfile
+Formula
+LICENSE
+Makefile
+README.md
+SECURITY.md
+cmd
+demo-repo.png
+deploy
+docs
+examples
+faramesh
+go.mod
+go.sum
+install.sh
+internal
+npm
+packs
+policies
+readme-logo.svg
+reports
+scripts
+sdk
+tests
+visibility-server

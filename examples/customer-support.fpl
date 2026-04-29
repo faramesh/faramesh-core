@@ -1,0 +1,43 @@
+agent support-bot {
+  default deny
+  model "gpt-4o"
+
+  budget session {
+    max $200
+    max_calls 50
+    on_exceed deny
+  }
+
+  phase intake {
+    permit read_customer
+    permit get_order
+    permit search_kb
+  }
+
+  phase resolve {
+    permit issue_credit when args.amount <= 25
+    defer issue_credit when args.amount > 25
+      notify: "support-lead"
+      reason: "credit above $25 requires approval"
+
+    permit send_email
+      when args_array_len("recipients") <= 1
+    deny! send_email
+      when args_array_len("recipients") > 10
+      reason: "mass email blocked"
+  }
+
+  rules {
+    deny! shell/*
+    deny! fs/*
+    deny! db/drop
+    deny! db/truncate
+  }
+
+  credential zendesk {
+    scope read_customer get_order search_kb send_email issue_credit
+    backend vault
+    path secret/data/zendesk
+    ttl 15m
+  }
+}

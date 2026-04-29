@@ -1,0 +1,328 @@
+name: release-gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "**"
+
+concurrency:
+  group: release-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GOFLAGS: -mod=readonly
+
+jobs:
+  policy-replay:
+    name: Policy Replay (P8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run deterministic policy replay fixtures
+        run: go run ./cmd/faramesh policy backtest --policy tests/policy_replay_policy.yaml --fixtures tests/policy_replay_fixtures.json
+
+  policy-suite:
+    name: Policy Suite (P8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run policy fixture suite
+        run: go run ./cmd/faramesh policy suite tests/policy_suite_policy.yaml --fixtures tests/policy_suite_fixtures.yaml
+
+  policy-fpl:
+    name: FPL Golden (P4/P8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Compile FPL golden file
+        run: |
+          go run ./cmd/faramesh policy fpl --json internal/core/fpl/testdata/golden.fpl | jq -e '.rules | type == "array" and length >= 1'
+
+  verify-buildinfo:
+    name: Buildinfo fingerprint (P8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Emit and validate buildinfo JSON
+        run: |
+          go run ./cmd/faramesh verify buildinfo --emit | jq -e '(.go_version | length) > 0 and (.main_path | length) > 0'
+
+  docker-image:
+    name: Docker image build (release binary)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        run: docker build -t faramesh:ci -f Dockerfile .
+
+  policy-backtest:
+    name: Policy Backtest (P8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run deterministic policy backtest
+        run: go run ./cmd/faramesh policy backtest
+
+  full-test-suite:
+    name: Full Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run full go test
+        run: go test ./... -count=1
+
+  adversarial-tests:
+    name: Adversarial Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run adversarial profile
+        run: go test ./... -tags=adversarial -count=1
+
+  integration-matrix:
+    name: Integration (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [default, race]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run integration default profile
+        if: matrix.profile == 'default'
+        run: go test ./... -count=1
+
+      - name: Run integration race profile
+        if: matrix.profile == 'race'
+        run: go test ./... -race -count=1
+
+  corpus-matrix:
+    name: Corpus contract + matrix (release)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: sdk/node/package-lock.json
+
+      - name: Corpus check
+        run: make corpus-check
+
+  corpus-harness:
+    name: Corpus Harness (${{ matrix.id }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: langchain-governed-smoke
+            entry: tests/corpus/framework-hooks/langchain-governed-smoke
+          - id: langchain-fpl
+            entry: tests/corpus/framework-hooks/langchain-fpl
+          - id: langgraph-fpl
+            entry: tests/corpus/framework-hooks/langgraph-fpl
+          - id: langchain-simple
+            entry: tests/corpus/framework-hooks/langchain-simple
+          - id: langgraph-single-agent
+            entry: tests/corpus/framework-hooks/langgraph-single-agent
+          - id: deepagents-governed
+            entry: tests/corpus/framework-hooks/deepagents-governed
+          - id: langgraph-multi-agent
+            entry: tests/corpus/framework-hooks/langgraph-multi-agent
+          - id: mcp-stdio-wrap
+            entry: tests/corpus/mcp-servers/mcp-stdio-wrap
+          - id: mcp-http-sse
+            entry: tests/corpus/mcp-servers/mcp-http-sse
+          - id: mcp-node-sdk
+            entry: tests/corpus/mcp-servers/mcp-node-sdk
+          - id: linux-interception
+            entry: tests/corpus/runtime-core/linux-interception
+          - id: defer-timeout-resume
+            entry: tests/corpus/runtime-core/defer-timeout-resume
+          - id: burst-rate-limits
+            entry: tests/corpus/runtime-core/burst-rate-limits
+          - id: policy-roundtrip
+            entry: tests/corpus/policy-core/policy-roundtrip
+          - id: socket-e2e-acceptance
+            entry: tests/corpus/runtime-core/socket-e2e-acceptance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: sdk/node/package-lock.json
+
+      - name: Install Vault CLI
+        run: |
+          set -euo pipefail
+          VAULT_VERSION="1.17.6"
+          sudo apt-get update
+          sudo apt-get install -y unzip
+          curl -fsSL -o vault.zip "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip"
+          unzip -q vault.zip
+          sudo install vault /usr/local/bin/vault
+          vault version
+
+      - name: Run corpus entry
+        run: bash scripts/run_corpus_entry.sh "${{ matrix.entry }}"
+
+  linux-interception-matrix:
+    name: Linux Interception Matrix (${{ matrix.profile }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [auto, full, minimal]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run Linux interception harness
+        run: FARAMESH_LINUX_INTERCEPT_PROFILE=${{ matrix.profile }} make linux-interception-harness
+
+  node-autopatch-real-stack:
+    name: Node Autopatch Real Stack (socket)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: sdk/node/package-lock.json
+
+      - name: Run Node autopatch real-stack harness
+        run: make node-autopatch-harness
+

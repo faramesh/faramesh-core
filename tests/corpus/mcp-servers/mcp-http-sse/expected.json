@@ -1,0 +1,40 @@
+{
+  "status": "passing",
+  "framework": "mcp-http-sse",
+  "pattern": "http-sse",
+  "coverage_tier": "A",
+  "harness": "tests/mcp_http_sse_real_stack.sh",
+  "replay_parity": {
+    "asserted": true,
+    "strict_reason": true,
+    "source": "wal"
+  },
+  "expected_tools": [
+    {"tool_id": "safe/tool", "expected_effect": "permit"},
+    {"tool_id": "danger/x", "expected_effect": "deny"}
+  ],
+  "enforcement_surfaces": {
+    "framework_hook": false,
+    "attachable": true,
+    "governable": true,
+    "policy_visible": true,
+    "credential_brokered": false,
+    "shell_governed": false,
+    "network_governed": true,
+    "mcp_governed": true,
+    "audit_complete": true
+  },
+  "known_gaps": [
+    "HTTP SSE row does not yet cover edge-auth, protocol-version strict mode, or session-expiry hardening"
+  ],
+  "detection": {
+    "framework_detected": true,
+    "framework_name": "mcp",
+    "trust_level": "strong"
+  },
+  "hook_truth": {
+    "interception_layer": "mcp_gateway",
+    "pre_execution_gate": true,
+    "dpr_evidence_expected": true
+  }
+}

@@ -1,0 +1,26 @@
+# Faramesh Policy Language — infrastructure agent governance
+
+agent infra-bot {
+  default deny
+  model "claude-sonnet-4-20250514"
+  framework "autogen"
+
+  budget session {
+    max $100
+    daily $500
+    on_exceed defer
+  }
+
+  rules {
+    deny! shell/run when args.cmd != nil && args.cmd matches "rm -rf|DROP TABLE|terraform destroy"
+      reason: "destructive command blocked"
+
+    defer shell/run when args.cmd != nil && args.cmd matches "terraform|kubectl|docker"
+      notify: "platform-team"
+      reason: "infrastructure change requires approval"
+
+    permit shell/run when args.cmd != nil && args.cmd matches "ls|cat|grep|find|echo"
+
+    deny * reason: "unlisted tools denied by default"
+  }
+}

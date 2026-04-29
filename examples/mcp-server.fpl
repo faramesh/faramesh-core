@@ -1,0 +1,21 @@
+agent mcp-server {
+  default deny
+  framework "mcp"
+
+  rules {
+    deny! shell/*
+      reason: "MCP servers must not run shell commands"
+
+    deny! fs/write
+      when args.path != nil && args.path matches "/etc|/usr|/var"
+      reason: "system path write blocked"
+
+    permit tools/list
+    permit tools/call
+      when args.tool_name != nil && args.tool_name matches "search|read|query"
+
+    defer tools/call
+      when args.tool_name != nil && args.tool_name matches "delete|drop|destroy"
+      notify: "ops-team"
+  }
+}

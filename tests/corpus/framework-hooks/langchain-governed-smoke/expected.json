@@ -1,0 +1,40 @@
+{
+  "status": "passing",
+  "framework": "langchain",
+  "pattern": "smoke",
+  "coverage_tier": "B",
+  "harness": "tests/langchain_single_agent_governed.sh",
+  "replay_parity": {
+    "asserted": true,
+    "strict_reason": true,
+    "source": "wal"
+  },
+  "expected_tools": [
+    {"tool_id": "http/get/run", "expected_effect": "permit"}
+  ],
+  "enforcement_surfaces": {
+    "framework_hook": true,
+    "attachable": true,
+    "governable": true,
+    "policy_visible": true,
+    "credential_brokered": false,
+    "shell_governed": false,
+    "network_governed": true,
+    "mcp_governed": false,
+    "audit_complete": true
+  },
+  "known_gaps": [
+    "smoke harness does not cover deny or defer outcomes",
+    "smoke harness does not exercise credential-brokered or shell-governed paths"
+  ],
+  "detection": {
+    "framework_detected": true,
+    "framework_name": "langchain",
+    "trust_level": "strong"
+  },
+  "hook_truth": {
+    "interception_layer": "framework_autopatch",
+    "pre_execution_gate": true,
+    "dpr_evidence_expected": true
+  }
+}

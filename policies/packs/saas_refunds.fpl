@@ -1,0 +1,10 @@
+agent saas-refunds {
+  default deny
+
+  rules {
+    defer stripe/refund when args.amount > 100
+      reason: "large refunds require approval"
+    permit stripe/refund when args.amount <= 100
+    permit stripe/*
+  }
+}

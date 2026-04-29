@@ -1,0 +1,41 @@
+{
+  "status": "passing",
+  "framework": "mcp-node-sdk",
+  "pattern": "standalone-mcp",
+  "coverage_tier": "A",
+  "harness": "tests/node_autopatch_real_stack.sh",
+  "replay_parity": {
+    "asserted": true,
+    "strict_reason": true,
+    "source": "wal"
+  },
+  "expected_tools": [
+    {"tool_id": "http/get", "expected_effect": "permit"},
+    {"tool_id": "shell/run", "expected_effect": "deny"},
+    {"tool_id": "stripe/refund", "expected_effect": "defer"}
+  ],
+  "enforcement_surfaces": {
+    "framework_hook": false,
+    "attachable": true,
+    "governable": true,
+    "policy_visible": true,
+    "credential_brokered": false,
+    "shell_governed": true,
+    "network_governed": true,
+    "mcp_governed": true,
+    "audit_complete": true
+  },
+  "known_gaps": [
+    "this row covers Node MCP autopatch, not stdio or HTTP SSE server variants"
+  ],
+  "detection": {
+    "framework_detected": true,
+    "framework_name": "mcp-node-sdk",
+    "trust_level": "strong"
+  },
+  "hook_truth": {
+    "interception_layer": "framework_autopatch",
+    "pre_execution_gate": true,
+    "dpr_evidence_expected": true
+  }
+}

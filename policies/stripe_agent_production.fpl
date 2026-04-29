@@ -1,0 +1,95 @@
+agent interactive-ai {
+  default deny
+
+  # Stripe tool calls require brokered secrets from Vault.
+  credential stripe_secret {
+    scope stripe stripe/* stripe_create_customer stripe_create_customer/* stripe_search_customer stripe_search_customer/* stripe_create_payment_intent stripe_create_payment_intent/* stripe_get_object stripe_get_object/* stripe_refund stripe_refund/* stripe_list_recent_events stripe_list_recent_events/* stripe_connect_create_account stripe_connect_create_account/* stripe_allowlist_destination stripe_allowlist_destination/* stripe_create_invoice stripe_create_invoice/* stripe_transfer_test stripe_transfer_test/* stripe_list_transfers stripe_list_transfers/* stripe_list_refunds stripe_list_refunds/* stripe_get_balance stripe_get_balance/*
+    backend vault
+    max_scope stripe
+  }
+
+  # Optional outbound API tool credential routing (for openrouter and similar HTTP calls).
+  credential openrouter_secret {
+    scope openrouter openrouter/* openrouter_model openrouter_model/* make_web_request make_web_request/*
+    backend vault
+    max_scope openrouter
+  }
+
+  rules {
+    # Canonical operation IDs emitted by stripe_interactive_ai_agent.py submit_action().
+    permit database/read
+    permit database/read/*
+
+    permit pip/install
+    permit pip/install/*
+
+    defer stripe/allowlist_destination reason: "destination allowlist requires operator approval"
+    defer stripe/allowlist_destination/* reason: "destination allowlist requires operator approval"
+
+    # Read and low-risk Stripe operations.
+    permit stripe/get_object
+    permit stripe/get_object/*
+    permit stripe/list_recent_events
+    permit stripe/list_recent_events/*
+    permit stripe/search_customer
+    permit stripe/search_customer/*
+    permit stripe/list_transfers
+    permit stripe/list_transfers/*
+    permit stripe/list_refunds
+    permit stripe/list_refunds/*
+    permit stripe/get_balance
+    permit stripe/get_balance/*
+
+    # Medium-risk operations requiring human approval.
+    defer stripe/create_customer reason: "customer creation requires operator approval"
+    defer stripe/create_customer/* reason: "customer creation requires operator approval"
+    defer stripe/create_payment_intent reason: "payment intent requires operator approval"
+    defer stripe/create_payment_intent/* reason: "payment intent requires operator approval"
+    defer stripe/connect_create_account reason: "connect account creation requires operator approval"
+    defer stripe/connect_create_account/* reason: "connect account creation requires operator approval"
+    defer stripe/allowlist_destination reason: "destination allowlist requires operator approval"
+    defer stripe/allowlist_destination/* reason: "destination allowlist requires operator approval"
+    defer stripe/create_invoice reason: "invoice creation requires operator approval"
+    defer stripe/create_invoice/* reason: "invoice creation requires operator approval"
+
+    # Refunds are denied by default in this policy profile.
+    deny stripe/refund_execute reason: "refund execution is blocked in this profile"
+    deny stripe/refund_execute/* reason: "refund execution is blocked in this profile"
+
+    # Transfers remain defer-gated for operator approval.
+    defer stripe/transfer_execute reason: "transfer requires explicit operator approval"
+    defer stripe/transfer_execute/* reason: "transfer requires explicit operator approval"
+
+    # Non-stripe helper operations.
+    permit http/get
+    permit http/get/*
+    permit http/post
+    permit http/post/*
+    permit http/*
+    permit web_fetch
+    permit web_fetch/*
+    permit query_database
+    permit query_database/*
+    permit make_web_request
+    permit make_web_request/*
+
+    # Explicitly blocked actions.
+    permit shell/execute
+    permit shell/execute/*
+    defer stripe/refund_execute when args.amount > 50000 reason: "high-value refund requires operator approval"
+    deny filesystem/batch_create reason: "filesystem mutation tool is blocked in production"
+    deny filesystem/batch_create/* reason: "filesystem mutation tool is blocked in production"
+    deny browser/search reason: "browser automation is blocked in production"
+    deny browser/search/* reason: "browser automation is blocked in production"
+
+    # Legacy aliases retained for compatibility with older local demos.
+    permit run_shell_command 
+    permit run_shell_command/* 
+    permit install_package
+    permit install_package/*
+    deny create_files reason: "filesystem mutation tool is blocked in production"
+    deny create_files/* reason: "filesystem mutation tool is blocked in production"
+    deny search_google reason: "browser automation is blocked in production"
+    deny search_google/* reason: "browser automation is blocked in production"
+  }
+}

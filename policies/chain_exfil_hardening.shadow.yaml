@@ -1,0 +1,103 @@
+faramesh-version: "1.0"
+agent-id: "outbound-assistant"
+default_effect: permit
+
+rules:
+  - id: shadow-email-sequence-read-to-draft
+    match:
+      tool: "draft_email_with_body"
+      when: "history_sequence('read_customer_db', 'draft_email_with_body')"
+    effect: shadow
+    reason: "direct read->draft sequence would be blocked"
+    reason_code: "SEQUENCE_EXFIL_BLOCK_SHADOW"
+
+  - id: shadow-email-after-recent-customer-read
+    match:
+      tool: "draft_email_with_body"
+      when: "history_contains_within('read_customer_db', 300)"
+    effect: shadow
+    reason: "recent customer read before outbound draft requires review"
+    reason_code: "SEQUENCE_EXFIL_REVIEW_SHADOW"
+
+  - id: shadow-draft-missing-purpose
+    match:
+      tool: "draft_email_with_body"
+      when: "!purpose('customer_support_response')"
+    effect: shadow
+    reason: "outbound draft purpose must be customer_support_response"
+    reason_code: "PURPOSE_MISMATCH_SHADOW"
+
+  - id: shadow-draft-multi-recipient
+    match:
+      tool: "draft_email_with_body"
+      when: "args_array_len('recipients') != 1"
+    effect: shadow
+    reason: "exactly one recipient is allowed"
+    reason_code: "RECIPIENT_CARDINALITY_SHADOW"
+
+  - id: shadow-draft-non-allowlisted-domain
+    match:
+      tool: "draft_email_with_body"
+      when: "!args_array_any_match('recipients', '*@company.com')"
+    effect: shadow
+    reason: "recipient domain not in allowlist"
+    reason_code: "RECIPIENT_DOMAIN_BLOCKED_SHADOW"
+
+  - id: shadow-draft-high-risk-intent
+    match:
+      tool: "draft_email_with_body"
+      when: "session.intent_class == 'potentially_adversarial' || session.intent_class == 'high_risk_intent'"
+    effect: shadow
+    reason: "high-risk intent classification requires approval"
+    reason_code: "INTENT_CLASS_HIGH_RISK_SHADOW"
+
+  - id: permit-draft-safe
+    match:
+      tool: "draft_email_with_body"
+      when: "purpose('customer_support_response') && args_array_len('recipients') == 1 && args_array_any_match('recipients', '*@company.com')"
+    effect: permit
+    reason: "approved outbound draft"
+    reason_code: "DRAFT_SAFE"
+
+  - id: shadow-proxy-sequence-read-to-egress
+    match:
+      tool: "proxy/http"
+      when: "history_sequence('read_customer_db', 'proxy/http')"
+    effect: shadow
+    reason: "direct read->egress proxy sequence would be blocked"
+    reason_code: "SEQUENCE_EXFIL_PROXY_BLOCK_SHADOW"
+
+  - id: shadow-proxy-after-recent-customer-read
+    match:
+      tool: "proxy/http"
+      when: "history_contains_within('read_customer_db', 300)"
+    effect: shadow
+    reason: "recent customer read before proxy egress requires review"
+    reason_code: "SEQUENCE_EXFIL_PROXY_REVIEW_SHADOW"
+
+  - id: permit-egress-openai-responses
+    match:
+      tool: "proxy/http"
+      host: "api.openai.com"
+      method: "POST"
+      path: "/v1/responses"
+    effect: permit
+    reason: "approved egress route"
+    reason_code: "EGRESS_ALLOW_OPENAI_RESPONSES"
+
+  - id: permit-egress-anthropic-messages
+    match:
+      tool: "proxy/http"
+      host: "api.anthropic.com"
+      method: "POST"
+      path: "/v1/messages"
+    effect: permit
+    reason: "approved egress route"
+    reason_code: "EGRESS_ALLOW_ANTHROPIC_MESSAGES"
+
+  - id: shadow-unapproved-egress
+    match:
+      tool: "proxy/http"
+    effect: shadow
+    reason: "egress route is not allowlisted"
+    reason_code: "EGRESS_BLOCK_DEFAULT_SHADOW"

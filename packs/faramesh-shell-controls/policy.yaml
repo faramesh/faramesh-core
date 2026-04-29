@@ -1,0 +1,31 @@
+faramesh-version: "1.0"
+agent-id: "shell-controls"
+default_effect: deny
+
+rules:
+  - id: deny-destructive-shell
+    match:
+      tool: "shell/*"
+      when: "args.cmd != nil && args.cmd matches \"rm -rf|shutdown|reboot|mkfs|dd if=|format\""
+    effect: deny
+    reason: "destructive commands blocked"
+
+  - id: defer-shell-modification
+    match:
+      tool: "shell/*"
+      when: "args.cmd != nil && args.cmd matches \"apt install|yum install|pip install|npm install|systemctl|service\""
+    effect: defer
+    reason: "system modifications require approval"
+
+  - id: permit-shell-diagnostics
+    match:
+      tool: "shell/*"
+      when: "args.cmd != nil && args.cmd matches \"ls|cat|grep|find|ps|df|free|uptime|date|echo\""
+    effect: permit
+
+  - id: defer-shell-default
+    match:
+      tool: "shell/*"
+      when: "true"
+    effect: defer
+    reason: "unknown shell commands require approval"

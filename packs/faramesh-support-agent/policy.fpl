@@ -1,0 +1,23 @@
+# Optional FPL sidecar; email recipient rules live in YAML.
+agent support-agent {
+  default deny
+
+  rules {
+    deny! shell/*
+    deny! file/*
+
+    defer issue_credit
+      when args.amount > 25
+      notify: "support-lead"
+      reason: "credit above threshold requires approval"
+
+    permit issue_credit
+      when args.amount <= 25
+
+    permit read_customer
+    permit get_order
+    permit search_kb
+    permit send_email
+      reason: "recipient count and mass-send rules in YAML"
+  }
+}

@@ -1,0 +1,20 @@
+agent my-agent {
+  default deny
+
+  rules {
+    deny! shell/run
+      when args.cmd != nil && args.cmd matches "rm -rf|DROP TABLE|terraform destroy|shutdown|reboot"
+      reason: "destructive command blocked"
+
+    deny! fs/write
+      when args.path != nil && args.path matches "/etc|/usr|/bin|/sbin|/boot"
+      reason: "system path write blocked"
+
+    defer payment/transfer when args.amount > 500
+      notify: "finance-team"
+
+    permit api/*
+    permit search/*
+    permit read_*
+  }
+}

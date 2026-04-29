@@ -1,0 +1,20 @@
+agent langgraph-single {
+  default deny
+
+  credential vault_probe {
+    scope vault/probe/_execute_tool_sync vault/probe/_execute_tool_async vault/probe/_run_one vault/probe/_arun_one
+    backend vault
+    max_scope payments
+  }
+
+  rules {
+    permit http/get
+    permit http/get/*
+    permit vault/probe
+    permit vault/probe/*
+    defer payment/refund reason: "refund requires operator approval"
+    defer payment/refund/* reason: "refund requires operator approval"
+    permit idp/probe when principal.verified == true
+    permit idp/probe/* when principal.verified == true
+  }
+}

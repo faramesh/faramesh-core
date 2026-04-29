@@ -1,0 +1,33 @@
+# Example: agent service + faramesh daemon sidecar sharing a Unix socket volume.
+# Adjust images, secrets, and networks for production.
+services:
+  faramesh:
+    image: faramesh:local
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command:
+      - serve
+      - --policy
+      - /policy/policy.yaml
+      - --socket
+      - /run/faramesh/faramesh.sock
+    volumes:
+      - faramesh-run:/run/faramesh
+      - ./policy.yaml:/policy/policy.yaml:ro
+    restart: unless-stopped
+
+  agent:
+    image: python:3.12-slim
+    working_dir: /app
+    depends_on:
+      - faramesh
+    environment:
+      FARAMESH_SOCKET: /run/faramesh/faramesh.sock
+    volumes:
+      - faramesh-run:/run/faramesh
+      - ../:/app:ro
+    command: ["sleep", "infinity"]
+
+volumes:
+  faramesh-run:

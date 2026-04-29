@@ -1,0 +1,1232 @@
+package sdk
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os/exec"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
+
+	"github.com/faramesh/faramesh-core/internal/core"
+	"github.com/faramesh/faramesh-core/internal/core/credential"
+	"github.com/faramesh/faramesh-core/internal/core/observe"
+	"github.com/faramesh/faramesh-core/internal/core/policy"
+	"github.com/faramesh/faramesh-core/internal/core/principal"
+	"github.com/faramesh/faramesh-core/internal/core/reasons"
+)
+
+func buildOutputPolicyPipeline(t *testing.T) *core.Pipeline {
+	t.Helper()
+	const policyYAML = `
+faramesh-version: "1"
+agent-id: "sdk-output-test"
+default-effect: "permit"
+rules:
+  - id: allow-all
+    effect: permit
+    match:
+      tool: "*"
+output_policies:
+  - output_type: aggregate
+    rules:
+      - id: defer-sensitive
+        scan:
+          entity_extraction: true
+        condition: "entity_count > 0"
+        on_match: defer
+        reason: "needs review"
+`
+	doc, version, err := policy.LoadBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	return core.NewPipeline(core.Config{Engine: policy.NewAtomicEngine(eng)})
+}
+
+func TestCallbackSubscribeDecisionEventFires(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	cbClient := startSocketHandler(t, srv)
+	defer cbClient.conn.Close()
+
+	writeLine(t, cbClient.conn, `{"type":"callback_subscribe"}`)
+	readJSONWithDeadline(t, cbClient, 500*time.Millisecond) // subscribed ack
+
+	governClient := startSocketHandler(t, srv)
+	defer governClient.conn.Close()
+	writeLine(t, governClient.conn, `{"type":"govern","call_id":"c-1","agent_id":"a-1","session_id":"s-1","tool_id":"tool.echo","args":{"q":"hello"}}`)
+	_ = readJSONWithDeadline(t, governClient, 500*time.Millisecond) // decision response
+
+	ev := readJSONWithDeadline(t, cbClient, 500*time.Millisecond)
+	if got := asString(ev["event_type"]); got != "decision" {
+		t.Fatalf("event_type = %q, want decision", got)
+	}
+	if got := asString(ev["call_id"]); got != "c-1" {
+		t.Fatalf("call_id = %q, want c-1", got)
+	}
+	if got := asString(ev["agent_id"]); got != "a-1" {
+		t.Fatalf("agent_id = %q, want a-1", got)
+	}
+	if got := asString(ev["tool_id"]); got != "tool.echo" {
+		t.Fatalf("tool_id = %q, want tool.echo", got)
+	}
+}
+
+func TestCallbackSubscribeDeferResolvedEventFires(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	token := "tok-approve-1"
+	_, err := srv.pipeline.DeferWorkflow().DeferWithToken(token, "agent-x", "tool.defer", "needs approval")
+	if err != nil {
+		t.Fatalf("seed defer token: %v", err)
+	}
+
+	cbClient := startSocketHandler(t, srv)
+	defer cbClient.conn.Close()
+	writeLine(t, cbClient.conn, `{"type":"callback_subscribe"}`)
+	readJSONWithDeadline(t, cbClient, 500*time.Millisecond) // subscribed ack
+
+	approveClient := startSocketHandler(t, srv)
+	defer approveClient.conn.Close()
+	writeLine(t, approveClient.conn, `{"type":"approve_defer","defer_token":"`+token+`","approved":true,"reason":"ship it"}`)
+	resp := readJSONWithDeadline(t, approveClient, 500*time.Millisecond)
+	if ok, _ := resp["ok"].(bool); !ok {
+		t.Fatalf("approve response not ok: %#v", resp)
+	}
+
+	ev := readJSONWithDeadline(t, cbClient, 500*time.Millisecond)
+	if got := asString(ev["event_type"]); got != "defer_resolved" {
+		t.Fatalf("event_type = %q, want defer_resolved", got)
+	}
+	if got := asString(ev["defer_token"]); got != token {
+		t.Fatalf("defer_token = %q, want %s", got, token)
+	}
+	if got := asString(ev["status"]); got != "approved" {
+		t.Fatalf("status = %q, want approved", got)
+	}
+}
+
+func TestApproveDeferCarriesApproverID(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	token := "tok-approve-id"
+	if _, err := srv.pipeline.DeferWorkflow().DeferWithToken(token, "agent-x", "tool.defer", "needs approval"); err != nil {
+		t.Fatalf("seed defer token: %v", err)
+	}
+
+	cbClient := startSocketHandler(t, srv)
+	defer cbClient.conn.Close()
+	writeLine(t, cbClient.conn, `{"type":"callback_subscribe"}`)
+	readJSONWithDeadline(t, cbClient, 500*time.Millisecond)
+
+	approveClient := startSocketHandler(t, srv)
+	defer approveClient.conn.Close()
+	writeLine(t, approveClient.conn, `{"type":"approve_defer","defer_token":"`+token+`","approved":true,"approver_id":"approver-42","reason":"ship it"}`)
+	resp := readJSONWithDeadline(t, approveClient, 500*time.Millisecond)
+	if ok, _ := resp["ok"].(bool); !ok {
+		t.Fatalf("approve response not ok: %#v", resp)
+	}
+
+	ev := readJSONWithDeadline(t, cbClient, 500*time.Millisecond)
+	if got := asString(ev["approver_id"]); got != "approver-42" {
+		t.Fatalf("approver_id = %q, want approver-42", got)
+	}
+}
+
+func TestIdentityVerifyReturnsClientAssertedVerificationMethod(t *testing.T) {
+	coreObs, logs := observer.New(zapcore.WarnLevel)
+	logger := zap.New(coreObs)
+	srv := NewServer(core.NewPipeline(core.Config{}), logger)
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"identity","op":"verify","spiffe_id":"spiffe://example.org/agent/test"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["verification_method"]); got != "client_asserted" {
+		t.Fatalf("verification_method = %q, want client_asserted", got)
+	}
+	if got := logs.FilterMessage("sdk identity verify accepted client-asserted SPIFFE claim without transport attestation").Len(); got != 1 {
+		t.Fatalf("expected one client-asserted identity warning, got %d", got)
+	}
+}
+
+func TestCallbackSubscriberDoesNotBlockGovernance(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+
+	// Subscribe, read ack once, then stop reading to simulate a slow/stuck SDK callback consumer.
+	cbClient := startSocketHandler(t, srv)
+	defer cbClient.conn.Close()
+	writeLine(t, cbClient.conn, `{"type":"callback_subscribe"}`)
+	readJSONWithDeadline(t, cbClient, 500*time.Millisecond)
+
+	governClient := startSocketHandler(t, srv)
+	defer governClient.conn.Close()
+
+	start := time.Now()
+	for i := 0; i < 200; i++ {
+		writeLine(t, governClient.conn, `{"type":"govern","call_id":"c-many","agent_id":"a-many","session_id":"s-many","tool_id":"tool.echo","args":{"n":1}}`)
+		_ = readJSONWithDeadline(t, governClient, 2*time.Second)
+	}
+	if elapsed := time.Since(start); elapsed > 20*time.Second {
+		t.Fatalf("governance path slowed by callback subscriber: elapsed=%s", elapsed)
+	}
+}
+
+func TestGovernedLogIncludesStructuredSchemaFields(t *testing.T) {
+	coreObs, logs := observer.New(zapcore.InfoLevel)
+	logger := zap.New(coreObs)
+	srv := NewServer(core.NewPipeline(core.Config{Log: logger}), logger)
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"govern","call_id":"c-log-1","agent_id":"a-log-1","session_id":"s-log-1","tool_id":"tool.echo","args":{"q":"hello"}}`)
+	_ = readJSONWithDeadline(t, client, 500*time.Millisecond)
+
+	var entries []observer.LoggedEntry
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		entries = logs.All()
+		if len(entries) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("expected at least one log entry")
+	}
+	var fields map[string]interface{}
+	for i := len(entries) - 1; i >= 0; i-- {
+		candidate := entries[i].ContextMap()
+		if candidate["event"] == observe.EventGovernDecision {
+			fields = candidate
+			break
+		}
+	}
+	if fields == nil {
+		t.Fatalf("expected a governance decision structured log entry")
+	}
+	if fields["log_schema"] != observe.GovernanceLogSchema {
+		t.Fatalf("log_schema=%v", fields["log_schema"])
+	}
+	if fields["log_schema_version"] != observe.GovernanceLogSchemaVersion {
+		t.Fatalf("log_schema_version=%v", fields["log_schema_version"])
+	}
+	if fields["event"] != observe.EventGovernDecision {
+		t.Fatalf("event=%v", fields["event"])
+	}
+	for _, k := range []string{"agent_id", "session_id", "call_id", "tool_id", "effect", "reason_code"} {
+		if _, ok := fields[k]; !ok {
+			t.Fatalf("missing required field %q in governed structured log", k)
+		}
+	}
+}
+
+func TestStatusRequestReturnsRuntimeSnapshot(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"status"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+
+	if running, _ := resp["running"].(bool); !running {
+		t.Fatalf("running = %v, want true", resp["running"])
+	}
+	if _, ok := resp["policy_loaded"].(bool); !ok {
+		t.Fatalf("policy_loaded missing or wrong type: %#v", resp)
+	}
+	if _, ok := resp["dpr_healthy"].(bool); !ok {
+		t.Fatalf("dpr_healthy missing or wrong type: %#v", resp)
+	}
+	if _, ok := resp["active_sessions"].(float64); !ok {
+		t.Fatalf("active_sessions missing or wrong type: %#v", resp)
+	}
+	if _, ok := resp["uptime_seconds"].(float64); !ok {
+		t.Fatalf("uptime_seconds missing or wrong type: %#v", resp)
+	}
+}
+
+func TestSessionOpsLifecycleOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"session","op":"open","agent_id":"a-1","budget":25,"ttl":"30m"}`)
+	openResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(openResp["agent_id"]); got != "a-1" {
+		t.Fatalf("open agent_id=%q", got)
+	}
+	if open, _ := openResp["open"].(bool); !open {
+		t.Fatalf("expected open=true: %#v", openResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"session","op":"purpose_declare","agent_id":"a-1","purpose":"support"}`)
+	purposeResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := purposeResp["purposes"].([]any); !ok {
+		t.Fatalf("purpose response missing purposes: %#v", purposeResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"session","op":"budget_get","agent_id":"a-1"}`)
+	budgetResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got, _ := budgetResp["budget"].(float64); got != 25 {
+		t.Fatalf("budget=%v, want 25", budgetResp["budget"])
+	}
+
+	writeLine(t, client.conn, `{"type":"session","op":"list"}`)
+	listResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := listResp["sessions"].([]any); !ok {
+		t.Fatalf("list response missing sessions: %#v", listResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"session","op":"inspect","agent_id":"a-1"}`)
+	inspectResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(inspectResp["agent_id"]); got != "a-1" {
+		t.Fatalf("inspect agent_id=%q", got)
+	}
+	if _, ok := inspectResp["call_count"].(float64); !ok {
+		t.Fatalf("inspect missing call_count: %#v", inspectResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"session","op":"reset","agent_id":"a-1","counter":"all"}`)
+	resetResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if ok, _ := resetResp["ok"].(bool); !ok {
+		t.Fatalf("reset not ok: %#v", resetResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"session","op":"close","agent_id":"a-1"}`)
+	closeResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if open, _ := closeResp["open"].(bool); open {
+		t.Fatalf("expected open=false: %#v", closeResp)
+	}
+}
+
+func TestModelOpsLifecycleOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"model","op":"register","name":"gpt-4o","fingerprint":"abc123","provider":"openai","version":"2026-03"}`)
+	registerResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if ok, _ := registerResp["ok"].(bool); !ok {
+		t.Fatalf("register not ok: %#v", registerResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"model","op":"list"}`)
+	listResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := listResp["models"].([]any); !ok {
+		t.Fatalf("list response missing models: %#v", listResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"model","op":"verify","agent":"a-1"}`)
+	verifyResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if verified, _ := verifyResp["verified"].(bool); !verified {
+		t.Fatalf("expected verified=true: %#v", verifyResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"model","op":"consistency","agent":"a-1","window":"24h"}`)
+	consistencyResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(consistencyResp["status"]); got != "consistent" {
+		t.Fatalf("consistency status=%q", got)
+	}
+
+	writeLine(t, client.conn, `{"type":"model","op":"alert","agent":"a-1"}`)
+	alertResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := alertResp["alerts"].([]any); !ok {
+		t.Fatalf("alert response missing alerts: %#v", alertResp)
+	}
+}
+
+func TestGovernOutputRequest_DeferredOutcome(t *testing.T) {
+	srv := NewServer(buildOutputPolicyPipeline(t), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"govern_output","agent_id":"orch-1","session_id":"sess-1","output_type":"aggregate","output":"contact alice@example.com","source_agent_ids":["worker-a","worker-b"]}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+
+	if got := asString(resp["outcome"]); got != core.OutputOutcomeDeferred {
+		t.Fatalf("outcome=%q, want %q", got, core.OutputOutcomeDeferred)
+	}
+	if got := asString(resp["reason_code"]); got != reasons.OutputSchemaDefer {
+		t.Fatalf("reason_code=%q, want %q", got, reasons.OutputSchemaDefer)
+	}
+	if got := asString(resp["defer_token"]); strings.TrimSpace(got) == "" {
+		t.Fatalf("expected defer_token, got %#v", resp)
+	}
+}
+
+func TestGovernOutputRequest_PipelineUnavailable(t *testing.T) {
+	srv := NewServer(nil, zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"govern_output","agent_id":"orch-1","output":"hello"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["error"]); got != "pipeline unavailable" {
+		t.Fatalf("error=%q, want pipeline unavailable", got)
+	}
+}
+
+func TestScanOutputRequest_PipelineUnavailable(t *testing.T) {
+	srv := NewServer(nil, zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"scan_output","agent_id":"orch-1","tool_id":"tool.echo","output":"hello"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["error"]); got != "pipeline unavailable" {
+		t.Fatalf("error=%q, want pipeline unavailable", got)
+	}
+}
+
+func TestProvenanceOpsLifecycleOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"provenance","op":"sign","agent_id":"a-1","model":"gpt-4o","framework":"langgraph","tools":"read,write","signing_key":"k1"}`)
+	signResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(signResp["agent_id"]); got != "a-1" {
+		t.Fatalf("sign agent_id=%q", got)
+	}
+	if asString(signResp["record_id"]) == "" {
+		t.Fatalf("missing record_id in sign response: %#v", signResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"provenance","op":"verify","agent_id":"a-1"}`)
+	verifyResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if verified, _ := verifyResp["verified"].(bool); !verified {
+		t.Fatalf("expected verified=true: %#v", verifyResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"provenance","op":"inspect","agent_id":"a-1"}`)
+	inspectResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(inspectResp["agent_id"]); got != "a-1" {
+		t.Fatalf("inspect agent_id=%q", got)
+	}
+
+	writeLine(t, client.conn, `{"type":"provenance","op":"diff","agent_id":"a-1"}`)
+	diffResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(diffResp["drift"]); got != "none" {
+		t.Fatalf("diff drift=%q", got)
+	}
+
+	writeLine(t, client.conn, `{"type":"provenance","op":"list"}`)
+	listResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := listResp["records"].([]any); !ok {
+		t.Fatalf("list response missing records: %#v", listResp)
+	}
+}
+
+func TestIdentityOpsLifecycleOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"identity","op":"verify","spiffe_id":"spiffe://example.org/agent/a-1"}`)
+	verifyResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if verified, _ := verifyResp["verified"].(bool); !verified {
+		t.Fatalf("expected verified=true: %#v", verifyResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"identity","op":"trust","domain":"example.org","bundle":"bundle.pem"}`)
+	trustResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(trustResp["trust_level"]); got == "" {
+		t.Fatalf("missing trust_level: %#v", trustResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"identity","op":"attest","workload":"payments-worker"}`)
+	attestResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if attested, _ := attestResp["attested"].(bool); !attested {
+		t.Fatalf("expected attested=true: %#v", attestResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"identity","op":"federation_add","idp":"https://idp.example","client_id":"cid","scope":"openid"}`)
+	addResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if ok, _ := addResp["ok"].(bool); !ok {
+		t.Fatalf("federation add not ok: %#v", addResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"identity","op":"federation_list"}`)
+	listResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := listResp["federations"].([]any); !ok {
+		t.Fatalf("missing federations list: %#v", listResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"identity","op":"whoami"}`)
+	whoamiResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(whoamiResp["workload"]); got != "payments-worker" {
+		t.Fatalf("whoami workload=%q", got)
+	}
+
+	writeLine(t, client.conn, `{"type":"identity","op":"trust_level"}`)
+	trustLevelResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(trustLevelResp["trust_level"]); got == "" {
+		t.Fatalf("missing trust level: %#v", trustLevelResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"identity","op":"federation_revoke","idp":"https://idp.example"}`)
+	revokeResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if ok, _ := revokeResp["ok"].(bool); !ok {
+		t.Fatalf("federation revoke not ok: %#v", revokeResp)
+	}
+}
+
+type brokerAcquireTestBroker struct {
+	name       string
+	value      string
+	revocable  bool
+	fetchCalls int
+	revokeHits int
+}
+
+func (b *brokerAcquireTestBroker) Name() string { return b.name }
+
+func (b *brokerAcquireTestBroker) Fetch(_ context.Context, req credential.FetchRequest) (*credential.Credential, error) {
+	b.fetchCalls++
+	scope := req.Scope
+	if scope == "" {
+		scope = "default"
+	}
+	return &credential.Credential{
+		Value:     b.value,
+		Source:    b.name,
+		Scope:     scope,
+		Revocable: b.revocable,
+	}, nil
+}
+
+func (b *brokerAcquireTestBroker) Revoke(_ context.Context, _ *credential.Credential) error {
+	b.revokeHits++
+	return nil
+}
+
+func TestCredentialAcquireReleaseOverSocket(t *testing.T) {
+	b := &brokerAcquireTestBroker{
+		name:      "vault",
+		value:     "sk_test_broker",
+		revocable: true,
+	}
+	router := credential.NewRouter([]credential.Broker{b}, b)
+	if err := router.AddRoute("*", b.name); err != nil {
+		t.Fatalf("add route: %v", err)
+	}
+
+	srv := NewServer(core.NewPipeline(core.Config{CredentialRouter: router}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"credential","op":"acquire","tool_id":"stripe_get_balance","operation":"invoke","scope":"stripe","agent_id":"stripe-interactive","required":true}`)
+	acquireResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+
+	if ok, _ := acquireResp["ok"].(bool); !ok {
+		t.Fatalf("acquire not ok: %#v", acquireResp)
+	}
+	if got := asString(acquireResp["value"]); got != "sk_test_broker" {
+		t.Fatalf("acquire value=%q", got)
+	}
+	handleID := asString(acquireResp["handle_id"])
+	if handleID == "" {
+		t.Fatalf("missing handle_id: %#v", acquireResp)
+	}
+	if got := asString(acquireResp["source"]); got != "vault" {
+		t.Fatalf("acquire source=%q", got)
+	}
+	if got := asString(acquireResp["scope"]); got != "stripe" {
+		t.Fatalf("acquire scope=%q", got)
+	}
+	if b.fetchCalls != 1 {
+		t.Fatalf("expected one broker fetch, got %d", b.fetchCalls)
+	}
+
+	writeLine(t, client.conn, `{"type":"credential","op":"release","handle_id":"`+handleID+`"}`)
+	releaseResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if ok, _ := releaseResp["ok"].(bool); !ok {
+		t.Fatalf("release not ok: %#v", releaseResp)
+	}
+	if released, _ := releaseResp["released"].(bool); !released {
+		t.Fatalf("expected released=true: %#v", releaseResp)
+	}
+	if b.revokeHits != 1 {
+		t.Fatalf("expected one broker revoke, got %d", b.revokeHits)
+	}
+
+	writeLine(t, client.conn, `{"type":"credential","op":"release","handle_id":"`+handleID+`"}`)
+	secondReleaseResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if ok, _ := secondReleaseResp["ok"].(bool); !ok {
+		t.Fatalf("second release not ok: %#v", secondReleaseResp)
+	}
+	if released, _ := secondReleaseResp["released"].(bool); released {
+		t.Fatalf("expected released=false on second release: %#v", secondReleaseResp)
+	}
+}
+
+func TestCredentialOpsLifecycleOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"credential","op":"register","name":"stripe","key":"sk_live_x","scope":"payments","max_scope":"payments:write"}`)
+	registerResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(registerResp["name"]); got != "stripe" {
+		t.Fatalf("register name=%q", got)
+	}
+
+	writeLine(t, client.conn, `{"type":"credential","op":"list"}`)
+	listResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := listResp["credentials"].([]any); !ok {
+		t.Fatalf("missing credentials list: %#v", listResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"credential","op":"inspect","name":"stripe"}`)
+	inspectResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(inspectResp["name"]); got != "stripe" {
+		t.Fatalf("inspect name=%q", got)
+	}
+
+	writeLine(t, client.conn, `{"type":"credential","op":"rotate","name":"stripe","key":"sk_live_new"}`)
+	rotateResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(rotateResp["key"]); got != "sk_live_new" {
+		t.Fatalf("rotate key=%q", got)
+	}
+
+	writeLine(t, client.conn, `{"type":"credential","op":"health"}`)
+	healthResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if healthy, _ := healthResp["healthy"].(bool); !healthy {
+		t.Fatalf("health not healthy: %#v", healthResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"credential","op":"audit","name":"stripe","window":"24h"}`)
+	auditResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := auditResp["events"].([]any); !ok {
+		t.Fatalf("audit missing events: %#v", auditResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"credential","op":"revoke","name":"stripe"}`)
+	revokeResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(revokeResp["status"]); got != "revoked" {
+		t.Fatalf("revoke status=%q", got)
+	}
+}
+
+func TestCredentialRoutingMapOverSocket(t *testing.T) {
+	doc, version, err := policy.LoadBytes([]byte(`
+faramesh-version: "1.0"
+agent-id: "sdk-credential-map"
+tools:
+  stripe/refund:
+    tags: ["credential:broker", "credential:required", "credential:scope:payments"]
+  http/get:
+    tags: ["read_only"]
+rules:
+  - id: allow-all
+    match:
+      tool: "*"
+    effect: permit
+default_effect: deny
+`))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	engine, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+
+	envBroker := &credential.EnvBroker{}
+	router := credential.NewRouter([]credential.Broker{envBroker}, envBroker)
+	if err := router.AddRoute("*", "env"); err != nil {
+		t.Fatalf("add route: %v", err)
+	}
+
+	p := core.NewPipeline(core.Config{
+		Engine:           policy.NewAtomicEngine(engine),
+		CredentialRouter: router,
+	})
+	srv := NewServer(p, zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"credential","op":"routing_map"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+
+	if configured, _ := resp["router_configured"].(bool); !configured {
+		t.Fatalf("expected router_configured=true: %#v", resp)
+	}
+	if tc, _ := resp["tool_count"].(float64); int(tc) != 2 {
+		t.Fatalf("expected tool_count=2: %#v", resp)
+	}
+
+	toolsRaw, ok := resp["tools"].([]any)
+	if !ok {
+		t.Fatalf("missing tools list: %#v", resp)
+	}
+
+	byTool := map[string]map[string]any{}
+	for _, raw := range toolsRaw {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		toolID := asString(entry["tool_id"])
+		if toolID != "" {
+			byTool[toolID] = entry
+		}
+	}
+
+	stripe := byTool["stripe/refund"]
+	if stripe == nil {
+		t.Fatalf("missing stripe/refund in diagnostics: %#v", resp)
+	}
+	if enabled, _ := stripe["broker_enabled"].(bool); !enabled {
+		t.Fatalf("expected stripe/refund broker_enabled=true: %#v", stripe)
+	}
+	if required, _ := stripe["required"].(bool); !required {
+		t.Fatalf("expected stripe/refund required=true: %#v", stripe)
+	}
+	if scope := asString(stripe["scope"]); scope != "payments" {
+		t.Fatalf("expected stripe/refund scope=payments, got %q", scope)
+	}
+
+	httpGet := byTool["http/get"]
+	if httpGet == nil {
+		t.Fatalf("missing http/get in diagnostics: %#v", resp)
+	}
+	if enabled, _ := httpGet["broker_enabled"].(bool); enabled {
+		t.Fatalf("expected http/get broker_enabled=false: %#v", httpGet)
+	}
+}
+
+func TestIncidentOpsLifecycleOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"incident","op":"declare","agent":"a-1","severity":"high","reason":"risk"}`)
+	declareResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	incidentID := asString(declareResp["id"])
+	if incidentID == "" {
+		t.Fatalf("declare missing id: %#v", declareResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"incident","op":"list"}`)
+	listResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := listResp["incidents"].([]any); !ok {
+		t.Fatalf("list missing incidents: %#v", listResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"incident","op":"inspect","id":"`+incidentID+`"}`)
+	inspectResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(inspectResp["id"]); got != incidentID {
+		t.Fatalf("inspect id=%q", got)
+	}
+
+	writeLine(t, client.conn, `{"type":"incident","op":"evidence","id":"`+incidentID+`"}`)
+	evidenceResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := evidenceResp["evidence"].([]any); !ok {
+		t.Fatalf("evidence missing list: %#v", evidenceResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"incident","op":"playbook","id":"`+incidentID+`"}`)
+	playbookResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := playbookResp["steps"].([]any); !ok {
+		t.Fatalf("playbook missing steps: %#v", playbookResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"incident","op":"isolate","agent_id":"a-1"}`)
+	isolateResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := isolateResp["isolated_incidents"].(float64); !ok {
+		t.Fatalf("isolate missing isolated_incidents: %#v", isolateResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"incident","op":"resolve","incident_id":"`+incidentID+`"}`)
+	resolveResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resolveResp["status"]); got != "resolved" {
+		t.Fatalf("resolve status=%q", got)
+	}
+}
+
+func TestCompensateOpsLifecycleOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"type":"compensate","op":"apply","id":"cmp-1"}`)
+	applyResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(applyResp["status"]); got != "applied" {
+		t.Fatalf("apply status=%q", got)
+	}
+
+	writeLine(t, client.conn, `{"type":"compensate","op":"status","id":"cmp-1"}`)
+	statusResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(statusResp["status"]); got == "" {
+		t.Fatalf("status missing: %#v", statusResp)
+	}
+
+	writeLine(t, client.conn, `{"type":"compensate","op":"inspect","id":"cmp-1"}`)
+	inspectResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(inspectResp["id"]); got != "cmp-1" {
+		t.Fatalf("inspect id=%q", got)
+	}
+
+	writeLine(t, client.conn, `{"type":"compensate","op":"retry","id":"cmp-1","from_step":"rollback"}`)
+	retryResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(retryResp["status"]); got != "retrying" {
+		t.Fatalf("retry status=%q", got)
+	}
+
+	writeLine(t, client.conn, `{"type":"compensate","op":"list"}`)
+	listResp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if _, ok := listResp["compensations"].([]any); !ok {
+		t.Fatalf("list missing compensations: %#v", listResp)
+	}
+}
+
+func TestGovernJSONRPCCompatibility(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	writeLine(t, client.conn, `{"jsonrpc":"2.0","id":1,"method":"govern","params":{"agent_id":"a-rpc","session_id":"s-rpc","tool":"tool","operation":"echo","args":{"q":"hello"}}}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["jsonrpc"]); got != "2.0" {
+		t.Fatalf("jsonrpc=%q", got)
+	}
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing jsonrpc result: %#v", resp)
+	}
+	if got := asString(result["effect"]); got == "" {
+		t.Fatalf("missing result.effect: %#v", result)
+	}
+}
+
+func TestGovernBurstRateLimitedByAgentID(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	limited := 0
+	governed := 0
+
+	for i := 0; i < 160; i++ {
+		writeLine(t, client.conn, fmt.Sprintf(`{"type":"govern","call_id":"c-burst-%d","agent_id":"burst-agent","session_id":"s-burst","tool_id":"tool.echo","args":{"n":%d}}`, i, i))
+		resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+
+		if got := asString(resp["error"]); got == "rate_limited" {
+			limited++
+			if rc := asString(resp["reason_code"]); rc != reasons.SessionRollingLimit {
+				t.Fatalf("rate_limited reason_code=%q want %q", rc, reasons.SessionRollingLimit)
+			}
+			continue
+		}
+
+		if effect := asString(resp["effect"]); effect == "" {
+			t.Fatalf("expected govern response effect or rate_limited error, got %#v", resp)
+		}
+		governed++
+	}
+
+	if governed == 0 {
+		t.Fatalf("expected at least one governed decision before saturation")
+	}
+	if limited == 0 {
+		t.Fatalf("expected burst saturation to trigger rate_limited responses")
+	}
+}
+
+func TestGovernRateLimitIsolatedByAgentID(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+
+	limited := false
+	for i := 0; i < 180; i++ {
+		writeLine(t, client.conn, fmt.Sprintf(`{"type":"govern","call_id":"c-agent-a-%d","agent_id":"agent-a","session_id":"s-rate","tool_id":"tool.echo","args":{"n":%d}}`, i, i))
+		resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+		if got := asString(resp["error"]); got == "rate_limited" {
+			limited = true
+			if rc := asString(resp["reason_code"]); rc != reasons.SessionRollingLimit {
+				t.Fatalf("agent-a rate_limited reason_code=%q want %q", rc, reasons.SessionRollingLimit)
+			}
+			break
+		}
+	}
+	if !limited {
+		t.Fatalf("expected agent-a burst to reach rate limit")
+	}
+
+	// A different agent ID must use an independent limiter bucket.
+	writeLine(t, client.conn, `{"type":"govern","call_id":"c-agent-b","agent_id":"agent-b","session_id":"s-rate","tool_id":"tool.echo","args":{"q":"fresh bucket"}}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["error"]); got == "rate_limited" {
+		t.Fatalf("unexpected cross-agent throttling: %#v", resp)
+	}
+	if effect := asString(resp["effect"]); effect == "" {
+		t.Fatalf("expected govern decision for agent-b, got %#v", resp)
+	}
+}
+
+func TestGovernPrincipalTokenVerifiedPermitsPrincipalPolicy(t *testing.T) {
+	doc, version, err := policy.LoadBytes([]byte(`
+faramesh-version: "1.0"
+agent-id: "sdk-principal"
+rules:
+  - id: allow-idp-principal
+    match:
+      tool: "billing/export"
+      when: "principal.verified && principal.org == 'acme'"
+    effect: permit
+default_effect: deny
+`))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	engine, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	pipeline := core.NewPipeline(core.Config{Engine: policy.NewAtomicEngine(engine)})
+	srv := NewServer(pipeline, zap.NewNop())
+	srv.SetPrincipalResolver(func(ctx context.Context, token string) (*principal.Identity, error) {
+		_ = ctx
+		if token != "good-token" {
+			return nil, errors.New("invalid token")
+		}
+		return &principal.Identity{ID: "user-123", Org: "acme", Verified: true, Method: "okta_oidc"}, nil
+	})
+
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+	writeLine(t, client.conn, `{"type":"govern","call_id":"c-principal","agent_id":"a-principal","session_id":"s-principal","tool_id":"billing/export","principal_token":"good-token","args":{}}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["effect"]); got != "PERMIT" {
+		t.Fatalf("expected PERMIT with verified principal token, got %q (%#v)", got, resp)
+	}
+}
+
+func TestGovernPrincipalTokenWithoutResolverFailsClosed(t *testing.T) {
+	doc, version, err := policy.LoadBytes([]byte(`
+faramesh-version: "1.0"
+agent-id: "sdk-principal-fail-closed"
+default_effect: permit
+rules: []
+`))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	engine, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	pipeline := core.NewPipeline(core.Config{Engine: policy.NewAtomicEngine(engine)})
+	srv := NewServer(pipeline, zap.NewNop())
+
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+	writeLine(t, client.conn, `{"type":"govern","call_id":"c-principal-fail","agent_id":"a-principal","session_id":"s-principal","tool_id":"billing/export","principal_token":"any-token","args":{}}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["effect"]); got != "DENY" {
+		t.Fatalf("expected DENY when principal token is provided without resolver, got %q (%#v)", got, resp)
+	}
+}
+
+func TestResolvePrincipalFromTokenFallbackIsUnverified(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+
+	id := srv.resolvePrincipalFromToken("agent-a", "token-a")
+	if id == nil {
+		t.Fatal("expected fallback principal identity")
+	}
+	if id.Verified {
+		t.Fatalf("expected fallback identity to be unverified, got verified=%v", id.Verified)
+	}
+	if id.Method != "idp_untrusted" {
+		t.Fatalf("expected fallback method idp_untrusted, got %q", id.Method)
+	}
+
+	srv.SetPrincipalResolver(func(ctx context.Context, token string) (*principal.Identity, error) {
+		_ = ctx
+		_ = token
+		return nil, errors.New("resolver failure")
+	})
+	id = srv.resolvePrincipalFromToken("agent-a", "token-b")
+	if id == nil || id.Verified {
+		t.Fatalf("expected resolver-error fallback to be unverified, got %#v", id)
+	}
+
+	srv.SetPrincipalResolver(func(ctx context.Context, token string) (*principal.Identity, error) {
+		_ = ctx
+		_ = token
+		return &principal.Identity{ID: "user-1", Verified: false, Method: "okta_oidc"}, nil
+	})
+	id = srv.resolvePrincipalFromToken("agent-a", "token-c")
+	if id == nil || id.Verified {
+		t.Fatalf("expected invalid-resolved fallback to be unverified, got %#v", id)
+	}
+}
+
+func TestKillRequiresAdminTokenOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	srv.SetStandingAdminToken("ops-secret")
+
+	agentID := "agent-kill-admin"
+	srv.pipeline.SessionManager().Get(agentID)
+
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+	writeLine(t, client.conn, `{"type":"kill","agent_id":"`+agentID+`"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	errStr := asString(resp["error"])
+	if !strings.Contains(errStr, "unauthorized") {
+		t.Fatalf("expected unauthorized kill response, got %#v", resp)
+	}
+	if srv.pipeline.SessionManager().Get(agentID).IsKilled() {
+		t.Fatalf("agent should not be killed without admin token")
+	}
+
+	client2 := startSocketHandler(t, srv)
+	defer client2.conn.Close()
+	writeLine(t, client2.conn, `{"type":"kill","agent_id":"`+agentID+`","admin_token":"bad-token"}`)
+	resp2 := readJSONWithDeadline(t, client2, 500*time.Millisecond)
+	errStr2 := asString(resp2["error"])
+	if !strings.Contains(errStr2, "unauthorized") {
+		t.Fatalf("expected unauthorized kill response for bad token, got %#v", resp2)
+	}
+	if srv.pipeline.SessionManager().Get(agentID).IsKilled() {
+		t.Fatalf("agent should not be killed with bad admin token")
+	}
+
+	client3 := startSocketHandler(t, srv)
+	defer client3.conn.Close()
+	writeLine(t, client3.conn, `{"type":"kill","agent_id":"`+agentID+`","admin_token":"ops-secret"}`)
+	resp3 := readJSONWithDeadline(t, client3, 500*time.Millisecond)
+	if ok, _ := resp3["ok"].(bool); !ok {
+		t.Fatalf("expected authorized kill to succeed, got %#v", resp3)
+	}
+	if !srv.pipeline.SessionManager().Get(agentID).IsKilled() {
+		t.Fatalf("expected agent to be killed with valid admin token")
+	}
+}
+
+func TestAgentOpsRequireAdminTokenOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	srv.SetStandingAdminToken("ops-secret")
+
+	srv.pipeline.SessionManager().Get("agent-list-admin")
+
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+	writeLine(t, client.conn, `{"type":"agent","op":"list"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	errStr := asString(resp["error"])
+	if !strings.Contains(errStr, "unauthorized") {
+		t.Fatalf("expected unauthorized agent list response, got %#v", resp)
+	}
+
+	client2 := startSocketHandler(t, srv)
+	defer client2.conn.Close()
+	writeLine(t, client2.conn, `{"type":"agent","op":"list","admin_token":"ops-secret"}`)
+	resp2 := readJSONWithDeadline(t, client2, 500*time.Millisecond)
+	if _, ok := resp2["items"].([]any); !ok {
+		t.Fatalf("expected agent list items with valid admin token, got %#v", resp2)
+	}
+}
+
+func TestShutdownRequiresAdminTokenOverSocket(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	srv.SetStandingAdminToken("ops-secret")
+
+	called := make(chan struct{}, 1)
+	srv.SetShutdownFunc(func() {
+		select {
+		case called <- struct{}{}:
+		default:
+		}
+	})
+
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+	writeLine(t, client.conn, `{"type":"shutdown"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	errStr := asString(resp["error"])
+	if !strings.Contains(errStr, "unauthorized") {
+		t.Fatalf("expected unauthorized shutdown response, got %#v", resp)
+	}
+
+	select {
+	case <-called:
+		t.Fatal("shutdown callback should not run without admin token")
+	case <-time.After(120 * time.Millisecond):
+	}
+
+	client2 := startSocketHandler(t, srv)
+	defer client2.conn.Close()
+	writeLine(t, client2.conn, `{"type":"shutdown","admin_token":"ops-secret"}`)
+	resp2 := readJSONWithDeadline(t, client2, 500*time.Millisecond)
+	if ok, _ := resp2["ok"].(bool); !ok {
+		t.Fatalf("expected authorized shutdown response ok=true, got %#v", resp2)
+	}
+
+	select {
+	case <-called:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected shutdown callback after authorized request")
+	}
+}
+
+func TestPollDeferUnknownStatusAndNoCallback(t *testing.T) {
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+
+	cbClient := startSocketHandler(t, srv)
+	defer cbClient.conn.Close()
+	writeLine(t, cbClient.conn, `{"type":"callback_subscribe"}`)
+	_ = readJSONWithDeadline(t, cbClient, 500*time.Millisecond)
+
+	client := startSocketHandler(t, srv)
+	defer client.conn.Close()
+	writeLine(t, client.conn, `{"type":"poll_defer","agent_id":"agent-x","defer_token":"missing-token"}`)
+	resp := readJSONWithDeadline(t, client, 500*time.Millisecond)
+	if got := asString(resp["status"]); got != "unknown" {
+		t.Fatalf("expected unknown defer status for missing token, got %q (%#v)", got, resp)
+	}
+
+	if err := cbClient.conn.SetReadDeadline(time.Now().Add(150 * time.Millisecond)); err != nil {
+		t.Fatalf("set callback read deadline: %v", err)
+	}
+	defer cbClient.conn.SetReadDeadline(time.Time{})
+	if _, err := cbClient.r.ReadBytes('\n'); err == nil {
+		t.Fatal("unexpected callback event for unknown defer token")
+	} else {
+		ne, ok := err.(net.Error)
+		if !ok || !ne.Timeout() {
+			t.Fatalf("expected callback read timeout, got %T (%v)", err, err)
+		}
+	}
+}
+
+func TestListenRejectsActiveSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket behavior not available on windows")
+	}
+
+	socketPath := filepath.Join("/tmp", fmt.Sprintf("faramesh-stale-%d.sock", time.Now().UnixNano()))
+	activeListener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Skipf("unable to allocate unix socket: %v", err)
+	}
+	defer activeListener.Close()
+
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	err = srv.Listen(socketPath)
+	if err == nil {
+		_ = srv.Close()
+		t.Fatal("expected listen to fail when socket is already active")
+	}
+	if !strings.Contains(err.Error(), "already in use") {
+		t.Fatalf("expected already-in-use error, got: %v", err)
+	}
+}
+
+func TestListenReusesStaleSocketFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix socket behavior not available on windows")
+	}
+
+	if os.Getenv("FARAMESH_SDK_STALE_SOCKET_HELPER") == "1" {
+		socketPath := os.Getenv("FARAMESH_SDK_STALE_SOCKET_PATH")
+		listener, err := net.Listen("unix", socketPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "helper listen: %v\n", err)
+			os.Exit(2)
+		}
+		_ = listener
+		os.Exit(0)
+	}
+
+	socketPath := filepath.Join("/tmp", fmt.Sprintf("faramesh-stale-%d.sock", time.Now().UnixNano()))
+	cmd := exec.Command(os.Args[0], "-test.run=^TestListenReusesStaleSocketFile$", "-test.v=false")
+	cmd.Env = append(os.Environ(),
+		"FARAMESH_SDK_STALE_SOCKET_HELPER=1",
+		"FARAMESH_SDK_STALE_SOCKET_PATH="+socketPath,
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("create stale socket fixture: %v: %s", err, string(output))
+	}
+	defer os.Remove(socketPath)
+	if _, err := os.Stat(socketPath); err != nil {
+		t.Fatalf("expected stale socket path to remain on disk: %v", err)
+	}
+
+	srv := NewServer(core.NewPipeline(core.Config{}), zap.NewNop())
+	if err := srv.Listen(socketPath); err != nil {
+		t.Fatalf("listen should recover stale socket path: %v", err)
+	}
+	defer srv.Close()
+
+	conn, err := net.DialTimeout("unix", socketPath, 300*time.Millisecond)
+	if err != nil {
+		t.Fatalf("dial recovered listener: %v", err)
+	}
+	_ = conn.Close()
+}
+
+type testSocketClient struct {
+	conn net.Conn
+	r    *bufio.Reader
+}
+
+func startSocketHandler(t *testing.T, srv *Server) *testSocketClient {
+	t.Helper()
+	serverConn, clientConn := net.Pipe()
+	go srv.handle(serverConn)
+	return &testSocketClient{
+		conn: clientConn,
+		r:    bufio.NewReader(clientConn),
+	}
+}
+
+func writeLine(t *testing.T, conn net.Conn, line string) {
+	t.Helper()
+	_, err := conn.Write([]byte(line + "\n"))
+	if err != nil {
+		t.Fatalf("write line: %v", err)
+	}
+}
+
+func readJSONWithDeadline(t *testing.T, c *testSocketClient, timeout time.Duration) map[string]any {
+	t.Helper()
+	if err := c.conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	defer c.conn.SetReadDeadline(time.Time{})
+
+	line, err := c.r.ReadBytes('\n')
+	if err != nil {
+		t.Fatalf("read line: %v", err)
+	}
+	var out map[string]any
+	if err := json.Unmarshal(line, &out); err != nil {
+		t.Fatalf("unmarshal json line: %v (%s)", err, string(line))
+	}
+	return out
+}
+
+func asString(v any) string {
+	s, _ := v.(string)
+	return s
+}

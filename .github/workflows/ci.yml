@@ -1,0 +1,294 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  corpus-matrix:
+    name: Corpus Coverage Matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate and verify committed matrix
+        run: make corpus-check
+      - name: Upload corpus matrix
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-coverage-matrix
+          path: |
+            tests/corpus/coverage-matrix.json
+            tests/corpus/coverage-matrix.md
+
+  corpus-harness:
+    name: Corpus Harness (${{ matrix.id }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: langchain-governed-smoke
+            entry: tests/corpus/framework-hooks/langchain-governed-smoke
+          - id: langchain-fpl
+            entry: tests/corpus/framework-hooks/langchain-fpl
+          - id: langgraph-fpl
+            entry: tests/corpus/framework-hooks/langgraph-fpl
+          - id: langchain-simple
+            entry: tests/corpus/framework-hooks/langchain-simple
+          - id: langgraph-single-agent
+            entry: tests/corpus/framework-hooks/langgraph-single-agent
+          - id: deepagents-governed
+            entry: tests/corpus/framework-hooks/deepagents-governed
+          - id: langgraph-multi-agent
+            entry: tests/corpus/framework-hooks/langgraph-multi-agent
+          - id: mcp-stdio-wrap
+            entry: tests/corpus/mcp-servers/mcp-stdio-wrap
+          - id: mcp-http-sse
+            entry: tests/corpus/mcp-servers/mcp-http-sse
+          - id: mcp-node-sdk
+            entry: tests/corpus/mcp-servers/mcp-node-sdk
+          - id: linux-interception
+            entry: tests/corpus/runtime-core/linux-interception
+          - id: defer-timeout-resume
+            entry: tests/corpus/runtime-core/defer-timeout-resume
+          - id: burst-rate-limits
+            entry: tests/corpus/runtime-core/burst-rate-limits
+          - id: policy-roundtrip
+            entry: tests/corpus/policy-core/policy-roundtrip
+          - id: socket-e2e-acceptance
+            entry: tests/corpus/runtime-core/socket-e2e-acceptance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: sdk/node/package-lock.json
+      - name: Install Vault CLI
+        run: |
+          set -euo pipefail
+          VAULT_VERSION="1.17.6"
+          sudo apt-get update
+          sudo apt-get install -y unzip
+          curl -fsSL -o vault.zip "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip"
+          unzip -q vault.zip
+          sudo install vault /usr/local/bin/vault
+          vault version
+      - name: Run corpus entry
+        run: bash scripts/run_corpus_entry.sh "${{ matrix.entry }}"
+      - name: Upload corpus harness artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-harness-${{ matrix.id }}
+          path: .tmp/
+          if-no-files-found: ignore
+
+  visibility-server-tests:
+    name: Visibility Server Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install visibility-server dependencies
+        run: python3 -m pip install --disable-pip-version-check -r visibility-server/requirements.txt
+      - name: Run visibility server tests
+        run: python3 -m unittest discover -s visibility-server/tests -v
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go vet
+        run: go vet ./...
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run tests
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+      - name: Enforce coverage threshold
+        run: |
+          go tool cover -func=coverage.out | awk '/^total:/ { gsub("%","",$3); if (($3 + 0) < 45.0) { printf("coverage %.1f%% below threshold\n", $3 + 0); exit 1 } }'
+
+  python-sdk-tests:
+    name: Python SDK Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Python SDK test dependencies
+        working-directory: sdk/python
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: Run Python SDK tests
+        working-directory: sdk/python
+        run: pytest -q tests
+
+      - name: Verify wheel bootstrap import in clean venv
+        working-directory: sdk/python
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+          python -m venv /tmp/faramesh-sdk-wheel-check
+          /tmp/faramesh-sdk-wheel-check/bin/python -m pip install --upgrade pip
+          /tmp/faramesh-sdk-wheel-check/bin/python -m pip install dist/*.whl
+          /tmp/faramesh-sdk-wheel-check/bin/python - <<'PY'
+          import importlib.util
+          import faramesh
+          from faramesh.client import __version__
+
+          assert importlib.util.find_spec("faramesh.autopatch") is not None, "missing faramesh.autopatch"
+          import faramesh.autopatch  # noqa: F401
+          print("faramesh path:", faramesh.__file__)
+          print("sdk version:", __version__)
+          PY
+
+  node-sdk-tests:
+    name: Node SDK Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: sdk/node/package-lock.json
+      - name: Install Node SDK dependencies
+        working-directory: sdk/node
+        run: npm ci
+      - name: Run Node SDK tests
+        working-directory: sdk/node
+        run: npm test
+      - name: Build Node SDK
+        working-directory: sdk/node
+        run: npm run build
+
+  homebrew-formula-lint:
+    name: Homebrew Formula Lint
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint Homebrew formula
+        run: brew style Formula/faramesh.rb
+      - name: Validate Homebrew formula syntax
+        run: ruby -c Formula/faramesh.rb
+
+  build:
+    name: Build & Smoke Test
+    runs-on: ubuntu-latest
+    needs: [lint, test, python-sdk-tests, node-sdk-tests, homebrew-formula-lint, corpus-matrix, corpus-harness]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build binary
+        run: |
+          CGO_ENABLED=0 go build \
+            -ldflags="-X main.version=ci-${GITHUB_SHA::8} -s -w" \
+            -o faramesh ./cmd/faramesh
+      - name: Verify version
+        run: ./faramesh --version
+      - name: Validate FPL examples
+        run: |
+          for f in examples/*.fpl; do
+            echo "Validating $f..."
+            ./faramesh policy validate "$f"
+          done
+      - name: Run demo (smoke test)
+        run: ./faramesh demo
+
+  cross-compile:
+    name: Cross-compile (${{ matrix.suffix }})
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64
+            ext: .exe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build
+        run: |
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build -ldflags="-X main.version=ci-${GITHUB_SHA::8} -s -w" \
+            -o faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }} \
+            ./cmd/faramesh
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: faramesh-${{ matrix.suffix }}
+          path: faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }}
+          retention-days: 14
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: faramesh/faramesh:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,40 @@
+[project]
+name = "faramesh-sdk"
+version = "0.3.2"
+description = "Faramesh Python SDK - Production-ready client for the Faramesh Execution Governor API"
+requires-python = ">=3.9"
+readme = "README.md"
+license = { text = "MPL-2.0" }
+
+authors = [
+  { name = "Faramesh Contributors" }
+]
+
+dependencies = [
+    "requests >= 2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest >= 7.4",
+    "pytest-asyncio >= 0.21",
+    "ruff >= 0.3",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools]
+py-modules = ["sitecustomize"]
+
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E203", "E501"]

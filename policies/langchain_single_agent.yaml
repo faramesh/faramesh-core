@@ -1,0 +1,96 @@
+faramesh-version: "1.0"
+agent-id: "langchain-single"
+default_effect: deny
+
+tools:
+  vault/probe:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+      - "credential:scope:payments"
+  vault/probe/_execute_tool_sync:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+      - "credential:scope:payments"
+  vault/probe/_execute_tool_async:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+      - "credential:scope:payments"
+  vault/probe/_run_one:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+      - "credential:scope:payments"
+  vault/probe/_arun_one:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+      - "credential:scope:payments"
+  payment/refund:
+    tags:
+      - "risk:high"
+  payment/refund/_execute_tool_sync:
+    tags:
+      - "risk:high"
+  payment/refund/_execute_tool_async:
+    tags:
+      - "risk:high"
+  payment/refund/_run_one:
+    tags:
+      - "risk:high"
+  payment/refund/_arun_one:
+    tags:
+      - "risk:high"
+
+rules:
+  - id: permit-http
+    match:
+      tool: "http/get"
+      when: "true"
+    effect: permit
+
+  - id: permit-http-suffixed
+    match:
+      tool: "http/get/*"
+      when: "true"
+    effect: permit
+
+  - id: permit-vault-probe
+    match:
+      tool: "vault/probe"
+      when: "true"
+    effect: permit
+
+  - id: permit-vault-probe-suffixed
+    match:
+      tool: "vault/probe/*"
+      when: "true"
+    effect: permit
+
+  - id: defer-payment-refund
+    match:
+      tool: "payment/refund"
+      when: "true"
+    effect: defer
+    reason: "refund requires operator approval"
+
+  - id: defer-payment-refund-suffixed
+    match:
+      tool: "payment/refund/*"
+      when: "true"
+    effect: defer
+    reason: "refund requires operator approval"
+
+  - id: idp-principal-probe
+    match:
+      tool: "idp/probe"
+      when: "principal.verified == true"
+    effect: permit
+
+  - id: idp-principal-probe-suffixed
+    match:
+      tool: "idp/probe/*"
+      when: "principal.verified == true"
+    effect: permit

@@ -1,0 +1,26 @@
+faramesh-version: "1.0"
+agent-id: "p2-webhook-agent"
+default_effect: deny
+
+budget:
+  max_calls: 3500
+  on_exceed: defer
+
+rules:
+  - id: permit-read-get
+    match:
+      tool: "http/get"
+    effect: permit
+    reason: "polling status and metadata endpoints"
+
+  - id: defer-outbound-post
+    match:
+      tool: "http/post"
+    effect: defer
+    reason: "outbound webhooks and callbacks require approval"
+
+  - id: deny-shell
+    match:
+      tool: "shell/*"
+    effect: deny
+    reason: "webhook integrators must not invoke shell"

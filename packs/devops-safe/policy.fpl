@@ -1,0 +1,8 @@
+agent devops-safe {
+  default deny
+
+  rules {
+    defer kubectl/* reason: "kubectl changes require approval"
+    defer shell/exec reason: "shell requires approval on devops profile"
+  }
+}

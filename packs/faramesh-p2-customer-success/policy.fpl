@@ -1,0 +1,17 @@
+# Optional FPL sidecar (YAML remains authoritative for engine load). Mirrors CS posture: reads permitted, billing writes defer, shell denied.
+agent p2-customer-success {
+  default deny
+
+  rules {
+    deny! shell/*
+      reason: "customer-success agents must not invoke shell"
+
+    defer billing/write
+      notify: "customer-success-lead"
+      reason: "plan or entitlement changes require approval"
+
+    permit read_customer
+    permit search_kb
+    permit http/get
+  }
+}

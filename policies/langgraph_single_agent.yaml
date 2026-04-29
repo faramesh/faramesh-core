@@ -1,0 +1,82 @@
+faramesh-version: "1.0"
+agent-id: "langgraph-single"
+default_effect: deny
+
+tools:
+  vault/probe/_execute_tool_sync:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+      - "credential:scope:payments"
+  vault/probe/_execute_tool_async:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+      - "credential:scope:payments"
+  vault/probe/_run_one:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+      - "credential:scope:payments"
+  vault/probe/_arun_one:
+    tags:
+      - "credential:required"
+      - "credential:broker"
+      - "credential:scope:payments"
+  payment/refund/_execute_tool_sync:
+    tags:
+      - "risk:high"
+  payment/refund/_execute_tool_async:
+    tags:
+      - "risk:high"
+  payment/refund/_run_one:
+    tags:
+      - "risk:high"
+  payment/refund/_arun_one:
+    tags:
+      - "risk:high"
+
+rules:
+  - id: permit-http-base
+    match:
+      tool: "http/get"
+      when: "true"
+    effect: permit
+
+  - id: permit-http
+    match:
+      tool: "http/get/*"
+      when: "true"
+    effect: permit
+
+  - id: permit-vault-probe-base
+    match:
+      tool: "vault/probe"
+      when: "true"
+    effect: permit
+
+  - id: permit-vault-probe
+    match:
+      tool: "vault/probe/*"
+      when: "true"
+    effect: permit
+
+  - id: defer-payment-refund-base
+    match:
+      tool: "payment/refund"
+      when: "true"
+    effect: defer
+    reason: "refund requires operator approval"
+
+  - id: defer-payment-refund
+    match:
+      tool: "payment/refund/*"
+      when: "true"
+    effect: defer
+    reason: "refund requires operator approval"
+
+  - id: idp-principal-probe
+    match:
+      tool: "idp/probe/*"
+      when: "principal.verified == true"
+    effect: permit

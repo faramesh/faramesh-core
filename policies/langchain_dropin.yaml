@@ -1,0 +1,30 @@
+faramesh-version: "1.0"
+agent-id: "langchain-dropin"
+default_effect: deny
+
+rules:
+  - id: permit-http-get-default-name
+    match:
+      tool: "http_get/invoke"
+      when: "true"
+    effect: permit
+
+  - id: permit-vault-probe-default-name
+    match:
+      tool: "vault_probe/invoke"
+      when: "true"
+    effect: permit
+
+  - id: deny-shell-run-default-name
+    match:
+      tool: "shell_run/invoke"
+      when: "true"
+    effect: deny
+    reason: "shell command execution denied in drop-in demo"
+
+  - id: defer-payment-refund-default-name
+    match:
+      tool: "payment_refund/invoke"
+      when: "true"
+    effect: defer
+    reason: "refund requires operator approval"

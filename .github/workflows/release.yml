@@ -1,0 +1,594 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  release-health:
+    name: Release Workflow Health
+    runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/main' }}
+
+    steps:
+      - name: Confirm release workflow is healthy on main
+        run: |
+          echo "Release workflow syntax and conditions are valid."
+          echo "Tag pushes (v*.*.*) run the full release pipeline."
+
+  corpus-matrix:
+    name: Corpus Coverage Matrix
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate and verify committed matrix
+        run: make corpus-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-coverage-matrix
+          path: |
+            tests/corpus/coverage-matrix.json
+            tests/corpus/coverage-matrix.md
+          retention-days: 1
+
+  corpus-harness:
+    name: Corpus Harness (${{ matrix.id }})
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: corpus-matrix
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: langchain-governed-smoke
+            entry: tests/corpus/framework-hooks/langchain-governed-smoke
+          - id: langchain-fpl
+            entry: tests/corpus/framework-hooks/langchain-fpl
+          - id: langgraph-fpl
+            entry: tests/corpus/framework-hooks/langgraph-fpl
+          - id: langchain-simple
+            entry: tests/corpus/framework-hooks/langchain-simple
+          - id: langgraph-single-agent
+            entry: tests/corpus/framework-hooks/langgraph-single-agent
+          - id: deepagents-governed
+            entry: tests/corpus/framework-hooks/deepagents-governed
+          - id: langgraph-multi-agent
+            entry: tests/corpus/framework-hooks/langgraph-multi-agent
+          - id: mcp-stdio-wrap
+            entry: tests/corpus/mcp-servers/mcp-stdio-wrap
+          - id: mcp-http-sse
+            entry: tests/corpus/mcp-servers/mcp-http-sse
+          - id: mcp-node-sdk
+            entry: tests/corpus/mcp-servers/mcp-node-sdk
+          - id: linux-interception
+            entry: tests/corpus/runtime-core/linux-interception
+          - id: defer-timeout-resume
+            entry: tests/corpus/runtime-core/defer-timeout-resume
+          - id: burst-rate-limits
+            entry: tests/corpus/runtime-core/burst-rate-limits
+          - id: policy-roundtrip
+            entry: tests/corpus/policy-core/policy-roundtrip
+          - id: socket-e2e-acceptance
+            entry: tests/corpus/runtime-core/socket-e2e-acceptance
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: sdk/node/package-lock.json
+      - name: Install Vault CLI
+        run: |
+          set -euo pipefail
+          VAULT_VERSION="1.17.6"
+          sudo apt-get update
+          sudo apt-get install -y unzip
+          curl -fsSL -o vault.zip "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_amd64.zip"
+          unzip -q vault.zip
+          sudo install vault /usr/local/bin/vault
+          vault version
+      - name: Run corpus entry
+        run: bash scripts/run_corpus_entry.sh "${{ matrix.entry }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-harness-${{ matrix.id }}
+          path: .tmp/
+          if-no-files-found: ignore
+          retention-days: 1
+
+  # ─── Build cross-compiled Go binaries ───────────────────────────────────────
+  build-binaries:
+    name: Build ${{ matrix.suffix }}
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: [corpus-matrix, corpus-harness]
+
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin-arm64
+          - goos: windows
+            goarch: amd64
+            suffix: windows-amd64
+            ext: .exe
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Build
+        run: |
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build \
+            -trimpath \
+            -ldflags="-X main.version=${{ steps.version.outputs.version }} -s -w" \
+            -o faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }} \
+            ./cmd/faramesh
+
+      - name: Generate checksum
+        run: |
+          sha256sum faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }} \
+            > faramesh-${{ matrix.suffix }}.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: faramesh-${{ matrix.suffix }}
+          path: |
+            faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }}
+            faramesh-${{ matrix.suffix }}.sha256
+          retention-days: 1
+
+  # ─── Docker image ────────────────────────────────────────────────────────────
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    needs: build-binaries
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Check Docker Hub credentials
+        id: dockerhub_creds
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Docker Hub credentials not set; skipping Docker Hub publish"
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: ${{ steps.dockerhub_creds.outputs.available == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and push GHCR
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          tags: |
+            ghcr.io/faramesh/faramesh:${{ steps.version.outputs.tag }}
+            ghcr.io/faramesh/faramesh:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Docker Hub
+        if: ${{ steps.dockerhub_creds.outputs.available == 'true' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: VERSION=${{ steps.version.outputs.version }}
+          tags: |
+            faramesh/faramesh:${{ steps.version.outputs.tag }}
+            faramesh/faramesh:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+        continue-on-error: true
+
+  # ─── GitHub Release with binaries ────────────────────────────────────────────
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-binaries, corpus-matrix, corpus-harness]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Create release body
+        run: |
+          cat > release_notes.md << 'EOF'
+          ## faramesh v${{ steps.version.outputs.version }}
+
+          ### Install
+
+          **macOS / Linux — Homebrew:**
+          ```bash
+          brew install faramesh/tap/faramesh
+          ```
+
+          **macOS / Linux — install script:**
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh | sh
+          ```
+
+          **Direct download:**
+          | Platform | Binary |
+          |---|---|
+          | Linux amd64 | `faramesh-linux-amd64` |
+          | Linux arm64 | `faramesh-linux-arm64` |
+          | macOS amd64 | `faramesh-darwin-amd64` |
+          | macOS arm64 (Apple Silicon) | `faramesh-darwin-arm64` |
+          | Windows amd64 | `faramesh-windows-amd64.exe` |
+
+          **Python SDK:**
+          ```bash
+          pip install faramesh-sdk==${{ steps.version.outputs.version }}
+          ```
+
+          **Docker:**
+          ```bash
+          docker run --rm ghcr.io/faramesh/faramesh:latest demo
+          ```
+
+          ### Quick start
+          ```bash
+          faramesh demo
+          faramesh setup flow
+          faramesh serve --policy policy.yaml
+          ```
+
+          ### Verify checksums
+          ```bash
+          sha256sum -c faramesh-linux-amd64.sha256
+          ```
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: faramesh v${{ steps.version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          files: artifacts/*
+          generate_release_notes: true
+
+  # ─── Update Homebrew formula ─────────────────────────────────────────────────
+  update-homebrew:
+    name: Update Homebrew formula
+    runs-on: ubuntu-latest
+    needs: github-release
+
+    steps:
+      - name: Check Homebrew tap token
+        id: tap_token
+        env:
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -n "$TAP_GITHUB_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "TAP_GITHUB_TOKEN not set; skipping Homebrew update"
+          fi
+
+      - name: Extract version
+        id: version
+        if: ${{ steps.tap_token.outputs.available == 'true' }}
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Download SHA256 files
+        if: ${{ steps.tap_token.outputs.available == 'true' }}
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          BASE="https://github.com/faramesh/faramesh-core/releases/download/v${VERSION}"
+          curl -fsSL "${BASE}/faramesh-darwin-amd64.sha256"  | awk '{print $1}' > sha-darwin-amd64
+          curl -fsSL "${BASE}/faramesh-darwin-arm64.sha256"  | awk '{print $1}' > sha-darwin-arm64
+          curl -fsSL "${BASE}/faramesh-linux-amd64.sha256"   | awk '{print $1}' > sha-linux-amd64
+          curl -fsSL "${BASE}/faramesh-linux-arm64.sha256"   | awk '{print $1}' > sha-linux-arm64
+          echo "darwin-amd64: $(cat sha-darwin-amd64)"
+          echo "darwin-arm64: $(cat sha-darwin-arm64)"
+          echo "linux-amd64:  $(cat sha-linux-amd64)"
+          echo "linux-arm64:  $(cat sha-linux-arm64)"
+
+      - name: Checkout homebrew-tap
+        if: ${{ steps.tap_token.outputs.available == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          repository: faramesh/homebrew-tap
+          token: ${{ secrets.TAP_GITHUB_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        if: ${{ steps.tap_token.outputs.available == 'true' }}
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          SHA_DARWIN_AMD64=$(cat sha-darwin-amd64)
+          SHA_DARWIN_ARM64=$(cat sha-darwin-arm64)
+          SHA_LINUX_AMD64=$(cat sha-linux-amd64)
+          SHA_LINUX_ARM64=$(cat sha-linux-arm64)
+
+          cat > homebrew-tap/Formula/faramesh.rb << FORMULA
+          class Faramesh < Formula
+            desc "Unified governance plane for AI agents — pre-execution authorization, policy-as-code, tamper-evident audit trail"
+            homepage "https://faramesh.dev"
+            version "${VERSION}"
+            license "MPL-2.0"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/faramesh/faramesh-core/releases/download/v#{version}/faramesh-darwin-arm64"
+                sha256 "${SHA_DARWIN_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/faramesh/faramesh-core/releases/download/v#{version}/faramesh-darwin-amd64"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/faramesh/faramesh-core/releases/download/v#{version}/faramesh-linux-arm64"
+                sha256 "${SHA_LINUX_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/faramesh/faramesh-core/releases/download/v#{version}/faramesh-linux-amd64"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            def install
+              bin.install Dir["faramesh-*"].first => "faramesh"
+            end
+
+            def caveats
+              <<~EOS
+                Run the demo to see Faramesh in action:
+                  faramesh demo
+
+                Start the guided setup flow:
+                  faramesh setup flow
+
+                Uninstall from a project and clean up local state:
+                  faramesh setup uninstall --path /path/to/project --yes
+
+                Start the governance daemon:
+                  faramesh serve --policy policy.yaml
+
+                Docs: https://faramesh.dev/docs
+              EOS
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/faramesh --version")
+              shell_output("#{bin}/faramesh setup --help")
+              system bin/"faramesh", "demo"
+            end
+          end
+          FORMULA
+
+      - name: Commit and push formula update
+        if: ${{ steps.tap_token.outputs.available == 'true' }}
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "faramesh-bot"
+          git config user.email "bot@faramesh.dev"
+          git add Formula/faramesh.rb
+          git diff --staged --quiet || git commit -m "feat: update faramesh to v${{ steps.version.outputs.version }}"
+          git push
+
+  # ─── Python SDK to PyPI ──────────────────────────────────────────────────────
+  publish-python-sdk:
+    name: Publish Python SDK to PyPI
+    runs-on: ubuntu-latest
+    if: ${{ startsWith(github.ref, 'refs/tags/v0.') }}
+    needs: github-release
+    environment:
+      name: pypi
+      url: https://pypi.org/project/faramesh-sdk/
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set SDK version
+        working-directory: sdk/python
+        run: |
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          version = "${{ steps.version.outputs.version }}"
+          pyproject = Path("pyproject.toml")
+          pyproject_text = pyproject.read_text(encoding="utf-8")
+          pyproject_text, pyproject_count = re.subn(
+              r'^version\s*=\s*"[^"]+"',
+              f'version = "{version}"',
+              pyproject_text,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          if pyproject_count != 1:
+              raise RuntimeError("failed to set sdk version in pyproject.toml")
+          pyproject.write_text(
+              pyproject_text,
+              encoding="utf-8",
+          )
+
+          client = Path("faramesh/client.py")
+          client_text = client.read_text(encoding="utf-8")
+          client_text, client_count = re.subn(
+              r'^__version__\s*=\s*"[^"]+"',
+              f'__version__ = "{version}"',
+              client_text,
+              count=1,
+              flags=re.MULTILINE,
+          )
+          if client_count != 1:
+              raise RuntimeError("failed to set sdk version in faramesh/client.py")
+          client.write_text(
+              client_text,
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Build SDK wheel
+        working-directory: sdk/python
+        run: |
+          pip install build
+          python -m build
+
+      - name: Verify wheel bootstrap import
+        working-directory: sdk/python
+        run: |
+          python -m venv /tmp/faramesh-release-wheel-check
+          /tmp/faramesh-release-wheel-check/bin/python -m pip install --upgrade pip
+          /tmp/faramesh-release-wheel-check/bin/python -m pip install dist/*.whl
+          /tmp/faramesh-release-wheel-check/bin/python - <<'PY'
+          import importlib.util
+          from faramesh.client import __version__
+
+          assert importlib.util.find_spec("faramesh.autopatch") is not None, "missing faramesh.autopatch"
+          import faramesh.autopatch  # noqa: F401
+          print("release wheel version:", __version__)
+          PY
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: sdk/python/dist/
+          print-hash: true
+
+  # ─── Node CLI wrapper to npm ───────────────────────────────────────────────
+  publish-npm:
+    name: Publish npm package
+    runs-on: ubuntu-latest
+    needs: github-release
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Set npm package version
+        run: |
+          cd npm
+          npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
+
+      - name: Check if npm version already exists
+        id: npm_exists
+        run: |
+          PKG=$(node -p "require('./npm/package.json').name")
+          VER="${{ steps.version.outputs.version }}"
+          if npm view "${PKG}@${VER}" version >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "${PKG}@${VER} already published; skipping npm publish"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "${PKG}@${VER} not found; publishing"
+          fi
+
+      - name: Publish to npm
+        if: ${{ steps.npm_exists.outputs.exists == 'false' }}
+        run: |
+          cd npm
+          npm publish --access public

@@ -1,0 +1,51 @@
+{
+  "family": "governed-agent",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "containerDefinitions": [
+    {
+      "name": "agent",
+      "image": "your-account.dkr.ecr.region.amazonaws.com/your-agent:latest",
+      "essential": true,
+      "environment": [
+        { "name": "FARAMESH_SOCKET", "value": "/var/run/faramesh/faramesh.sock" },
+        { "name": "FARAMESH_REGION", "value": "us-east-1" }
+      ],
+      "mountPoints": [
+        { "sourceVolume": "faramesh-sock", "containerPath": "/var/run/faramesh", "readOnly": false }
+      ]
+    },
+    {
+      "name": "faramesh",
+      "image": "your-account.dkr.ecr.region.amazonaws.com/faramesh:latest",
+      "essential": true,
+      "command": [
+        "serve",
+        "--policy",
+        "/policy/policy.yaml",
+        "--socket",
+        "/var/run/faramesh/faramesh.sock"
+      ],
+      "environment": [
+        { "name": "AWS_REGION", "value": "us-east-1" }
+      ],
+      "mountPoints": [
+        { "sourceVolume": "faramesh-sock", "containerPath": "/var/run/faramesh", "readOnly": false },
+        { "sourceVolume": "policy", "containerPath": "/policy", "readOnly": true }
+      ]
+    }
+  ],
+  "volumes": [
+    { "name": "faramesh-sock" },
+    {
+      "name": "policy",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-REPLACE",
+        "transitEncryption": "ENABLED",
+        "authorizationConfig": { "accessPointId": "fsap-REPLACE", "iam": "ENABLED" }
+      }
+    }
+  ]
+}
