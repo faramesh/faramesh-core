@@ -52,4 +52,4 @@ Requires `github.com/faramesh/faramesh-core` as a dependency.
 
 ## License
 
-Apache 2.0
+Mozilla Public License 2.0
