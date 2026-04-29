@@ -34,7 +34,7 @@
     "sdk"
   ],
   "author": "Faramesh Contributors",
-  "license": "Elastic-2.0",
+  "license": "MPL-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/faramesh/Faramesh-Nexus.git",
