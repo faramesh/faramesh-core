@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os/exec"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1122,7 +1123,7 @@ func TestListenRejectsActiveSocket(t *testing.T) {
 		t.Skip("unix socket behavior not available on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "faramesh.sock")
+	socketPath := filepath.Join("/tmp", fmt.Sprintf("faramesh-stale-%d.sock", time.Now().UnixNano()))
 	activeListener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Skipf("unable to allocate unix socket: %v", err)
@@ -1145,20 +1146,26 @@ func TestListenReusesStaleSocketFile(t *testing.T) {
 		t.Skip("unix socket behavior not available on windows")
 	}
 
-	socketPath := filepath.Join(t.TempDir(), "faramesh.sock")
-	staleListener, err := net.Listen("unix", socketPath)
+	if os.Getenv("FARAMESH_SDK_STALE_SOCKET_HELPER") == "1" {
+		socketPath := os.Getenv("FARAMESH_SDK_STALE_SOCKET_PATH")
+		listener, err := net.Listen("unix", socketPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "helper listen: %v\n", err)
+			os.Exit(2)
+		}
+		_ = listener
+		os.Exit(0)
+	}
+
+	socketPath := filepath.Join("/tmp", fmt.Sprintf("faramesh-stale-%d.sock", time.Now().UnixNano()))
+	cmd := exec.Command(os.Args[0], "-test.run=^TestListenReusesStaleSocketFile$", "-test.v=false")
+	cmd.Env = append(os.Environ(),
+		"FARAMESH_SDK_STALE_SOCKET_HELPER=1",
+		"FARAMESH_SDK_STALE_SOCKET_PATH="+socketPath,
+	)
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Skipf("unable to allocate unix socket: %v", err)
-	}
-	unixListener, ok := staleListener.(*net.UnixListener)
-	if !ok {
-		_ = staleListener.Close()
-		t.Skip("expected unix listener implementation")
-	}
-	// Keep the socket inode on disk after Close() so we can exercise stale-socket recovery.
-	unixListener.SetUnlinkOnClose(false)
-	if err := staleListener.Close(); err != nil {
-		t.Fatalf("close stale listener: %v", err)
+		t.Fatalf("create stale socket fixture: %v: %s", err, string(output))
 	}
 	defer os.Remove(socketPath)
 	if _, err := os.Stat(socketPath); err != nil {
