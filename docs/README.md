@@ -56,4 +56,4 @@ If you need deep internals, use:
 
 ## License
 
-Faramesh Core is licensed under Elastic License 2.0. See [LICENSE](https://github.com/faramesh/faramesh-core/blob/main/LICENSE).
+Faramesh Core is licensed under Mozilla Public License 2.0. See [LICENSE](https://github.com/faramesh/faramesh-core/blob/main/LICENSE).

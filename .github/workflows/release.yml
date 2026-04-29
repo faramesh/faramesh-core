@@ -393,7 +393,7 @@ jobs:
             desc "Unified governance plane for AI agents — pre-execution authorization, policy-as-code, tamper-evident audit trail"
             homepage "https://faramesh.dev"
             version "${VERSION}"
-            license "Elastic-2.0"
+            license "MPL-2.0"
 
             on_macos do
               on_arm do
