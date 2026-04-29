@@ -1,4 +1,5 @@
 /bin/
+faramesh
 *.test
 coverage.out
 .tmp/
