@@ -500,4 +500,4 @@ The built files will be in `dist/`.
 
 ## License
 
-Elastic License 2.0
+Mozilla Public License 2.0

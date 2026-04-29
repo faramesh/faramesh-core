@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Elastic--2.0-22c55e?style=for-the-badge" alt="Elastic License 2.0" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MPL--2.0-0ea5e9?style=for-the-badge" alt="Mozilla Public License 2.0" /></a>
   <a href="https://github.com/faramesh/faramesh-core/releases"><img src="https://img.shields.io/github/v/release/faramesh/faramesh-core?style=for-the-badge&color=2563eb" alt="Latest Release" /></a>
   <a href="https://goreportcard.com/report/github.com/faramesh/faramesh-core"><img src="https://img.shields.io/badge/Go%20Report-Card-06b6d4?style=for-the-badge" alt="Go Report Card" /></a>
   <a href="https://github.com/faramesh/faramesh-core"><img src="https://img.shields.io/github/stars/faramesh/faramesh-core?style=for-the-badge&color=f59e0b" alt="GitHub Stars" /></a>
@@ -695,6 +695,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding standards, 
 
 ## License
 
-[Elastic License 2.0](LICENSE)
-
-Commercial hosted/resale permissions beyond ELv2 terms are available by written agreement.
+[Mozilla Public License 2.0](LICENSE)
