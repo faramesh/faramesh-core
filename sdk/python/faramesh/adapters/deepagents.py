@@ -109,8 +109,20 @@ def _patch_deepagents_create_agent_entrypoint() -> bool:
     try:
         top_mod = importlib.import_module("deepagents")
         top_create = getattr(top_mod, "create_deep_agent", None)
-        if top_create is original:
-            setattr(top_mod, "create_deep_agent", wrapper)
+        if top_create is not None and not getattr(top_create, "_faramesh_deepagents_patched", False):
+            if top_create is original:
+                setattr(top_mod, "create_deep_agent", wrapper)
+            else:
+                @functools.wraps(top_create)
+                def top_wrapper(*args: Any, **kwargs: Any) -> Any:
+                    install_langchain_interceptor(
+                        fail_open=_DEEPAGENTS_FAIL_OPEN,
+                        include_langgraph=_DEEPAGENTS_INCLUDE_LANGGRAPH,
+                    )
+                    return top_create(*args, **kwargs)
+
+                top_wrapper._faramesh_deepagents_patched = True
+                setattr(top_mod, "create_deep_agent", top_wrapper)
     except Exception:
         logger.debug("faramesh: deepagents top-level re-export patch skipped")
 
