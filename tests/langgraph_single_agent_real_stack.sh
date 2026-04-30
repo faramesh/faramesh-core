@@ -157,6 +157,7 @@ wait_for_daemon
 FARAMESH_SOCKET="$SOCKET_PATH" \
 FARAMESH_AGENT_ID="$AGENT_ID" \
 FARAMESH_BIN="$BIN_PATH" \
+FARAMESH_DEFER_MODE="${FARAMESH_DEFER_MODE:-raise}" \
 "$BIN_PATH" --daemon-socket "$SOCKET_PATH" run -- "$PYTHON_BIN" "$CORE_DIR/tests/langgraph_single_agent_dropin.py" >"$AGENT_OUTPUT_PATH" 2>&1
 
 python3 - "$AGENT_OUTPUT_PATH" <<'PY'

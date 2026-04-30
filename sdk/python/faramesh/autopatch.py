@@ -233,6 +233,12 @@ def _require_defer_approval(tool_id: str, result: dict[str, Any]) -> None:
     if not defer_token:
         raise RuntimeError(f"Faramesh DEFER missing token (tool={tool_id})")
 
+    mode = os.environ.get("FARAMESH_DEFER_MODE", "").strip().lower()
+    if mode in {"raise", "immediate", "exception", "failfast"}:
+        raise RuntimeError(
+            f"Faramesh DEFER: approval required (token={defer_token}, tool={tool_id})"
+        )
+
     socket_path = os.environ.get("FARAMESH_SOCKET", "/tmp/faramesh.sock")
     if not os.path.exists(socket_path):
         raise RuntimeError(f"Faramesh DEFER cannot be polled: socket not found at {socket_path}")

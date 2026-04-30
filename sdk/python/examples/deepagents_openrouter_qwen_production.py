@@ -136,7 +136,16 @@ def _patch_markers() -> dict[str, Any]:
             )
         )
 
-    deepagents_create = getattr(create_deep_agent, "_faramesh_deepagents_patched", False)
+    try:
+        import deepagents as deepagents_mod
+
+        deepagents_create = getattr(
+            getattr(deepagents_mod, "create_deep_agent", None),
+            "_faramesh_deepagents_patched",
+            False,
+        )
+    except Exception:
+        deepagents_create = getattr(create_deep_agent, "_faramesh_deepagents_patched", False)
 
     return {
         "langchain_basetool_methods": marker_fields,
@@ -168,6 +177,13 @@ def main() -> None:
     )
     report["patched"] = patched
     report["patch_markers"] = _patch_markers()
+
+    try:
+        import deepagents as deepagents_mod
+
+        create_agent = getattr(deepagents_mod, "create_deep_agent", create_deep_agent)
+    except Exception:
+        create_agent = create_deep_agent
 
     permit_output = infra_status.invoke({"query": "production-openrouter-healthcheck"})
     report["permit_probe"] = {
@@ -229,7 +245,7 @@ def main() -> None:
             AIMessage(content="safe probe completed"),
         ]
     )
-    safe_probe_agent = create_deep_agent(
+    safe_probe_agent = create_agent(
         model=safe_scripted_model,
         tools=[infra_status, db_readonly_query, payments_refund, bash_run],
     )
@@ -266,7 +282,7 @@ def main() -> None:
             )
         ]
     )
-    deny_probe_agent = create_deep_agent(
+    deny_probe_agent = create_agent(
         model=deny_scripted_model,
         tools=[infra_status, db_readonly_query, payments_refund, bash_run],
     )
@@ -300,7 +316,7 @@ def main() -> None:
         print(json.dumps(report, indent=2, sort_keys=True))
         return
 
-    agent = create_deep_agent(
+    agent = create_agent(
         model=MODEL_SPEC,
         tools=[infra_status, db_readonly_query, payments_refund, bash_run],
     )

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/readme-logo.svg" alt="Faramesh" width="500" />
+  <img src="faramesh-core-logo.svg" alt="Faramesh" width="500" />
 </p>
 
 <p align="center">
