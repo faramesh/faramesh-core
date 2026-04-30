@@ -213,9 +213,7 @@ func ensureDaemonStarted(opts daemonStartOptions) (daemonStartResult, error) {
 	defer logFile.Close()
 
 	cmd := exec.Command(exe, args...)
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+	applyProcessGroup(cmd)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
@@ -389,38 +387,6 @@ func terminatePID(pid int) error {
 	return proc.Kill()
 }
 
-func terminateProcessGroup(pid int) (bool, error) {
-	if runtime.GOOS == "windows" || pid <= 0 {
-		return false, nil
-	}
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
-		if isProcessGoneError(err) {
-			return false, nil
-		}
-		return false, err
-	}
-
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if !isProcessGroupAlive(pid) {
-			return true, nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && !isProcessGoneError(err) {
-		return true, err
-	}
-	return true, nil
-}
-
-func isProcessGroupAlive(pid int) bool {
-	if runtime.GOOS == "windows" || pid <= 0 {
-		return false
-	}
-	err := syscall.Kill(-pid, syscall.Signal(0))
-	return err == nil || isProcessPermissionError(err)
-}
 
 func isProcessAlive(pid int) bool {
 	if pid <= 0 {
