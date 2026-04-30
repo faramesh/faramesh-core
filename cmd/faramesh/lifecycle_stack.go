@@ -14,7 +14,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -657,9 +656,7 @@ func startBackgroundProcess(cmd *exec.Cmd, logPath, pidPath string) (int, error)
 	}
 	defer logFile.Close()
 
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	}
+	applyProcessGroup(cmd)
 
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
