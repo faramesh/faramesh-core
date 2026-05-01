@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/faramesh/faramesh-core/internal/core/canonicalize"
@@ -17,6 +18,13 @@ import (
 // SchemaVersion is the DPR schema version embedded in every record.
 const SchemaVersion = "dpr/1.0"
 
+const (
+	// CanonicalizationLegacyJSON preserves the original DPR JSON serialization.
+	CanonicalizationLegacyJSON = "legacy-json-v1"
+	// CanonicalizationJCS is the RFC 8785-style canonical JSON mode.
+	CanonicalizationJCS = "jcs-rfc8785-v1"
+)
+
 const genesisDomainSeparator = "faramesh/dpr/genesis/v1"
 
 // Record is a single entry in the Decision Provenance Record chain.
@@ -24,13 +32,14 @@ const genesisDomainSeparator = "faramesh/dpr/genesis/v1"
 // and simple JSON serialization into the WAL.
 type Record struct {
 	// ── Schema & Chain Integrity ──
-	SchemaVersion  string `json:"schema_version"`
-	FPLVersion     string `json:"fpl_version,omitempty"` // Faramesh Policy Language version
-	CARVersion     string `json:"car_version,omitempty"` // Canonical Action Request version
-	RecordID       string `json:"record_id"`
-	PrevRecordHash string `json:"prev_record_hash"`
-	RecordHash     string `json:"record_hash"`
-	HMACSig        string `json:"hmac_signature,omitempty"` // HMAC-SHA256 for non-repudiation
+	SchemaVersion             string `json:"schema_version"`
+	FPLVersion                string `json:"fpl_version,omitempty"` // Faramesh Policy Language version
+	CARVersion                string `json:"car_version,omitempty"` // Canonical Action Request version
+	CanonicalizationAlgorithm string `json:"canonicalization_algorithm,omitempty"`
+	RecordID                  string `json:"record_id"`
+	PrevRecordHash            string `json:"prev_record_hash"`
+	RecordHash                string `json:"record_hash"`
+	HMACSig                   string `json:"hmac_signature,omitempty"` // HMAC-SHA256 for non-repudiation
 	// Asymmetric signature fields (Ed25519 etc). Introduced to support
 	// tamper-evident receipts with public-key verification. Existing
 	// HMAC field is preserved for backward compatibility during rollout.
@@ -115,84 +124,82 @@ type Record struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// UseJCSCanonicalization controls whether Record.CanonicalBytes serializes
-// using a JCS-style canonical JSON serializer. It is set by Pipeline at
-// startup based on configuration. Default is false (legacy serializer).
-// Default to JCS canonicalization to favor RFC-8785 deterministic JSON
-// output for new records. This can be flipped at runtime by the daemon
-// when `FARAMESH_USE_JCS` is explicitly set to false.
-var UseJCSCanonicalization = true
-
 // CanonicalBytes returns the deterministic byte representation of this record
 // used to compute record_hash. The previous record's hash is included so the
 // chain forms a linked list of SHA256 hashes.
 func (r *Record) CanonicalBytes() []byte {
-	if UseJCSCanonicalization {
+	alg := strings.TrimSpace(r.CanonicalizationAlgorithm)
+	if alg == "" {
+		alg = CanonicalizationLegacyJSON
+	}
+	if alg == CanonicalizationJCS {
 		// Build same canon struct but serialize using JCS for deterministic
 		// canonical JSON per RFC 8785.
 		type canonJCS struct {
-			SchemaVersion      string    `json:"schema_version"`
-			FPLVersion         string    `json:"fpl_version,omitempty"`
-			CARVersion         string    `json:"car_version,omitempty"`
-			RecordID           string    `json:"record_id"`
-			PrevRecordHash     string    `json:"prev_record_hash"`
-			AgentID            string    `json:"agent_id"`
-			SessionID          string    `json:"session_id"`
-			ToolID             string    `json:"tool_id"`
-			InterceptAdapter   string    `json:"intercept_adapter"`
-			ExecutionTimeoutMS int       `json:"execution_timeout_ms,omitempty"`
-			PrincipalIDHash    string    `json:"principal_id_hash,omitempty"`
-			Effect             string    `json:"effect"`
-			MatchedRuleID      string    `json:"matched_rule_id"`
-			ReasonCode         string    `json:"reason_code"`
-			DenialToken        string    `json:"denial_token,omitempty"`
-			IncidentCategory   string    `json:"incident_category,omitempty"`
-			IncidentSeverity   string    `json:"incident_severity,omitempty"`
-			PolicyVersion      string    `json:"policy_version"`
-			ArgsStructuralSig  string    `json:"args_structural_sig"`
-			HardeningMode      string    `json:"hardening_mode,omitempty"`
-			NetworkHostHash    string    `json:"network_host_hash,omitempty"`
-			NetworkPort        int       `json:"network_port,omitempty"`
-			NetworkResolvedIP  string    `json:"network_resolved_ip_hash,omitempty"`
-			NetworkAuditBypass bool      `json:"network_audit_bypass,omitempty"`
-			InferenceRewrite   bool      `json:"inference_model_rewrite_applied,omitempty"`
-			WorkflowPhase      string    `json:"workflow_phase,omitempty"`
-			CredentialBrokered bool      `json:"credential_brokered,omitempty"`
-			ApprovalEnvelope   string    `json:"approval_envelope,omitempty"`
-			DegradedMode       string    `json:"degraded_mode,omitempty"`
-			CreatedAt          time.Time `json:"created_at"`
+			SchemaVersion             string    `json:"schema_version"`
+			FPLVersion                string    `json:"fpl_version,omitempty"`
+			CARVersion                string    `json:"car_version,omitempty"`
+			CanonicalizationAlgorithm string    `json:"canonicalization_algorithm,omitempty"`
+			RecordID                  string    `json:"record_id"`
+			PrevRecordHash            string    `json:"prev_record_hash"`
+			AgentID                   string    `json:"agent_id"`
+			SessionID                 string    `json:"session_id"`
+			ToolID                    string    `json:"tool_id"`
+			InterceptAdapter          string    `json:"intercept_adapter"`
+			ExecutionTimeoutMS        int       `json:"execution_timeout_ms,omitempty"`
+			PrincipalIDHash           string    `json:"principal_id_hash,omitempty"`
+			Effect                    string    `json:"effect"`
+			MatchedRuleID             string    `json:"matched_rule_id"`
+			ReasonCode                string    `json:"reason_code"`
+			DenialToken               string    `json:"denial_token,omitempty"`
+			IncidentCategory          string    `json:"incident_category,omitempty"`
+			IncidentSeverity          string    `json:"incident_severity,omitempty"`
+			PolicyVersion             string    `json:"policy_version"`
+			ArgsStructuralSig         string    `json:"args_structural_sig"`
+			HardeningMode             string    `json:"hardening_mode,omitempty"`
+			NetworkHostHash           string    `json:"network_host_hash,omitempty"`
+			NetworkPort               int       `json:"network_port,omitempty"`
+			NetworkResolvedIP         string    `json:"network_resolved_ip_hash,omitempty"`
+			NetworkAuditBypass        bool      `json:"network_audit_bypass,omitempty"`
+			InferenceRewrite          bool      `json:"inference_model_rewrite_applied,omitempty"`
+			WorkflowPhase             string    `json:"workflow_phase,omitempty"`
+			CredentialBrokered        bool      `json:"credential_brokered,omitempty"`
+			ApprovalEnvelope          string    `json:"approval_envelope,omitempty"`
+			DegradedMode              string    `json:"degraded_mode,omitempty"`
+			CreatedAt                 time.Time `json:"created_at"`
 		}
 		cj := canonJCS{
-			SchemaVersion:      r.SchemaVersion,
-			FPLVersion:         r.FPLVersion,
-			CARVersion:         r.CARVersion,
-			RecordID:           r.RecordID,
-			PrevRecordHash:     r.PrevRecordHash,
-			AgentID:            r.AgentID,
-			SessionID:          r.SessionID,
-			ToolID:             r.ToolID,
-			InterceptAdapter:   r.InterceptAdapter,
-			ExecutionTimeoutMS: r.ExecutionTimeoutMS,
-			PrincipalIDHash:    r.PrincipalIDHash,
-			Effect:             r.Effect,
-			MatchedRuleID:      r.MatchedRuleID,
-			ReasonCode:         r.ReasonCode,
-			DenialToken:        r.DenialToken,
-			IncidentCategory:   r.IncidentCategory,
-			IncidentSeverity:   r.IncidentSeverity,
-			PolicyVersion:      r.PolicyVersion,
-			ArgsStructuralSig:  r.ArgsStructuralSig,
-			HardeningMode:      r.HardeningMode,
-			NetworkHostHash:    r.NetworkHostHash,
-			NetworkPort:        r.NetworkPort,
-			NetworkResolvedIP:  r.NetworkResolvedIPHash,
-			NetworkAuditBypass: r.NetworkAuditBypass,
-			InferenceRewrite:   r.InferenceModelRewriteApplied,
-			WorkflowPhase:      r.WorkflowPhase,
-			CredentialBrokered: r.CredentialBrokered,
-			ApprovalEnvelope:   r.ApprovalEnvelope,
-			DegradedMode:       r.DegradedMode,
-			CreatedAt:          r.CreatedAt.UTC(),
+			SchemaVersion:             r.SchemaVersion,
+			FPLVersion:                r.FPLVersion,
+			CARVersion:                r.CARVersion,
+			CanonicalizationAlgorithm: r.CanonicalizationAlgorithm,
+			RecordID:                  r.RecordID,
+			PrevRecordHash:            r.PrevRecordHash,
+			AgentID:                   r.AgentID,
+			SessionID:                 r.SessionID,
+			ToolID:                    r.ToolID,
+			InterceptAdapter:          r.InterceptAdapter,
+			ExecutionTimeoutMS:        r.ExecutionTimeoutMS,
+			PrincipalIDHash:           r.PrincipalIDHash,
+			Effect:                    r.Effect,
+			MatchedRuleID:             r.MatchedRuleID,
+			ReasonCode:                r.ReasonCode,
+			DenialToken:               r.DenialToken,
+			IncidentCategory:          r.IncidentCategory,
+			IncidentSeverity:          r.IncidentSeverity,
+			PolicyVersion:             r.PolicyVersion,
+			ArgsStructuralSig:         r.ArgsStructuralSig,
+			HardeningMode:             r.HardeningMode,
+			NetworkHostHash:           r.NetworkHostHash,
+			NetworkPort:               r.NetworkPort,
+			NetworkResolvedIP:         r.NetworkResolvedIPHash,
+			NetworkAuditBypass:        r.NetworkAuditBypass,
+			InferenceRewrite:          r.InferenceModelRewriteApplied,
+			WorkflowPhase:             r.WorkflowPhase,
+			CredentialBrokered:        r.CredentialBrokered,
+			ApprovalEnvelope:          r.ApprovalEnvelope,
+			DegradedMode:              r.DegradedMode,
+			CreatedAt:                 r.CreatedAt.UTC(),
 		}
 		if jb, err := canonicalize.JCSMarshal(cj); err == nil {
 			return jb
@@ -201,68 +208,70 @@ func (r *Record) CanonicalBytes() []byte {
 	}
 	// Exclude record_hash and hmac_signature from the canonical form.
 	type canon struct {
-		SchemaVersion      string    `json:"schema_version"`
-		FPLVersion         string    `json:"fpl_version,omitempty"`
-		CARVersion         string    `json:"car_version,omitempty"`
-		RecordID           string    `json:"record_id"`
-		PrevRecordHash     string    `json:"prev_record_hash"`
-		AgentID            string    `json:"agent_id"`
-		SessionID          string    `json:"session_id"`
-		ToolID             string    `json:"tool_id"`
-		InterceptAdapter   string    `json:"intercept_adapter"`
-		ExecutionTimeoutMS int       `json:"execution_timeout_ms,omitempty"`
-		PrincipalIDHash    string    `json:"principal_id_hash,omitempty"`
-		Effect             string    `json:"effect"`
-		MatchedRuleID      string    `json:"matched_rule_id"`
-		ReasonCode         string    `json:"reason_code"`
-		DenialToken        string    `json:"denial_token,omitempty"`
-		IncidentCategory   string    `json:"incident_category,omitempty"`
-		IncidentSeverity   string    `json:"incident_severity,omitempty"`
-		PolicyVersion      string    `json:"policy_version"`
-		ArgsStructuralSig  string    `json:"args_structural_sig"`
-		HardeningMode      string    `json:"hardening_mode,omitempty"`
-		NetworkHostHash    string    `json:"network_host_hash,omitempty"`
-		NetworkPort        int       `json:"network_port,omitempty"`
-		NetworkResolvedIP  string    `json:"network_resolved_ip_hash,omitempty"`
-		NetworkAuditBypass bool      `json:"network_audit_bypass,omitempty"`
-		InferenceRewrite   bool      `json:"inference_model_rewrite_applied,omitempty"`
-		WorkflowPhase      string    `json:"workflow_phase,omitempty"`
-		CredentialBrokered bool      `json:"credential_brokered,omitempty"`
-		ApprovalEnvelope   string    `json:"approval_envelope,omitempty"`
-		DegradedMode       string    `json:"degraded_mode,omitempty"`
-		CreatedAt          time.Time `json:"created_at"`
+		SchemaVersion             string    `json:"schema_version"`
+		FPLVersion                string    `json:"fpl_version,omitempty"`
+		CARVersion                string    `json:"car_version,omitempty"`
+		CanonicalizationAlgorithm string    `json:"canonicalization_algorithm,omitempty"`
+		RecordID                  string    `json:"record_id"`
+		PrevRecordHash            string    `json:"prev_record_hash"`
+		AgentID                   string    `json:"agent_id"`
+		SessionID                 string    `json:"session_id"`
+		ToolID                    string    `json:"tool_id"`
+		InterceptAdapter          string    `json:"intercept_adapter"`
+		ExecutionTimeoutMS        int       `json:"execution_timeout_ms,omitempty"`
+		PrincipalIDHash           string    `json:"principal_id_hash,omitempty"`
+		Effect                    string    `json:"effect"`
+		MatchedRuleID             string    `json:"matched_rule_id"`
+		ReasonCode                string    `json:"reason_code"`
+		DenialToken               string    `json:"denial_token,omitempty"`
+		IncidentCategory          string    `json:"incident_category,omitempty"`
+		IncidentSeverity          string    `json:"incident_severity,omitempty"`
+		PolicyVersion             string    `json:"policy_version"`
+		ArgsStructuralSig         string    `json:"args_structural_sig"`
+		HardeningMode             string    `json:"hardening_mode,omitempty"`
+		NetworkHostHash           string    `json:"network_host_hash,omitempty"`
+		NetworkPort               int       `json:"network_port,omitempty"`
+		NetworkResolvedIP         string    `json:"network_resolved_ip_hash,omitempty"`
+		NetworkAuditBypass        bool      `json:"network_audit_bypass,omitempty"`
+		InferenceRewrite          bool      `json:"inference_model_rewrite_applied,omitempty"`
+		WorkflowPhase             string    `json:"workflow_phase,omitempty"`
+		CredentialBrokered        bool      `json:"credential_brokered,omitempty"`
+		ApprovalEnvelope          string    `json:"approval_envelope,omitempty"`
+		DegradedMode              string    `json:"degraded_mode,omitempty"`
+		CreatedAt                 time.Time `json:"created_at"`
 	}
 	b, _ := json.Marshal(canon{
-		SchemaVersion:      r.SchemaVersion,
-		FPLVersion:         r.FPLVersion,
-		CARVersion:         r.CARVersion,
-		RecordID:           r.RecordID,
-		PrevRecordHash:     r.PrevRecordHash,
-		AgentID:            r.AgentID,
-		SessionID:          r.SessionID,
-		ToolID:             r.ToolID,
-		InterceptAdapter:   r.InterceptAdapter,
-		ExecutionTimeoutMS: r.ExecutionTimeoutMS,
-		PrincipalIDHash:    r.PrincipalIDHash,
-		Effect:             r.Effect,
-		MatchedRuleID:      r.MatchedRuleID,
-		ReasonCode:         r.ReasonCode,
-		DenialToken:        r.DenialToken,
-		IncidentCategory:   r.IncidentCategory,
-		IncidentSeverity:   r.IncidentSeverity,
-		PolicyVersion:      r.PolicyVersion,
-		ArgsStructuralSig:  r.ArgsStructuralSig,
-		HardeningMode:      r.HardeningMode,
-		NetworkHostHash:    r.NetworkHostHash,
-		NetworkPort:        r.NetworkPort,
-		NetworkResolvedIP:  r.NetworkResolvedIPHash,
-		NetworkAuditBypass: r.NetworkAuditBypass,
-		InferenceRewrite:   r.InferenceModelRewriteApplied,
-		WorkflowPhase:      r.WorkflowPhase,
-		CredentialBrokered: r.CredentialBrokered,
-		ApprovalEnvelope:   r.ApprovalEnvelope,
-		DegradedMode:       r.DegradedMode,
-		CreatedAt:          r.CreatedAt.UTC(),
+		SchemaVersion:             r.SchemaVersion,
+		FPLVersion:                r.FPLVersion,
+		CARVersion:                r.CARVersion,
+		CanonicalizationAlgorithm: r.CanonicalizationAlgorithm,
+		RecordID:                  r.RecordID,
+		PrevRecordHash:            r.PrevRecordHash,
+		AgentID:                   r.AgentID,
+		SessionID:                 r.SessionID,
+		ToolID:                    r.ToolID,
+		InterceptAdapter:          r.InterceptAdapter,
+		ExecutionTimeoutMS:        r.ExecutionTimeoutMS,
+		PrincipalIDHash:           r.PrincipalIDHash,
+		Effect:                    r.Effect,
+		MatchedRuleID:             r.MatchedRuleID,
+		ReasonCode:                r.ReasonCode,
+		DenialToken:               r.DenialToken,
+		IncidentCategory:          r.IncidentCategory,
+		IncidentSeverity:          r.IncidentSeverity,
+		PolicyVersion:             r.PolicyVersion,
+		ArgsStructuralSig:         r.ArgsStructuralSig,
+		HardeningMode:             r.HardeningMode,
+		NetworkHostHash:           r.NetworkHostHash,
+		NetworkPort:               r.NetworkPort,
+		NetworkResolvedIP:         r.NetworkResolvedIPHash,
+		NetworkAuditBypass:        r.NetworkAuditBypass,
+		InferenceRewrite:          r.InferenceModelRewriteApplied,
+		WorkflowPhase:             r.WorkflowPhase,
+		CredentialBrokered:        r.CredentialBrokered,
+		ApprovalEnvelope:          r.ApprovalEnvelope,
+		DegradedMode:              r.DegradedMode,
+		CreatedAt:                 r.CreatedAt.UTC(),
 	})
 	return b
 }
