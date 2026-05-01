@@ -326,6 +326,14 @@ func buildAuditTraceOutput(visibilityURL string, action map[string]any, dbOverri
 				if err != nil {
 					out["linkage_warning"] = fmt.Sprintf("lookup record_id %q: %v", recordID, err)
 				} else {
+					// attempt to verify Ed25519 signature when present
+					sigValid := false
+					if rec.SignatureAlg == "ed25519" && rec.Signature != "" {
+						if ok, _ := rec.VerifyEd25519(); ok {
+							sigValid = true
+						}
+					}
+
 					out["dpr_record"] = map[string]any{
 						"db_path":             dbPath,
 						"record_id":           rec.RecordID,
@@ -337,7 +345,11 @@ func buildAuditTraceOutput(visibilityURL string, action map[string]any, dbOverri
 						"tool_id":             rec.ToolID,
 						"created_at":          rec.CreatedAt.UTC().Format(time.RFC3339Nano),
 						"record_hash":         rec.RecordHash,
+						"signature_algorithm": rec.SignatureAlg,
+						"signature":           rec.Signature,
+						"signer_public_key":   rec.SignerPublicKey,
 						"prev_record_hash":    rec.PrevRecordHash,
+						"signature_valid":     sigValid,
 						"credential_brokered": rec.CredentialBrokered,
 						"credential_source":   rec.CredentialSource,
 						"credential_scope":    rec.CredentialScope,

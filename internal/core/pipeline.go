@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/json"
@@ -107,6 +108,8 @@ type Pipeline struct {
 	policySourceID    string
 	strictModelVerify bool
 	hmacKey           []byte
+	signingPrivKey    []byte
+	signingPubKey     []byte
 	log               *zap.Logger
 	artifacts         atomic.Value // *policyArtifacts
 	callChainMu       sync.Mutex
@@ -207,6 +210,8 @@ type Config struct {
 	PolicySourceID          string
 	StrictModelVerification bool
 	HMACKey                 []byte
+	SigningPrivKey          []byte
+	SigningPubKey           []byte
 	Log                     *zap.Logger
 	Standing                *standing.Registry
 }
@@ -269,6 +274,8 @@ func NewPipeline(cfg Config) *Pipeline {
 		policySourceID:    cfg.PolicySourceID,
 		strictModelVerify: cfg.StrictModelVerification,
 		hmacKey:           cfg.HMACKey,
+		signingPrivKey:    cfg.SigningPrivKey,
+		signingPubKey:     cfg.SigningPubKey,
 		log:               cfg.Log,
 		activeCallChains:  make(map[string]struct{}),
 		models:            make(map[string]ModelRegistration),
@@ -1560,7 +1567,20 @@ func (p *Pipeline) buildRecordWithID(req CanonicalActionRequest, d Decision, arg
 	}
 
 	rec.ComputeHash()
-	if len(p.hmacKey) > 0 {
+	// Prefer asymmetric Ed25519 signing when available; fall back to HMAC.
+	if len(p.signingPrivKey) > 0 && len(p.signingPubKey) > 0 {
+		// Attempt Ed25519 signing. Use dpr.SignWithEd25519 which handles
+		// base64 encoding of signature and public key fields.
+		if err := rec.SignWithEd25519(ed25519.PrivateKey(p.signingPrivKey), ed25519.PublicKey(p.signingPubKey)); err != nil {
+			// If signing fails, fall back to HMAC if configured.
+			p.log.Warn("ed25519 signing failed; falling back to HMAC if available", zap.Error(err))
+			if len(p.hmacKey) > 0 {
+				m := hmac.New(sha256.New, p.hmacKey)
+				_, _ = m.Write([]byte(rec.RecordID + rec.RecordHash))
+				rec.HMACSig = fmt.Sprintf("%x", m.Sum(nil))
+			}
+		}
+	} else if len(p.hmacKey) > 0 {
 		m := hmac.New(sha256.New, p.hmacKey)
 		_, _ = m.Write([]byte(rec.RecordID + rec.RecordHash))
 		rec.HMACSig = fmt.Sprintf("%x", m.Sum(nil))
