@@ -2,6 +2,7 @@ package canonicalize
 
 import (
 	"testing"
+	"time"
 )
 
 func TestJCSBasicObjectKeyOrdering(t *testing.T) {
@@ -106,5 +107,31 @@ func TestJCSNumberRFCVectors(t *testing.T) {
 		if got != c.want {
 			t.Fatalf("RFC-like number formatting mismatch: in=%v got=%s want=%s", c.in, got, c.want)
 		}
+	}
+}
+
+func TestJCSStructHonorsJSONTagsAndOmitEmpty(t *testing.T) {
+	type payload struct {
+		B   int       `json:"b"`
+		A   int       `json:"a"`
+		At  time.Time `json:"at,omitempty"`
+		Raw string    `json:"raw,omitempty"`
+	}
+	in := payload{B: 2, A: 1}
+	out, err := JCSMarshal(in)
+	if err != nil {
+		t.Fatalf("JCSMarshal error: %v", err)
+	}
+	got := string(out)
+	want := "{\"a\":1,\"b\":2}"
+	if got != want {
+		t.Fatalf("struct canonicalization mismatch:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestJCSRejectsUnsupportedMapKeyTypes(t *testing.T) {
+	in := map[int]string{1: "one"}
+	if _, err := JCSMarshal(in); err == nil {
+		t.Fatalf("expected unsupported type error for non-string map keys")
 	}
 }

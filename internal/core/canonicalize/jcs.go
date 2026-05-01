@@ -2,10 +2,12 @@ package canonicalize
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // JCSMarshal serializes v to a canonical JSON byte sequence approximating
@@ -78,10 +80,32 @@ func jcsMarshalValue(sb *strings.Builder, v any) error {
 		sb.WriteByte(']')
 		return nil
 	default:
+		if marshaler, ok := v.(json.Marshaler); ok {
+			enc, err := marshaler.MarshalJSON()
+			if err != nil {
+				return err
+			}
+			var decoded any
+			if err := json.Unmarshal(enc, &decoded); err != nil {
+				return err
+			}
+			return jcsMarshalValue(sb, decoded)
+		}
+		if tm, ok := v.(time.Time); ok {
+			enc, _ := json.Marshal(tm)
+			sb.Write(enc)
+			return nil
+		}
 		rv := reflect.ValueOf(v)
+		if !rv.IsValid() {
+			sb.WriteString("null")
+			return nil
+		}
 		switch rv.Kind() {
 		case reflect.Map:
-			// only support map[string]any
+			if rv.Type().Key().Kind() != reflect.String {
+				return errors.New("jcs: only string-keyed maps are supported")
+			}
 			m := make(map[string]any)
 			iter := rv.MapRange()
 			for iter.Next() {
@@ -89,6 +113,8 @@ func jcsMarshalValue(sb *strings.Builder, v any) error {
 				m[k] = iter.Value().Interface()
 			}
 			return jcsMarshalObject(sb, m)
+		case reflect.Struct:
+			return jcsMarshalStruct(sb, rv)
 		case reflect.Slice, reflect.Array:
 			sb.WriteByte('[')
 			for i := 0; i < rv.Len(); i++ {
@@ -119,14 +145,90 @@ func jcsMarshalValue(sb *strings.Builder, v any) error {
 			sb.Write(enc)
 			return nil
 		default:
-			// fallback to standard json.Marshal
-			enc, err := json.Marshal(v)
-			if err != nil {
-				return err
-			}
-			sb.Write(enc)
-			return nil
+			return errors.New("jcs: unsupported type")
 		}
+	}
+}
+
+func jcsMarshalStruct(sb *strings.Builder, rv reflect.Value) error {
+	type fieldValue struct {
+		name  string
+		value any
+	}
+	fields := make([]fieldValue, 0, rv.NumField())
+	rt := rv.Type()
+	for i := 0; i < rv.NumField(); i++ {
+		field := rt.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		name, omitEmpty := jsonFieldName(field)
+		if name == "" || name == "-" {
+			continue
+		}
+		fv := rv.Field(i)
+		if omitEmpty && isEmptyValue(fv) {
+			continue
+		}
+		fields = append(fields, fieldValue{name: name, value: fv.Interface()})
+	}
+	sort.Slice(fields, func(i, j int) bool { return fields[i].name < fields[j].name })
+	sb.WriteByte('{')
+	for i, field := range fields {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		enc, _ := json.Marshal(field.name)
+		sb.Write(enc)
+		sb.WriteByte(':')
+		if err := jcsMarshalValue(sb, field.value); err != nil {
+			return err
+		}
+	}
+	sb.WriteByte('}')
+	return nil
+}
+
+func jsonFieldName(field reflect.StructField) (string, bool) {
+	tag := field.Tag.Get("json")
+	if tag == "" {
+		return field.Name, false
+	}
+	parts := strings.Split(tag, ",")
+	name := parts[0]
+	if name == "" {
+		name = field.Name
+	}
+	omitEmpty := false
+	for _, p := range parts[1:] {
+		if p == "omitempty" {
+			omitEmpty = true
+		}
+	}
+	return name, omitEmpty
+}
+
+func isEmptyValue(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Array, reflect.Map, reflect.Slice, reflect.String:
+		return v.Len() == 0
+	case reflect.Bool:
+		return !v.Bool()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return v.Int() == 0
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return v.Uint() == 0
+	case reflect.Float32, reflect.Float64:
+		return v.Float() == 0
+	case reflect.Interface, reflect.Pointer:
+		return v.IsNil()
+	case reflect.Struct:
+		if t, ok := v.Interface().(time.Time); ok {
+			return t.IsZero()
+		}
+		return false
+	default:
+		return false
 	}
 }
 
