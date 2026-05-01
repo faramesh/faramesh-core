@@ -43,20 +43,20 @@ type Phase struct {
 
 // PhaseTransitionRecord records a phase transition for DPR.
 type PhaseTransitionRecord struct {
-	FromPhase    string    `json:"from_phase"`
-	ToPhase      string    `json:"to_phase"`
-	TransitionAt time.Time `json:"transition_at"`
-	Reason       string    `json:"reason"`
+	FromPhase      string        `json:"from_phase"`
+	ToPhase        string        `json:"to_phase"`
+	TransitionAt   time.Time     `json:"transition_at"`
+	Reason         string        `json:"reason"`
 	DurationInFrom time.Duration `json:"duration_in_from"`
 }
 
 // PhaseManager tracks the current phase for an agent session and
 // enforces tool availability windows.
 type PhaseManager struct {
-	mu          sync.RWMutex
-	phases      map[string]*Phase
-	order       []string // ordered phase IDs for display
-	current     map[string]*agentPhaseState // agentID → state
+	mu      sync.RWMutex
+	phases  map[string]*Phase
+	order   []string                    // ordered phase IDs for display
+	current map[string]*agentPhaseState // agentID → state
 }
 
 type agentPhaseState struct {

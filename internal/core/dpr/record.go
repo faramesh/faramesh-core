@@ -32,9 +32,9 @@ type Record struct {
 	// Asymmetric signature fields (Ed25519 etc). Introduced to support
 	// tamper-evident receipts with public-key verification. Existing
 	// HMAC field is preserved for backward compatibility during rollout.
-	Signature         string `json:"signature,omitempty"`
-	SignatureAlg      string `json:"signature_algorithm,omitempty"`
-	SignerPublicKey   string `json:"signer_public_key,omitempty"`
+	Signature       string `json:"signature,omitempty"`
+	SignatureAlg    string `json:"signature_algorithm,omitempty"`
+	SignerPublicKey string `json:"signer_public_key,omitempty"`
 
 	// ── Identity & Request ──
 	AgentID            string `json:"agent_id"`

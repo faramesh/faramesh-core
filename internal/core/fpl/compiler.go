@@ -101,7 +101,6 @@ func ParseAndCompileRules(src string) ([]*CompiledRule, error) {
 	return CompileRules(parsed)
 }
 
-
 func normalizeEffect(raw string) (Effect, bool, error) {
 	v := strings.TrimSpace(strings.ToLower(raw))
 	if v == "deny!" {

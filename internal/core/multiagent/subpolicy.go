@@ -12,12 +12,12 @@ import (
 
 // SubPolicy represents an invocation-scoped policy overlay.
 type SubPolicy struct {
-	InvocationID     string   `json:"invocation_id"`
-	AllowedTools     []string `json:"allowed_tools"`     // glob patterns, intersected with base
-	BlockedTools     []string `json:"blocked_tools"`     // additional blocks
-	MaxCostUSD       float64  `json:"max_cost_usd"`
-	MaxCalls         int      `json:"max_calls"`
-	AllowDeferEscalation bool `json:"allow_defer_escalation"`
+	InvocationID         string   `json:"invocation_id"`
+	AllowedTools         []string `json:"allowed_tools"` // glob patterns, intersected with base
+	BlockedTools         []string `json:"blocked_tools"` // additional blocks
+	MaxCostUSD           float64  `json:"max_cost_usd"`
+	MaxCalls             int      `json:"max_calls"`
+	AllowDeferEscalation bool     `json:"allow_defer_escalation"`
 }
 
 // SubPolicyManager manages invocation-scoped sub-policies.

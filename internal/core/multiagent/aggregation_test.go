@@ -66,8 +66,8 @@ func TestGovernOutput_EmailRedaction(t *testing.T) {
 
 func TestGovernOutput_MaxLength(t *testing.T) {
 	ag := NewAggregationGovernor(AggregatePolicy{
-		MinSources:        1,
-		MaxOutputLength:   20,
+		MinSources:      1,
+		MaxOutputLength: 20,
 	})
 	long := strings.Repeat("x", 100)
 	out, _, err := ag.GovernOutput(AggregateResult{

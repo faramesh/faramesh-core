@@ -13,11 +13,11 @@ import (
 type FieldClass int
 
 const (
-	FieldPublic      FieldClass = iota // safe for any log destination
-	FieldInternal                      // internal use, not for external
-	FieldSensitive                     // requires access control on log storage
-	FieldPII                           // auto-redacted in all log output
-	FieldSecret                        // never logged under any circumstances
+	FieldPublic    FieldClass = iota // safe for any log destination
+	FieldInternal                    // internal use, not for external
+	FieldSensitive                   // requires access control on log storage
+	FieldPII                         // auto-redacted in all log output
+	FieldSecret                      // never logged under any circumstances
 )
 
 // LogField defines a field in the structured log schema.

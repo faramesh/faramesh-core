@@ -113,12 +113,12 @@ func compileAgent(ag *AgentBlock) (*AgentIR, error) {
 
 // DocumentIR is the compiled intermediate representation of an FPL document.
 type DocumentIR struct {
-	Version              string
-	OnPolicyLoadFailure  string
-	MaxOutputBytes       int
-	Agents               []*AgentIR
-	FlatRules            []*CompiledRule
-	Topo                 []TopoStatement
+	Version             string
+	OnPolicyLoadFailure string
+	MaxOutputBytes      int
+	Agents              []*AgentIR
+	FlatRules           []*CompiledRule
+	Topo                []TopoStatement
 }
 
 type AgentIR struct {

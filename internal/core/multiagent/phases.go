@@ -20,16 +20,16 @@ type PhaseRequirement struct {
 
 // PhaseCompletionRecord tracks what tools were invoked in a phase.
 type PhaseCompletionRecord struct {
-	PhaseID     string         `json:"phase_id"`
-	ToolCounts  map[string]int `json:"tool_counts"` // toolID → call count
-	Complete    bool           `json:"complete"`
-	MissingMsg  string         `json:"missing_msg,omitempty"`
+	PhaseID    string         `json:"phase_id"`
+	ToolCounts map[string]int `json:"tool_counts"` // toolID → call count
+	Complete   bool           `json:"complete"`
+	MissingMsg string         `json:"missing_msg,omitempty"`
 }
 
 // PhaseVerifier validates that a phase met its requirements before transition.
 type PhaseVerifier struct {
 	mu           sync.Mutex
-	requirements map[string][]PhaseRequirement // phaseID → requirements
+	requirements map[string][]PhaseRequirement     // phaseID → requirements
 	records      map[string]*PhaseCompletionRecord // agentID:phaseID → record
 }
 

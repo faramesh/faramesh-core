@@ -55,10 +55,10 @@ var authLogoutCmd = &cobra.Command{
 }
 
 var authStatusCmd = &cobra.Command{
-	Use:   "status",
-	Short: "Show current Horizon authentication status",
+	Use:     "status",
+	Short:   "Show current Horizon authentication status",
 	Aliases: []string{"whoami"},
-	RunE: runAuthStatus,
+	RunE:    runAuthStatus,
 }
 
 var (

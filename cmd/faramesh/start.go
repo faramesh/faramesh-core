@@ -387,7 +387,6 @@ func terminatePID(pid int) error {
 	return proc.Kill()
 }
 
-
 func isProcessAlive(pid int) bool {
 	if pid <= 0 {
 		return false

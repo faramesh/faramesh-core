@@ -16,9 +16,9 @@ type WindowsProxyConfig struct {
 // SetupWindowsProxy configures Windows network interception.
 //
 // Two strategies:
-//   1. Proxy env vars — zero privilege, works for agents that respect proxy settings.
-//   2. WinDivert — kernel-level, pre-signed driver, requires admin only.
-//      Ships as bundled WinDivert.dll + WinDivert64.sys (pre-signed by WinDivert project).
+//  1. Proxy env vars — zero privilege, works for agents that respect proxy settings.
+//  2. WinDivert — kernel-level, pre-signed driver, requires admin only.
+//     Ships as bundled WinDivert.dll + WinDivert64.sys (pre-signed by WinDivert project).
 func SetupWindowsProxy(cfg WindowsProxyConfig) ([]string, error) {
 	if cfg.ProxyPort == 0 {
 		cfg.ProxyPort = 18443

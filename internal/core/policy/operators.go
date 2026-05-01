@@ -40,12 +40,12 @@ type OperatorMeta struct {
 
 // OperatorResult records the evaluation of a custom operator for DPR.
 type OperatorResult struct {
-	Operator  string        `json:"operator"`
-	Args      []any         `json:"args"`
-	Result    any           `json:"result"`
-	Error     string        `json:"error,omitempty"`
-	Duration  time.Duration `json:"duration_ns"`
-	Cached    bool          `json:"cached"`
+	Operator string        `json:"operator"`
+	Args     []any         `json:"args"`
+	Result   any           `json:"result"`
+	Error    string        `json:"error,omitempty"`
+	Duration time.Duration `json:"duration_ns"`
+	Cached   bool          `json:"cached"`
 }
 
 // OperatorRegistry manages custom condition operators.

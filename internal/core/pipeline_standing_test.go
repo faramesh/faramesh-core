@@ -36,10 +36,10 @@ func TestStandingGrantConvertsPolicyDeferToPermit(t *testing.T) {
 	}
 	reg := standing.NewRegistry()
 	p := NewPipeline(Config{
-		Engine:    policy.NewAtomicEngine(eng),
-		Sessions:  session.NewManager(),
-		Defers:    deferwork.NewWorkflow(""),
-		Standing:  reg,
+		Engine:   policy.NewAtomicEngine(eng),
+		Sessions: session.NewManager(),
+		Defers:   deferwork.NewWorkflow(""),
+		Standing: reg,
 	})
 	if _, err := p.RegisterStandingGrant(standing.Input{
 		AgentID:     "agent-1",

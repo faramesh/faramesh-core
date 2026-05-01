@@ -129,13 +129,13 @@ type EvalContext struct {
 //	session.tokens_daily       — UTC-day token usage
 //	session.intent_class       — cached async intent class (empty when unset/expired)
 type SessionCtx struct {
-	CallCount    int64            `expr:"call_count"`
-	History      []map[string]any `expr:"history"` // [{tool, effect, timestamp}, ...]
-	CostUSD      float64          `expr:"cost_usd"`
-	DailyCostUSD float64          `expr:"daily_cost_usd"`
-	TokensSession int64           `expr:"tokens_session"`
-	TokensDaily   int64           `expr:"tokens_daily"`
-	IntentClass  string           `expr:"intent_class"`
+	CallCount     int64            `expr:"call_count"`
+	History       []map[string]any `expr:"history"` // [{tool, effect, timestamp}, ...]
+	CostUSD       float64          `expr:"cost_usd"`
+	DailyCostUSD  float64          `expr:"daily_cost_usd"`
+	TokensSession int64            `expr:"tokens_session"`
+	TokensDaily   int64            `expr:"tokens_daily"`
+	IntentClass   string           `expr:"intent_class"`
 }
 
 // ToolCtx exposes per-tool metadata declared in the policy tools: block.
@@ -762,13 +762,13 @@ func evalEnv(doc *Doc, ctx *EvalContext) map[string]any {
 		history = []map[string]any{}
 	}
 	env["session"] = map[string]any{
-		"call_count":      ctx.Session.CallCount,
-		"history":         history,
-		"cost_usd":        ctx.Session.CostUSD,
-		"daily_cost_usd":  ctx.Session.DailyCostUSD,
-		"tokens_session":  ctx.Session.TokensSession,
-		"tokens_daily":    ctx.Session.TokensDaily,
-		"intent_class":    ctx.Session.IntentClass,
+		"call_count":     ctx.Session.CallCount,
+		"history":        history,
+		"cost_usd":       ctx.Session.CostUSD,
+		"daily_cost_usd": ctx.Session.DailyCostUSD,
+		"tokens_session": ctx.Session.TokensSession,
+		"tokens_daily":   ctx.Session.TokensDaily,
+		"intent_class":   ctx.Session.IntentClass,
 	}
 
 	tags := ctx.Tool.Tags

@@ -53,8 +53,8 @@ var demoScenarios = []demoScenario{
 		comment: "amount=$12,000",
 	},
 	{
-		label:   "send_email",
-		toolID:  "send_email",
+		label:  "send_email",
+		toolID: "send_email",
 		args: map[string]any{
 			"subject":    "Hello",
 			"recipients": makeRecipients(847),

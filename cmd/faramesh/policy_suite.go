@@ -30,14 +30,14 @@ import (
 //	      reason_code: RULE_PERMIT   # optional
 
 type policySuiteFile struct {
-	SuiteVersion string           `yaml:"suite_version" json:"suite_version"`
+	SuiteVersion string            `yaml:"suite_version" json:"suite_version"`
 	Cases        []policySuiteCase `yaml:"cases" json:"cases"`
 }
 
 type policySuiteCase struct {
-	ID    string         `yaml:"id" json:"id"`
-	Tool  string         `yaml:"tool" json:"tool"`
-	Args  map[string]any `yaml:"args" json:"args"`
+	ID     string         `yaml:"id" json:"id"`
+	Tool   string         `yaml:"tool" json:"tool"`
+	Args   map[string]any `yaml:"args" json:"args"`
 	Expect struct {
 		Effect     string `yaml:"effect" json:"effect"`
 		ReasonCode string `yaml:"reason_code" json:"reason_code"`

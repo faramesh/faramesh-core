@@ -288,10 +288,10 @@ var canonical = map[string]struct{}{
 	UnknownWorkflowStep:            {},
 	IsolationRequired:              {},
 
-	ApprovalGranted:  {},
-	ApprovalDenied:   {},
-	ApprovalTimeout:  {},
-	ApprovalModified: {},
+	ApprovalGranted:          {},
+	ApprovalDenied:           {},
+	ApprovalTimeout:          {},
+	ApprovalModified:         {},
 	StandingApprovalConsumed: {},
 
 	CompensationExecuted: {},

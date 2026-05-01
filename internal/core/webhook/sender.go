@@ -25,12 +25,12 @@ import (
 type EventType string
 
 const (
-	EventDeny           EventType = "deny"
-	EventDefer          EventType = "defer"
-	EventDeferResolved  EventType = "defer_resolved"
-	EventPermit         EventType = "permit"
-	EventPolicyReload   EventType = "policy_activated"
-	EventKillSwitch     EventType = "kill_switch"
+	EventDeny          EventType = "deny"
+	EventDefer         EventType = "defer"
+	EventDeferResolved EventType = "defer_resolved"
+	EventPermit        EventType = "permit"
+	EventPolicyReload  EventType = "policy_activated"
+	EventKillSwitch    EventType = "kill_switch"
 )
 
 const EventSchemaVersionV1 = "1.0"
@@ -100,9 +100,9 @@ func NewSender(cfg policy.WebhookConfig) *Sender {
 				return http.ErrUseLastResponse
 			},
 		},
-		queue:  make(chan Event, 256),
-		done:   make(chan struct{}),
-		stop:   make(chan struct{}),
+		queue: make(chan Event, 256),
+		done:  make(chan struct{}),
+		stop:  make(chan struct{}),
 	}
 	go s.deliverLoop()
 	return s

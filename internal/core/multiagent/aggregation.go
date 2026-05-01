@@ -25,18 +25,18 @@ type AggregationSource struct {
 
 // AggregateResult is the synthesized output from multiple agents.
 type AggregateResult struct {
-	SessionID  string   `json:"session_id"`
-	Sources    []AggregationSource `json:"sources"`
-	Synthesized string  `json:"synthesized"`
-	Hash       string   `json:"hash"`
+	SessionID   string              `json:"session_id"`
+	Sources     []AggregationSource `json:"sources"`
+	Synthesized string              `json:"synthesized"`
+	Hash        string              `json:"hash"`
 }
 
 // EntityExtraction holds detected entities in aggregated output.
 type EntityExtraction struct {
-	EntityType string `json:"entity_type"` // "email", "pii", "credential", "url", "ip"
-	Value      string `json:"value"`
+	EntityType  string `json:"entity_type"` // "email", "pii", "credential", "url", "ip"
+	Value       string `json:"value"`
 	SourceAgent string `json:"source_agent"`
-	Position   int    `json:"position"`
+	Position    int    `json:"position"`
 }
 
 // AggregatePolicy defines governance for aggregated outputs.
@@ -72,10 +72,10 @@ func NewAggregationGovernor(policy AggregatePolicy) *AggregationGovernor {
 	ag := &AggregationGovernor{
 		policy: policy,
 		patterns: map[string]*regexp.Regexp{
-			"email":      regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`),
-			"ip":         regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`),
-			"credential": regexp.MustCompile(`(?i)(password|secret|api[_-]?key|token)\s*[=:]\s*\S+`),
-			"ssn":        regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`),
+			"email":       regexp.MustCompile(`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`),
+			"ip":          regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`),
+			"credential":  regexp.MustCompile(`(?i)(password|secret|api[_-]?key|token)\s*[=:]\s*\S+`),
+			"ssn":         regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`),
 			"credit_card": regexp.MustCompile(`\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b`),
 		},
 		sessions: make(map[string][]aggregationRuntimeEvent),

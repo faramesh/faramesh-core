@@ -22,15 +22,15 @@ const (
 
 // SandboxConfig defines isolation parameters for tool execution.
 type SandboxConfig struct {
-	Environment    Environment `json:"environment"`
-	Image          string      `json:"image,omitempty"`       // container image
-	CPULimit       float64     `json:"cpu_limit,omitempty"`   // CPU cores
-	MemoryLimitMB  int         `json:"memory_limit_mb,omitempty"`
-	TimeoutSecs    int         `json:"timeout_secs,omitempty"`
-	NetworkPolicy  string      `json:"network_policy"`        // "none", "egress_only", "full"
-	ReadOnlyRoot   bool        `json:"read_only_root"`
-	NoNewPrivileges bool       `json:"no_new_privileges"`
-	AllowedSyscalls []string   `json:"allowed_syscalls,omitempty"` // seccomp profile
+	Environment     Environment `json:"environment"`
+	Image           string      `json:"image,omitempty"`     // container image
+	CPULimit        float64     `json:"cpu_limit,omitempty"` // CPU cores
+	MemoryLimitMB   int         `json:"memory_limit_mb,omitempty"`
+	TimeoutSecs     int         `json:"timeout_secs,omitempty"`
+	NetworkPolicy   string      `json:"network_policy"` // "none", "egress_only", "full"
+	ReadOnlyRoot    bool        `json:"read_only_root"`
+	NoNewPrivileges bool        `json:"no_new_privileges"`
+	AllowedSyscalls []string    `json:"allowed_syscalls,omitempty"` // seccomp profile
 }
 
 // ToolExecutionMeta describes the execution environment for a tool.
@@ -43,9 +43,9 @@ type ToolExecutionMeta struct {
 
 // IsolationPolicy governs which tools require sandboxing.
 type IsolationPolicy struct {
-	mu        sync.Mutex
-	toolEnvs  map[string]*ToolExecutionMeta // toolID → required environment
-	defaults  SandboxConfig
+	mu       sync.Mutex
+	toolEnvs map[string]*ToolExecutionMeta // toolID → required environment
+	defaults SandboxConfig
 }
 
 // NewIsolationPolicy creates an isolation policy.

@@ -14,14 +14,14 @@ import (
 
 // RuleStats tracks decision statistics for a single policy rule.
 type RuleStats struct {
-	RuleID       string    `json:"rule_id"`
-	Permits      int64     `json:"permits"`
-	Denies       int64     `json:"denies"`
-	Defers       int64     `json:"defers"`
-	Approvals    int64     `json:"approvals"`    // DEFER → approved
-	Rejections   int64     `json:"rejections"`   // DEFER → rejected
+	RuleID        string    `json:"rule_id"`
+	Permits       int64     `json:"permits"`
+	Denies        int64     `json:"denies"`
+	Defers        int64     `json:"defers"`
+	Approvals     int64     `json:"approvals"`  // DEFER → approved
+	Rejections    int64     `json:"rejections"` // DEFER → rejected
 	LastTriggered time.Time `json:"last_triggered"`
-	FirstSeen    time.Time `json:"first_seen"`
+	FirstSeen     time.Time `json:"first_seen"`
 }
 
 // ApprovalRate returns the approval rate for DEFER decisions.
@@ -194,7 +194,7 @@ func (p *PIEAnalyzer) AllStats() []RuleStats {
 // PIERecommendation represents a policy intelligence recommendation.
 type PIERecommendation struct {
 	RuleID       string  `json:"rule_id"`
-	Type         string  `json:"type"`       // "promote_to_permit", "dead_rule", "nearly_always_permits", etc.
+	Type         string  `json:"type"` // "promote_to_permit", "dead_rule", "nearly_always_permits", etc.
 	ApprovalRate float64 `json:"approval_rate,omitempty"`
 	TotalDefers  int64   `json:"total_defers,omitempty"`
 	Reason       string  `json:"reason"`

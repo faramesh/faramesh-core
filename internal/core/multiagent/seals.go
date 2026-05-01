@@ -18,18 +18,18 @@ import (
 
 // OutputSeal is an HMAC seal on an agent's output.
 type OutputSeal struct {
-	AgentID    string    `json:"agent_id"`
-	StepIndex  int       `json:"step_index"`
-	ContentHash string   `json:"content_hash"`
-	HMAC       string    `json:"hmac"`
-	CreatedAt  time.Time `json:"created_at"`
+	AgentID     string    `json:"agent_id"`
+	StepIndex   int       `json:"step_index"`
+	ContentHash string    `json:"content_hash"`
+	HMAC        string    `json:"hmac"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // SealManager creates and verifies output seals between pipeline steps.
 type SealManager struct {
-	mu     sync.RWMutex
-	key    []byte
-	seals  map[string][]OutputSeal // sessionID → ordered seals
+	mu    sync.RWMutex
+	key   []byte
+	seals map[string][]OutputSeal // sessionID → ordered seals
 }
 
 // NewSealManager creates a seal manager with an HMAC key.

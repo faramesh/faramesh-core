@@ -34,8 +34,8 @@ type ComplianceExportCheckpoint struct {
 }
 
 type ComplianceExportProofs struct {
-	Inclusion  []ComplianceProofVerification `json:"inclusion"`
-	Consistency *ComplianceProofVerification `json:"consistency,omitempty"`
+	Inclusion   []ComplianceProofVerification `json:"inclusion"`
+	Consistency *ComplianceProofVerification  `json:"consistency,omitempty"`
 }
 
 type ComplianceProofVerification struct {

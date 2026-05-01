@@ -22,13 +22,13 @@ type ChainPolicy struct {
 
 // ChainRecord is a simplified DPR record for chain analysis.
 type ChainRecord struct {
-	RecordID    string            `json:"record_id"`
-	ToolID      string            `json:"tool_id"`
-	Effect      string            `json:"effect"`
-	ReasonCode  string            `json:"reason_code"`
-	Timestamp   time.Time         `json:"timestamp"`
-	Args        map[string]any    `json:"args,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	RecordID   string            `json:"record_id"`
+	ToolID     string            `json:"tool_id"`
+	Effect     string            `json:"effect"`
+	ReasonCode string            `json:"reason_code"`
+	Timestamp  time.Time         `json:"timestamp"`
+	Args       map[string]any    `json:"args,omitempty"`
+	Metadata   map[string]string `json:"metadata,omitempty"`
 }
 
 // ChainViolation represents a policy violation found during lazy validation.
@@ -51,9 +51,9 @@ type Incident struct {
 
 // LazyValidator performs post-session chain analysis.
 type LazyValidator struct {
-	mu       sync.Mutex
-	policies []ChainPolicy
-	incidents []Incident
+	mu              sync.Mutex
+	policies        []ChainPolicy
+	incidents       []Incident
 	incidentCounter int
 }
 
