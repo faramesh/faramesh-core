@@ -29,6 +29,12 @@ type Record struct {
 	PrevRecordHash string `json:"prev_record_hash"`
 	RecordHash     string `json:"record_hash"`
 	HMACSig        string `json:"hmac_signature,omitempty"` // HMAC-SHA256 for non-repudiation
+	// Asymmetric signature fields (Ed25519 etc). Introduced to support
+	// tamper-evident receipts with public-key verification. Existing
+	// HMAC field is preserved for backward compatibility during rollout.
+	Signature         string `json:"signature,omitempty"`
+	SignatureAlg      string `json:"signature_algorithm,omitempty"`
+	SignerPublicKey   string `json:"signer_public_key,omitempty"`
 
 	// ── Identity & Request ──
 	AgentID            string `json:"agent_id"`
