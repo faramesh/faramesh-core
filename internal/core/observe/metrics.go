@@ -59,6 +59,15 @@ type Metrics struct {
 	// Network hardening outcome counters.
 	hardeningOutcomes sync.Map // hardeningMetricKey -> *atomic.Int64
 
+	// Semantic drift counters.
+	semanticDriftObserved  atomic.Int64
+	semanticDriftTriggered atomic.Int64
+	semanticDriftDenied    atomic.Int64
+	semanticDriftSumMicro  atomic.Int64
+	semanticDriftCount     atomic.Int64
+	semanticDriftByProvider sync.Map // provider -> *atomic.Int64
+	semanticDriftBuckets   [6]atomic.Int64
+
 	// Async DPR queue (River or in-process worker): enqueue + background persist.
 	dprEnqueueOK  atomic.Int64
 	dprEnqueueErr atomic.Int64
@@ -70,6 +79,8 @@ type Metrics struct {
 	pieAnalyzer         RuleObserver
 	pieAnalyzerConcrete *PIEAnalyzer
 }
+
+var semanticDriftBucketBoundaries = [5]float64{0.1, 0.25, 0.5, 0.75, 1.0}
 
 type hardeningMetricKey struct {
 	mode       string
@@ -238,6 +249,38 @@ func (m *Metrics) ObserveRule(obs RuleObservation) (err error) {
 	return nil
 }
 
+// ObserveSemanticDrift records a semantic drift observation.
+func (m *Metrics) ObserveSemanticDrift(obs SemanticDriftObservation) error {
+	m.semanticDriftObserved.Add(1)
+	if obs.Triggered {
+		m.semanticDriftTriggered.Add(1)
+	}
+	if obs.Denied {
+		m.semanticDriftDenied.Add(1)
+	}
+	provider := strings.TrimSpace(obs.ProviderID)
+	if provider == "" {
+		provider = "unknown"
+	}
+	val, _ := m.semanticDriftByProvider.LoadOrStore(provider, &atomic.Int64{})
+	val.(*atomic.Int64).Add(1)
+
+	distance := obs.Distance
+	if distance < 0 {
+		distance = 0
+	}
+	m.semanticDriftSumMicro.Add(int64(distance * 1_000_000))
+	m.semanticDriftCount.Add(1)
+	for i, boundary := range semanticDriftBucketBoundaries {
+		if distance <= boundary {
+			m.semanticDriftBuckets[i].Add(1)
+			return nil
+		}
+	}
+	m.semanticDriftBuckets[len(m.semanticDriftBuckets)-1].Add(1)
+	return nil
+}
+
 // SetActiveSessions sets the active sessions gauge.
 func (m *Metrics) SetActiveSessions(n int64) {
 	m.activeSessions.Store(n)
@@ -362,6 +405,21 @@ func (m *Metrics) Handler() http.Handler {
 			writeCounter3(&b, "faramesh_network_hardening_total", "mode", k.mode, "outcome", k.outcome, "reason_code", k.reasonCode, count)
 			return true
 		})
+
+		// Semantic drift counters and distribution.
+		writeCounter(&b, "faramesh_semantic_drift_total", "status", "observed", m.semanticDriftObserved.Load())
+		writeCounter(&b, "faramesh_semantic_drift_total", "status", "triggered", m.semanticDriftTriggered.Load())
+		writeCounter(&b, "faramesh_semantic_drift_total", "status", "denied", m.semanticDriftDenied.Load())
+		m.semanticDriftByProvider.Range(func(key, value any) bool {
+			writeCounter(&b, "faramesh_semantic_drift_by_provider_total", "provider", key.(string), value.(*atomic.Int64).Load())
+			return true
+		})
+		for i, boundary := range semanticDriftBucketBoundaries {
+			writeCounter(&b, "faramesh_semantic_drift_distance_bucket", "le", fmt.Sprintf("%.2f", boundary), m.semanticDriftBuckets[i].Load())
+		}
+		writeCounter(&b, "faramesh_semantic_drift_distance_bucket", "le", "+Inf", m.semanticDriftBuckets[len(m.semanticDriftBuckets)-1].Load())
+		writeGauge(&b, "faramesh_semantic_drift_distance_sum_micro", m.semanticDriftSumMicro.Load())
+		writeGauge(&b, "faramesh_semantic_drift_distance_count", m.semanticDriftCount.Load())
 
 		// Async DPR queue (enqueue + worker persist).
 		writeCounter(&b, "faramesh_dpr_async_enqueue_total", "status", "success", m.dprEnqueueOK.Load())

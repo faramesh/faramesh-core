@@ -45,6 +45,13 @@ type DeferContext struct {
 	// PreAuthorizedToken allows pre-approved actions to bypass DEFER.
 	// If set, the action was pre-authorized and doesn't need approval.
 	PreAuthorizedToken string `json:"pre_authorized_token,omitempty"`
+
+	// Cascade metadata is populated when this DEFER is part of a nested
+	// approval chain.
+	ParentDeferToken string   `json:"parent_defer_token,omitempty"`
+	CascadeReason    string   `json:"cascade_reason,omitempty"`
+	CascadeDepth     int      `json:"cascade_depth,omitempty"`
+	CascadePath      []string `json:"cascade_path,omitempty"`
 }
 
 // Message represents a conversation message in the DEFER context.
