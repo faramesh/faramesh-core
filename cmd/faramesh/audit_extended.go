@@ -326,6 +326,7 @@ func buildAuditTraceOutput(visibilityURL string, action map[string]any, dbOverri
 				if err != nil {
 					out["linkage_warning"] = fmt.Sprintf("lookup record_id %q: %v", recordID, err)
 				} else {
+					hashValid := rec.VerifyRecordHash()
 					// attempt to verify Ed25519 signature when present
 					sigValid := false
 					if rec.SignatureAlg == "ed25519" && rec.Signature != "" {
@@ -346,6 +347,7 @@ func buildAuditTraceOutput(visibilityURL string, action map[string]any, dbOverri
 						"tool_id":                    rec.ToolID,
 						"created_at":                 rec.CreatedAt.UTC().Format(time.RFC3339Nano),
 						"record_hash":                rec.RecordHash,
+						"record_hash_valid":          hashValid,
 						"signature_algorithm":        rec.SignatureAlg,
 						"signature":                  rec.Signature,
 						"signer_public_key":          rec.SignerPublicKey,

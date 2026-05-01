@@ -281,6 +281,15 @@ func (r *Record) ComputeHash() {
 	r.RecordHash = fmt.Sprintf("%x", sha256.Sum256(r.CanonicalBytes()))
 }
 
+// VerifyRecordHash reports whether RecordHash matches the canonical bytes.
+func (r *Record) VerifyRecordHash() bool {
+	if strings.TrimSpace(r.RecordHash) == "" {
+		return false
+	}
+	want := fmt.Sprintf("%x", sha256.Sum256(r.CanonicalBytes()))
+	return strings.EqualFold(strings.TrimSpace(r.RecordHash), want)
+}
+
 // GenesisPrevHash returns the deterministic chain-start marker hash for agentID.
 // The first record in an agent chain must use this value as PrevRecordHash.
 func GenesisPrevHash(agentID string) string {

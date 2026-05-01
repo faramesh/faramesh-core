@@ -53,7 +53,7 @@ func (s *Store) Save(rec *Record) error {
 	batchIDs := jsonOrNull(rec.BatchDPRIDs)
 	args := []any{
 		rec.SchemaVersion, rec.FPLVersion, rec.CARVersion, rec.CanonicalizationAlgorithm,
-		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig,
+		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig, rec.SignatureAlg, rec.Signature, rec.SignerPublicKey,
 		rec.AgentID, rec.SessionID, rec.ToolID, rec.InterceptAdapter, rec.ExecutionTimeoutMS, rec.PrincipalIDHash,
 		rec.Effect, rec.MatchedRuleID, rec.ReasonCode, rec.Reason, rec.DenialToken,
 		rec.IncidentCategory, rec.IncidentSeverity,
@@ -76,7 +76,7 @@ func (s *Store) Save(rec *Record) error {
 	query := `
 		INSERT OR IGNORE INTO dpr_records (
 			schema_version, fpl_version, car_version, canonicalization_algorithm,
-			record_id, prev_record_hash, record_hash, hmac_signature,
+			record_id, prev_record_hash, record_hash, hmac_signature, signature_algorithm, signature, signer_public_key,
 			agent_id, session_id, tool_id, intercept_adapter, execution_timeout_ms, principal_id_hash,
 			effect, matched_rule_id, reason_code, reason, denial_token,
 			incident_category, incident_severity,
@@ -161,7 +161,7 @@ func (s *Store) ByID(recordID string) (*Record, error) {
 // dprSelectCols is the full column list for DPR v1.0 SELECTs.
 const dprSelectCols = `schema_version, fpl_version, car_version,
 	canonicalization_algorithm,
-	record_id, prev_record_hash, record_hash, hmac_signature,
+	record_id, prev_record_hash, record_hash, hmac_signature, signature_algorithm, signature, signer_public_key,
 	agent_id, session_id, tool_id, intercept_adapter, execution_timeout_ms, principal_id_hash,
 	effect, matched_rule_id, reason_code, reason, denial_token,
 	incident_category, incident_severity,
@@ -278,6 +278,20 @@ func (s *Store) VerifyChain(agentID string) (*ChainBreak, error) {
 	return nil, nil
 }
 
+// UpdateSignature updates signature fields for an existing DPR record.
+func (s *Store) UpdateSignature(recordID, signatureAlg, signature, signerPublicKey string) error {
+	if strings.TrimSpace(recordID) == "" {
+		return fmt.Errorf("record_id is required")
+	}
+	_, err := s.db.Exec(
+		`UPDATE dpr_records
+		 SET signature_algorithm = ?, signature = ?, signer_public_key = ?
+		 WHERE record_id = ?`,
+		signatureAlg, signature, signerPublicKey, recordID,
+	)
+	return err
+}
+
 func migrate(db *sql.DB) error {
 	// v1.0 full schema — used for new databases.
 	_, err := db.Exec(`
@@ -337,6 +351,9 @@ func migrate(db *sql.DB) error {
 		resolved_by_batch          INTEGER DEFAULT 0,
 		batch_approval_id          TEXT DEFAULT '',
 		approval_envelope          TEXT DEFAULT '',
+		signature_algorithm        TEXT DEFAULT '',
+		signature                  TEXT DEFAULT '',
+		signer_public_key          TEXT DEFAULT '',
 		created_at                 TEXT NOT NULL
 	);
 	CREATE INDEX IF NOT EXISTS idx_dpr_agent_time ON dpr_records(agent_id, created_at);
@@ -366,6 +383,7 @@ func migrate(db *sql.DB) error {
 		"degraded_mode",
 		"batch_approval", "batch_size", "batch_dpr_ids", "resolved_by_batch", "batch_approval_id",
 		"approval_envelope",
+		"signature_algorithm", "signature", "signer_public_key",
 	}
 	for _, col := range v1Cols {
 		defaultVal := "''"
@@ -389,7 +407,7 @@ func scanRecords(rows *sql.Rows) ([]*Record, error) {
 		var argProv, selSnap, custOps, opRes, cbFired, cbErrs, batchIDs, approvalEnvelope sql.NullString
 		if err := rows.Scan(
 			&r.SchemaVersion, &r.FPLVersion, &r.CARVersion, &r.CanonicalizationAlgorithm,
-			&r.RecordID, &r.PrevRecordHash, &r.RecordHash, &r.HMACSig,
+			&r.RecordID, &r.PrevRecordHash, &r.RecordHash, &r.HMACSig, &r.SignatureAlg, &r.Signature, &r.SignerPublicKey,
 			&r.AgentID, &r.SessionID, &r.ToolID, &r.InterceptAdapter, &r.ExecutionTimeoutMS, &r.PrincipalIDHash,
 			&r.Effect, &r.MatchedRuleID, &r.ReasonCode, &r.Reason, &r.DenialToken,
 			&r.IncidentCategory, &r.IncidentSeverity,

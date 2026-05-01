@@ -50,7 +50,7 @@ func (s *PGStore) Save(rec *Record) error {
 	batchIDs := pgJSONOrNull(rec.BatchDPRIDs)
 	args := []any{
 		rec.SchemaVersion, rec.FPLVersion, rec.CARVersion, rec.CanonicalizationAlgorithm,
-		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig,
+		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig, rec.SignatureAlg, rec.Signature, rec.SignerPublicKey,
 		rec.AgentID, rec.SessionID, rec.ToolID, rec.InterceptAdapter, rec.ExecutionTimeoutMS, rec.PrincipalIDHash,
 		rec.Effect, rec.MatchedRuleID, rec.ReasonCode, rec.Reason, rec.DenialToken,
 		rec.IncidentCategory, rec.IncidentSeverity,
@@ -76,7 +76,7 @@ func (s *PGStore) Save(rec *Record) error {
 	_, err := s.db.Exec(`
 		INSERT INTO dpr_records (
 			schema_version, fpl_version, car_version, canonicalization_algorithm,
-			record_id, prev_record_hash, record_hash, hmac_signature,
+			record_id, prev_record_hash, record_hash, hmac_signature, signature_algorithm, signature, signer_public_key,
 			agent_id, session_id, tool_id, intercept_adapter, execution_timeout_ms, principal_id_hash,
 			effect, matched_rule_id, reason_code, reason, denial_token,
 			incident_category, incident_severity,
@@ -212,19 +212,33 @@ func (s *PGStore) VerifyChain(agentID string) (*ChainBreak, error) {
 	return nil, nil
 }
 
+// UpdateSignature updates signature fields for an existing DPR record.
+func (s *PGStore) UpdateSignature(recordID, signatureAlg, signature, signerPublicKey string) error {
+	if strings.TrimSpace(recordID) == "" {
+		return fmt.Errorf("record_id is required")
+	}
+	_, err := s.db.Exec(
+		`UPDATE dpr_records
+		 SET signature_algorithm = $1, signature = $2, signer_public_key = $3
+		 WHERE record_id = $4`,
+		signatureAlg, signature, signerPublicKey, recordID,
+	)
+	return err
+}
+
 // Close closes the database connection.
 func (s *PGStore) Close() error { return s.db.Close() }
 
 // ── internals ──
 
 const pgSelectCols = `schema_version, fpl_version, car_version,
-	record_id, prev_record_hash, record_hash, hmac_signature,
+	canonicalization_algorithm,
+	record_id, prev_record_hash, record_hash, hmac_signature, signature_algorithm, signature, signer_public_key,
 	agent_id, session_id, tool_id, intercept_adapter, execution_timeout_ms, principal_id_hash,
 	effect, matched_rule_id, reason_code, reason, denial_token,
 	incident_category, incident_severity,
 	policy_version, policy_source_type, policy_source_id,
 	args_structural_sig, arg_provenance, selector_snapshot,
-	canonicalization_algorithm,
 	hardening_mode, network_host_hash, network_port, network_resolved_ip_hash, network_audit_bypass, inference_model_rewrite_applied,
 	custom_operators_evaluated, operator_results, operator_registry_hash,
 	workflow_phase, phase_transition_record,
@@ -250,6 +264,9 @@ func pgMigrate(db *sql.DB) error {
 		prev_record_hash           TEXT NOT NULL,
 		record_hash                TEXT NOT NULL,
 		hmac_signature             TEXT DEFAULT '',
+		signature_algorithm        TEXT DEFAULT '',
+		signature                  TEXT DEFAULT '',
+		signer_public_key          TEXT DEFAULT '',
 		agent_id                   TEXT NOT NULL,
 		session_id                 TEXT,
 		tool_id                    TEXT NOT NULL,
@@ -305,6 +322,9 @@ func pgMigrate(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_dpr_record_hash ON dpr_records(record_hash);
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS execution_timeout_ms INTEGER DEFAULT 0;
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS canonicalization_algorithm TEXT DEFAULT '';
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS signature_algorithm TEXT DEFAULT '';
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS signature TEXT DEFAULT '';
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS signer_public_key TEXT DEFAULT '';
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS hardening_mode TEXT DEFAULT '';
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS network_host_hash TEXT DEFAULT '';
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS network_port INTEGER DEFAULT 0;
@@ -324,7 +344,7 @@ func pgScanRecords(rows *sql.Rows) ([]*Record, error) {
 		var argProv, selSnap, custOps, opRes, cbFired, cbErrs, batchIDs, approvalEnvelope sql.NullString
 		if err := rows.Scan(
 			&r.SchemaVersion, &r.FPLVersion, &r.CARVersion, &r.CanonicalizationAlgorithm,
-			&r.RecordID, &r.PrevRecordHash, &r.RecordHash, &r.HMACSig,
+			&r.RecordID, &r.PrevRecordHash, &r.RecordHash, &r.HMACSig, &r.SignatureAlg, &r.Signature, &r.SignerPublicKey,
 			&r.AgentID, &r.SessionID, &r.ToolID, &r.InterceptAdapter, &r.ExecutionTimeoutMS, &r.PrincipalIDHash,
 			&r.Effect, &r.MatchedRuleID, &r.ReasonCode, &r.Reason, &r.DenialToken,
 			&r.IncidentCategory, &r.IncidentSeverity,
