@@ -70,6 +70,21 @@ func (m *MultiStore) VerifyChain(agentID string) (*ChainBreak, error) {
 	return m.primary.VerifyChain(agentID)
 }
 
+func (m *MultiStore) UpdateSignature(recordID, signatureAlg, signature, signerPublicKey string) error {
+	if m.primary == nil {
+		return fmt.Errorf("primary store is not configured")
+	}
+	if err := m.primary.UpdateSignature(recordID, signatureAlg, signature, signerPublicKey); err != nil {
+		return err
+	}
+	if m.secondary != nil {
+		if err := m.secondary.UpdateSignature(recordID, signatureAlg, signature, signerPublicKey); err != nil {
+			return fmt.Errorf("secondary update signature: %w", err)
+		}
+	}
+	return nil
+}
+
 func (m *MultiStore) Close() error {
 	if m.primary != nil {
 		if err := m.primary.Close(); err != nil {

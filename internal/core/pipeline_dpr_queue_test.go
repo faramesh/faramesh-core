@@ -39,13 +39,14 @@ func (s *captureStore) Save(rec *dpr.Record) error {
 	s.ch <- rec
 	return nil
 }
-func (s *captureStore) ByID(string) (*dpr.Record, error)                 { return nil, errors.New("not implemented") }
-func (s *captureStore) RecentByAgent(string, int) ([]*dpr.Record, error) { return nil, nil }
-func (s *captureStore) Recent(int) ([]*dpr.Record, error)                { return nil, nil }
-func (s *captureStore) LastHash(string) (string, error)                  { return "", nil }
-func (s *captureStore) KnownAgents() ([]string, error)                   { return nil, nil }
-func (s *captureStore) VerifyChain(string) (*dpr.ChainBreak, error)      { return nil, nil }
-func (s *captureStore) Close() error                                     { return nil }
+func (s *captureStore) ByID(string) (*dpr.Record, error)                     { return nil, errors.New("not implemented") }
+func (s *captureStore) RecentByAgent(string, int) ([]*dpr.Record, error)     { return nil, nil }
+func (s *captureStore) Recent(int) ([]*dpr.Record, error)                    { return nil, nil }
+func (s *captureStore) LastHash(string) (string, error)                      { return "", nil }
+func (s *captureStore) KnownAgents() ([]string, error)                       { return nil, nil }
+func (s *captureStore) VerifyChain(string) (*dpr.ChainBreak, error)          { return nil, nil }
+func (s *captureStore) UpdateSignature(string, string, string, string) error { return nil }
+func (s *captureStore) Close() error                                         { return nil }
 
 type captureQueue struct {
 	mu        sync.Mutex

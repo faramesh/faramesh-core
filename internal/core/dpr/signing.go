@@ -13,7 +13,6 @@ func (r *Record) SignWithEd25519(priv ed25519.PrivateKey, pub ed25519.PublicKey)
 	if len(priv) == 0 {
 		return errors.New("ed25519 private key is empty")
 	}
-	// Use existing canonical bytes for initial rollout.
 	msg := r.CanonicalBytes()
 	sig := ed25519.Sign(priv, msg)
 	r.Signature = base64.StdEncoding.EncodeToString(sig)
@@ -27,6 +26,9 @@ func (r *Record) SignWithEd25519(priv ed25519.PrivateKey, pub ed25519.PublicKey)
 func (r *Record) VerifyEd25519() (bool, error) {
 	if r.SignatureAlg != "ed25519" {
 		return false, errors.New("record not signed with ed25519")
+	}
+	if !r.VerifyRecordHash() {
+		return false, errors.New("record hash mismatch")
 	}
 	pubBytes, err := base64.StdEncoding.DecodeString(r.SignerPublicKey)
 	if err != nil {

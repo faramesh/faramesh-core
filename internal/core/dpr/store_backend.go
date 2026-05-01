@@ -27,6 +27,9 @@ type StoreBackend interface {
 	// Returns the first broken link or nil if the chain is valid.
 	VerifyChain(agentID string) (*ChainBreak, error)
 
+	// UpdateSignature updates signature fields for an existing record.
+	UpdateSignature(recordID, signatureAlg, signature, signerPublicKey string) error
+
 	// Close releases backend resources.
 	Close() error
 }

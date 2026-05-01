@@ -54,4 +54,4 @@ If you'd like, I will:
 2. Add minimal CLI flags / data-dir persistence for a daemon Ed25519 key (optional; recommended for production).
 3. Start a branch `feat/aarm-r5-ed25519` and open a PR with tests and docs.
 
-Tell me which next action to take (I can start wiring signing into record writes now). 
+Tell me which next action to take (I can start wiring signing into record writes now).
