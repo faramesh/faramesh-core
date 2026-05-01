@@ -212,6 +212,7 @@ type Config struct {
 	HMACKey                 []byte
 	SigningPrivKey          []byte
 	SigningPubKey           []byte
+	UseJCSCanonicalization  bool
 	Log                     *zap.Logger
 	Standing                *standing.Registry
 }
@@ -284,6 +285,11 @@ func NewPipeline(cfg Config) *Pipeline {
 	}
 	if p.log == nil {
 		p.log = zap.NewNop()
+	}
+
+	// Configure DPR canonicalization mode globally for the dpr package.
+	if cfg.UseJCSCanonicalization {
+		dpr.UseJCSCanonicalization = true
 	}
 	p.artifacts.Store(buildPolicyArtifacts(currentEngine(cfg.Engine)))
 	// Seed chain hashes from SQLite so the DPR chain is continuous across restarts.
