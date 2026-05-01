@@ -51,14 +51,15 @@ type saveCaptureStore struct {
 	err  error
 }
 
-func (s *saveCaptureStore) Save(rec *dpr.Record) error                       { s.last = rec; return s.err }
-func (s *saveCaptureStore) ByID(string) (*dpr.Record, error)                 { return nil, nil }
-func (s *saveCaptureStore) RecentByAgent(string, int) ([]*dpr.Record, error) { return nil, nil }
-func (s *saveCaptureStore) Recent(int) ([]*dpr.Record, error)                { return nil, nil }
-func (s *saveCaptureStore) LastHash(string) (string, error)                  { return "", nil }
-func (s *saveCaptureStore) KnownAgents() ([]string, error)                   { return nil, nil }
-func (s *saveCaptureStore) VerifyChain(string) (*dpr.ChainBreak, error)      { return nil, nil }
-func (s *saveCaptureStore) Close() error                                     { return nil }
+func (s *saveCaptureStore) Save(rec *dpr.Record) error                           { s.last = rec; return s.err }
+func (s *saveCaptureStore) ByID(string) (*dpr.Record, error)                     { return nil, nil }
+func (s *saveCaptureStore) RecentByAgent(string, int) ([]*dpr.Record, error)     { return nil, nil }
+func (s *saveCaptureStore) Recent(int) ([]*dpr.Record, error)                    { return nil, nil }
+func (s *saveCaptureStore) LastHash(string) (string, error)                      { return "", nil }
+func (s *saveCaptureStore) KnownAgents() ([]string, error)                       { return nil, nil }
+func (s *saveCaptureStore) VerifyChain(string) (*dpr.ChainBreak, error)          { return nil, nil }
+func (s *saveCaptureStore) UpdateSignature(string, string, string, string) error { return nil }
+func (s *saveCaptureStore) Close() error                                         { return nil }
 
 type blockingSaveStore struct {
 	mu      sync.Mutex
@@ -88,11 +89,12 @@ func (s *blockingSaveStore) ByID(string) (*dpr.Record, error) { return nil, nil 
 func (s *blockingSaveStore) RecentByAgent(string, int) ([]*dpr.Record, error) {
 	return nil, nil
 }
-func (s *blockingSaveStore) Recent(int) ([]*dpr.Record, error)           { return nil, nil }
-func (s *blockingSaveStore) LastHash(string) (string, error)             { return "", nil }
-func (s *blockingSaveStore) KnownAgents() ([]string, error)              { return nil, nil }
-func (s *blockingSaveStore) VerifyChain(string) (*dpr.ChainBreak, error) { return nil, nil }
-func (s *blockingSaveStore) Close() error                                { return nil }
+func (s *blockingSaveStore) Recent(int) ([]*dpr.Record, error)                    { return nil, nil }
+func (s *blockingSaveStore) LastHash(string) (string, error)                      { return "", nil }
+func (s *blockingSaveStore) KnownAgents() ([]string, error)                       { return nil, nil }
+func (s *blockingSaveStore) VerifyChain(string) (*dpr.ChainBreak, error)          { return nil, nil }
+func (s *blockingSaveStore) UpdateSignature(string, string, string, string) error { return nil }
+func (s *blockingSaveStore) Close() error                                         { return nil }
 
 func (s *blockingSaveStore) count() int {
 	s.mu.Lock()

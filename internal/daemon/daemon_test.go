@@ -637,11 +637,12 @@ func (s *preflightTestStore) ByID(string) (*dpr.Record, error) { return nil, nil
 func (s *preflightTestStore) RecentByAgent(string, int) ([]*dpr.Record, error) {
 	return nil, nil
 }
-func (s *preflightTestStore) Recent(int) ([]*dpr.Record, error)           { return nil, nil }
-func (s *preflightTestStore) LastHash(string) (string, error)             { return "", nil }
-func (s *preflightTestStore) KnownAgents() ([]string, error)              { return nil, nil }
-func (s *preflightTestStore) VerifyChain(string) (*dpr.ChainBreak, error) { return nil, nil }
-func (s *preflightTestStore) Close() error                                { return nil }
+func (s *preflightTestStore) Recent(int) ([]*dpr.Record, error)                    { return nil, nil }
+func (s *preflightTestStore) LastHash(string) (string, error)                      { return "", nil }
+func (s *preflightTestStore) KnownAgents() ([]string, error)                       { return nil, nil }
+func (s *preflightTestStore) VerifyChain(string) (*dpr.ChainBreak, error)          { return nil, nil }
+func (s *preflightTestStore) UpdateSignature(string, string, string, string) error { return nil }
+func (s *preflightTestStore) Close() error                                         { return nil }
 
 type preflightWorkloadProvider struct {
 	identity *principal.Identity

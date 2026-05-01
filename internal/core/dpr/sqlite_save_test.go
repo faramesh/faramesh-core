@@ -55,6 +55,47 @@ func TestStoreSavePersistsRecord(t *testing.T) {
 	}
 }
 
+func TestStoreUpdateSignature(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "dpr.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer store.Close()
+
+	rec := &Record{
+		SchemaVersion:             SchemaVersion,
+		CARVersion:                "car/1.0",
+		CanonicalizationAlgorithm: CanonicalizationJCS,
+		RecordID:                  "rec-sign-update",
+		PrevRecordHash:            GenesisPrevHash("agent-1"),
+		AgentID:                   "agent-1",
+		SessionID:                 "sess-1",
+		ToolID:                    "tool-1",
+		InterceptAdapter:          "sdk",
+		Effect:                    "PERMIT",
+		MatchedRuleID:             "rule-1",
+		ReasonCode:                "RULE_PERMIT",
+		PolicyVersion:             "v-test",
+		ArgsStructuralSig:         "sig-1",
+		CreatedAt:                 time.Now().UTC(),
+	}
+	rec.ComputeHash()
+	if err := store.Save(rec); err != nil {
+		t.Fatalf("save record: %v", err)
+	}
+
+	if err := store.UpdateSignature(rec.RecordID, "ed25519", "abc", "pub"); err != nil {
+		t.Fatalf("update signature: %v", err)
+	}
+	got, err := store.ByID(rec.RecordID)
+	if err != nil {
+		t.Fatalf("by id: %v", err)
+	}
+	if got.SignatureAlg != "ed25519" || got.Signature != "abc" || got.SignerPublicKey != "pub" {
+		t.Fatalf("unexpected signature fields: alg=%q sig=%q pub=%q", got.SignatureAlg, got.Signature, got.SignerPublicKey)
+	}
+}
+
 func TestOpenStoreConfiguresSQLitePragmas(t *testing.T) {
 	store, err := OpenStore(filepath.Join(t.TempDir(), "dpr.db"))
 	if err != nil {
