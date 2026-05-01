@@ -118,7 +118,10 @@ type Record struct {
 // UseJCSCanonicalization controls whether Record.CanonicalBytes serializes
 // using a JCS-style canonical JSON serializer. It is set by Pipeline at
 // startup based on configuration. Default is false (legacy serializer).
-var UseJCSCanonicalization = false
+// Default to JCS canonicalization to favor RFC-8785 deterministic JSON
+// output for new records. This can be flipped at runtime by the daemon
+// when `FARAMESH_USE_JCS` is explicitly set to false.
+var UseJCSCanonicalization = true
 
 // CanonicalBytes returns the deterministic byte representation of this record
 // used to compute record_hash. The previous record's hash is included so the
