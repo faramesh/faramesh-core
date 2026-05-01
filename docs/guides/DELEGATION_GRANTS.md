@@ -103,6 +103,38 @@ The schema is created idempotently in `migrateDelegate(db)` at construction. The
 - **Rotate the DPR HMAC key** with awareness that tokens issued under the prior key will fail `Verify`. If chains must survive rotation, plan a maintenance window.
 - **Multi-instance deployments** should share the SQLite database (or replace `SQLiteStore` with a future networked backend) so grants visible to one daemon are visible to all.
 
+## CLI usage
+
+The `faramesh delegate` subcommand talks to the daemon over the authenticated SDK socket. All operations require an admin token, sourced in this order:
+
+1. `--admin-token <secret>` flag.
+2. `FARAMESH_STANDING_ADMIN_TOKEN` environment variable.
+3. `FARAMESH_POLICY_ADMIN_TOKEN` environment variable.
+
+The daemon must have a matching token configured (see [`DPR_HMAC_KEY.md`](DPR_HMAC_KEY.md) — the same admin-token guidance applies). Without one, every `faramesh delegate` call fails closed with `control_admin_unconfigured`.
+
+```bash
+# Grant a 1-hour delegation from a supervisor agent to a worker agent
+# scoped to stripe/* tools.
+export FARAMESH_STANDING_ADMIN_TOKEN=<secret>
+faramesh delegate grant supervisor worker --scope "stripe/*" --ttl 1h
+
+# Inspect / verify the resulting token.
+faramesh delegate inspect del_<...>
+faramesh delegate verify  del_<...>
+
+# List delegations involving a given agent.
+faramesh delegate list worker
+
+# Walk the chain from the leaf agent back to the root.
+faramesh delegate chain worker
+
+# Revoke. Idempotent — re-running returns "no active delegations found".
+faramesh delegate revoke supervisor worker
+```
+
+If the SDK socket is unreachable and `--http-fallback --addr <daemon-http>` is set, the CLI falls back to the equivalent `/api/v1/delegate/*` HTTP route. By default the SDK socket is the only path.
+
 ## See also
 
 - [`DPR_HMAC_KEY.md`](DPR_HMAC_KEY.md) — the parent key used to derive the delegation signing key.
