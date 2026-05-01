@@ -15,6 +15,8 @@ const (
 	EffectPermit       Effect = "PERMIT"
 	EffectDeny         Effect = "DENY"
 	EffectDefer        Effect = "DEFER"
+	EffectModify       Effect = "MODIFY"
+	EffectStepUp       Effect = "STEP_UP"
 	EffectShadow       Effect = "SHADOW"
 	EffectShadowPermit Effect = "SHADOW_PERMIT"
 )
@@ -163,6 +165,34 @@ type Decision struct {
 	// DeferPollIntervalSecs is the suggested poll interval for check_approval().
 	DeferPollIntervalSecs int `json:"defer_poll_interval_secs,omitempty"`
 
+	// ModifiedArgs contains constraint modifications to be applied before execution.
+	// Set when Effect == MODIFY. Policy rules can modify request args.
+	// E.g., {"limit": 500, "isolation": "docker"}.
+	ModifiedArgs map[string]any `json:"modified_args,omitempty"`
+
+	// ModifyReason explains the constraint (e.g., "budget capped by org policy").
+	// Set when Effect == MODIFY.
+	ModifyReason string `json:"modify_reason,omitempty"`
+
+	// RequiredModifications indicates whether the agent MUST apply these modifications.
+	// If true and agent doesn't apply, execution is blocked. If false, they are optional.
+	// Set when Effect == MODIFY.
+	RequiredModifications bool `json:"required_modifications,omitempty"`
+
+	// ElevationLevel indicates approval hierarchy level required (STEP_UP effect).
+	// 0=peer review, 1=manager, 2=director, 3=executive, 4=security/compliance.
+	ElevationLevel int `json:"elevation_level,omitempty"`
+
+	// RequiredAuthority is a regex/label matching the approver role (STEP_UP effect).
+	// E.g., "finance_manager|finance_director", "security_team", "incident_commander".
+	RequiredAuthority string `json:"required_authority,omitempty"`
+
+	// StepUpReason explains why escalation is needed (STEP_UP effect).
+	StepUpReason string `json:"step_up_reason,omitempty"`
+
+	// StepUpToken is set when Effect == STEP_UP (alias for elevated DEFER workflow).
+	StepUpToken string `json:"step_up_token,omitempty"`
+
 	// ShadowActualOutcome is set when Effect == SHADOW_PERMIT, indicating
 	// what would have happened under enforcement mode.
 	ShadowActualOutcome Effect `json:"shadow_actual_outcome,omitempty"`
@@ -204,6 +234,25 @@ type Decision struct {
 	// ApprovalEnvelopeJSON stores the signed approval envelope for resume-path DPRs.
 	// Internal only: used to persist tamper-evident approval evidence.
 	ApprovalEnvelopeJSON string `json:"-"`
+}
+
+// DeferCascadePolicy controls DEFER cascade behavior and limits.
+type DeferCascadePolicy struct {
+	// MaxDepth prevents infinite cascades. Default: 3 (original + 2 escalations).
+	// Depth 0 = original DEFER, Depth 1 = first cascade, etc.
+	MaxDepth int `json:"max_depth"`
+
+	// OnMaxDepthReached controls behavior when cascade limit is hit.
+	// "deny" = treat as final deny, "approve" = auto-approve, "escalate" = route to operator.
+	OnMaxDepthReached string `json:"on_max_depth_reached"`
+
+	// MaxTotalResolveTime is total time budget for entire cascade resolution.
+	// If exceeded, auto-denies. Default: 24 hours.
+	MaxTotalResolveTime time.Duration `json:"max_total_resolve_time"`
+
+	// DetectCycles enables cycle detection in cascade chains.
+	// If true, approval system prevents A → B → A scenarios.
+	DetectCycles bool `json:"detect_cycles"`
 }
 
 // GovernanceError is the base error type for governance infrastructure failures.
