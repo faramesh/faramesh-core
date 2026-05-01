@@ -1,0 +1,73 @@
+# Faramesh Policy Language — coding agent governance
+# Governs a coding/dev assistant agent (Claude Code, Cursor, Copilot-style).
+
+agent coding-agent {
+  default deny
+  model "claude-sonnet-4-20250514"
+  framework "mcp"
+
+  budget session {
+    max $25
+    daily $100
+    max_calls 500
+    on_exceed defer
+  }
+
+  phase explore {
+    permit fs/read
+    permit fs/list
+    permit search/*
+    permit shell/run when cmd matches "ls|cat|head|tail|grep|rg|find|wc|git status|git diff|git log"
+  }
+
+  phase edit {
+    permit fs/read
+    permit fs/write
+    permit shell/run when cmd matches "go build|go test|go vet|npm test|pnpm test|pytest|cargo build|cargo test|make"
+  }
+
+  rules {
+    deny! shell/run when cmd matches "rm -rf|dd if=|mkfs|chmod -R 777 /|sudo rm"
+      reason: "destructive command blocked"
+
+    deny! fs/write when args.path matches "/etc|/usr|/bin|/sbin|/boot|\\.ssh/|\\.aws/|\\.gnupg/"
+      reason: "system or credential path write blocked"
+
+    deny! fs/read when args.path matches "\\.env$|credentials\\.json$|id_rsa$|id_ed25519$"
+      reason: "secret file read blocked"
+
+    defer shell/run when cmd matches "git push.*--force|git push origin (main|master|prod|release)"
+      notify: "code-reviewer"
+      reason: "force push or push to protected branch"
+
+    defer shell/run when cmd matches "npm publish|pip install|cargo install|brew install|apt-get install|gh release"
+      notify: "dev-lead"
+      reason: "package install or release requires approval"
+
+    defer net/request when args.host matches "\\.prod\\.|api\\.stripe\\.com|api\\.openai\\.com"
+      notify: "dev-lead"
+      reason: "external production endpoint"
+
+    permit net/request when args.host matches "localhost|127\\.0\\.0\\.1|github\\.com|registry\\.npmjs\\.org|pypi\\.org"
+
+    permit git/*
+  }
+
+  ambient {
+    max_calls_per_day 2000
+    max_data_volume 5mb
+    on_exceed defer
+  }
+
+  credential github {
+    backend vault
+    path secret/data/github/coding-agent
+    scope "repo:read" "pull_request:write"
+    ttl 30m
+  }
+}
+
+system global {
+  version "1.0"
+  on_policy_load_failure deny_all
+}
