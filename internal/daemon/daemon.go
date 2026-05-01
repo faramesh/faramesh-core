@@ -45,6 +45,7 @@ import (
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 	deferbackends "github.com/faramesh/faramesh-core/internal/core/defer/backends"
 	"github.com/faramesh/faramesh-core/internal/core/degraded"
+	"github.com/faramesh/faramesh-core/internal/core/delegate"
 	"github.com/faramesh/faramesh-core/internal/core/dpr"
 	"github.com/faramesh/faramesh-core/internal/core/jobs"
 	"github.com/faramesh/faramesh-core/internal/core/multiagent"
@@ -147,6 +148,10 @@ type Config struct {
 	// development escape hatch. Keep false in production strict mode.
 	AllowEnvCredentialFallback bool
 
+	// DelegateMaxDepth caps delegation chain length. Zero falls back to
+	// delegate.DefaultMaxDepth.
+	DelegateMaxDepth int
+
 	// Credential broker backends.
 	VaultAddr         string
 	VaultToken        string
@@ -194,6 +199,8 @@ type Daemon struct {
 	revocationMgr        *principal.RevocationManager
 	workloadProvider     principal.WorkloadProvider
 	ebpfAdapter          ebpf.Lifecycle
+	delegate             *delegate.Service
+	delegateStore        *delegate.SQLiteStore
 	log                  *zap.Logger
 	fleetPolicyApply     func(context.Context, fleetPolicyReloadEvent) (bool, error)
 }
@@ -605,6 +612,19 @@ func (d *Daemon) start() error {
 		return fmt.Errorf("load DPR HMAC key: %w", err)
 	}
 
+	delegateDBPath := filepath.Join(d.cfg.DataDir, "delegations.db")
+	delegateStore, err := delegate.OpenSQLiteStore(delegateDBPath)
+	if err != nil {
+		return fmt.Errorf("open delegation store: %w", err)
+	}
+	d.delegateStore = delegateStore
+	d.delegate = delegate.NewService(
+		delegateStore,
+		delegate.DeriveKey(hmacKey),
+		d.cfg.DelegateMaxDepth,
+		nil,
+	)
+
 	sessionManager := session.NewManager()
 	dailyCostPath := filepath.Join(d.cfg.DataDir, "session_daily_costs.db")
 	if dailyStore, err := session.NewSQLiteDailyCostStore(dailyCostPath); err != nil {
@@ -803,6 +823,10 @@ func (d *Daemon) start() error {
 		d.log.Info("standing grant admin authentication enabled (SDK standing_grant_* requires admin_token)")
 	} else {
 		d.log.Warn("standing grant SDK APIs are disabled until --standing-admin-token, FARAMESH_STANDING_ADMIN_TOKEN, or --policy-admin-token is set")
+	}
+
+	if d.delegate != nil {
+		server.SetDelegateService(d.delegate)
 	}
 	if err := server.Listen(d.cfg.SocketPath); err != nil {
 		return fmt.Errorf("start SDK server: %w", err)
@@ -1840,6 +1864,9 @@ func (d *Daemon) stop() error {
 	}
 	if d.dailyCostStore != nil {
 		_ = d.dailyCostStore.Close()
+	}
+	if d.delegateStore != nil {
+		_ = d.delegateStore.Close()
 	}
 	if d.webhooks != nil {
 		d.webhooks.Close()
