@@ -64,6 +64,7 @@ var commandTierByName = map[string]commandTier{
 	"suggest":    commandTierOperator,
 	"up":         commandTierCore,
 	"verify":     commandTierInternal,
+	"key":        commandTierOperator,
 	"wizard":     commandTierCore,
 }
 
