@@ -74,51 +74,52 @@ type WorkloadIdentityDetector interface {
 // before the Decision is returned. If the WAL write fails, DENY is returned.
 // Execution must never precede the audit record.
 type Pipeline struct {
-	engine            *policy.AtomicEngine
-	wal               dpr.Writer
-	store             dpr.StoreBackend // may be nil (in-memory / demo mode)
-	dprQueue          jobs.DPRQueue
-	sessions          *session.Manager
-	sessionGovernor   *session.Governor
-	defers            *deferwork.Workflow
-	chainMu           map[string]string      // agentID -> last record hash (in-memory cache)
-	chainLock         sync.Mutex             // protects chainMu
-	syncer            DecisionSyncer         // optional Horizon sync (nil = disabled)
-	postScanner       *postcondition.Scanner // post-execution output scanner (nil = disabled)
-	httpClient        *http.Client           // shared HTTP client for context guards
-	webhooks          *webhook.Sender
-	degraded          *degraded.Manager
-	subPolicies       *multiagent.SubPolicyManager
-	routingGovernor   *multiagent.RoutingGovernor
-	loopGovernor      *multiagent.LoopGovernor
-	aggGovernor       *multiagent.AggregationGovernor
-	crossSession      *crossSessionGuardTracker
-	callbacks         callbacks.Dispatcher
-	revocations       PrincipalRevocationChecker
-	elevations        PrincipalElevationResolver
-	workloadIdentity  WorkloadIdentityDetector
-	credentialRouter  *credential.Router
-	intentClassifier  IntentClassifier
-	provenance        observe.ArgProvenanceTracker
-	phaseManager      *phases.PhaseManager
-	runtimeMode       RuntimeMode
-	bootstrap         *BootstrapEnforcer
-	toolInventory     *toolinventory.Store
-	policySourceType  string
-	policySourceID    string
-	strictModelVerify bool
-	hmacKey           []byte
-	signingPrivKey    []byte
-	signingPubKey     []byte
-	log               *zap.Logger
-	artifacts         atomic.Value // *policyArtifacts
-	callChainMu       sync.Mutex
-	activeCallChains  map[string]struct{}
-	modelMu           sync.RWMutex
-	models            map[string]ModelRegistration
-	budgetMu          sync.Mutex
-	budgetManagers    map[string]*multiagent.BudgetManager
-	standing          *standing.Registry
+	engine                    *policy.AtomicEngine
+	wal                       dpr.Writer
+	store                     dpr.StoreBackend // may be nil (in-memory / demo mode)
+	dprQueue                  jobs.DPRQueue
+	sessions                  *session.Manager
+	sessionGovernor           *session.Governor
+	defers                    *deferwork.Workflow
+	chainMu                   map[string]string      // agentID -> last record hash (in-memory cache)
+	chainLock                 sync.Mutex             // protects chainMu
+	syncer                    DecisionSyncer         // optional Horizon sync (nil = disabled)
+	postScanner               *postcondition.Scanner // post-execution output scanner (nil = disabled)
+	httpClient                *http.Client           // shared HTTP client for context guards
+	webhooks                  *webhook.Sender
+	degraded                  *degraded.Manager
+	subPolicies               *multiagent.SubPolicyManager
+	routingGovernor           *multiagent.RoutingGovernor
+	loopGovernor              *multiagent.LoopGovernor
+	aggGovernor               *multiagent.AggregationGovernor
+	crossSession              *crossSessionGuardTracker
+	callbacks                 callbacks.Dispatcher
+	revocations               PrincipalRevocationChecker
+	elevations                PrincipalElevationResolver
+	workloadIdentity          WorkloadIdentityDetector
+	credentialRouter          *credential.Router
+	intentClassifier          IntentClassifier
+	provenance                observe.ArgProvenanceTracker
+	phaseManager              *phases.PhaseManager
+	runtimeMode               RuntimeMode
+	bootstrap                 *BootstrapEnforcer
+	toolInventory             *toolinventory.Store
+	policySourceType          string
+	policySourceID            string
+	strictModelVerify         bool
+	hmacKey                   []byte
+	signingPrivKey            []byte
+	signingPubKey             []byte
+	canonicalizationAlgorithm string
+	log                       *zap.Logger
+	artifacts                 atomic.Value // *policyArtifacts
+	callChainMu               sync.Mutex
+	activeCallChains          map[string]struct{}
+	modelMu                   sync.RWMutex
+	models                    map[string]ModelRegistration
+	budgetMu                  sync.Mutex
+	budgetManagers            map[string]*multiagent.BudgetManager
+	standing                  *standing.Registry
 }
 
 type policyArtifacts struct {
@@ -182,39 +183,39 @@ const (
 
 // Config holds construction parameters for the Pipeline.
 type Config struct {
-	Engine                  *policy.AtomicEngine
-	WAL                     dpr.Writer
-	Store                   dpr.StoreBackend // optional
-	DPRQueue                jobs.DPRQueue    // optional async persistence queue
-	Sessions                *session.Manager
-	SessionGovernor         *session.Governor
-	Defers                  *deferwork.Workflow
-	Webhooks                *webhook.Sender
-	Degraded                *degraded.Manager
-	SubPolicies             *multiagent.SubPolicyManager
-	RoutingGovernor         *multiagent.RoutingGovernor
-	LoopGovernor            *multiagent.LoopGovernor
-	AggregationGov          *multiagent.AggregationGovernor
-	Callbacks               callbacks.Dispatcher
-	Revocations             PrincipalRevocationChecker
-	Elevations              PrincipalElevationResolver
-	WorkloadIdentity        WorkloadIdentityDetector
-	CredentialRouter        *credential.Router
-	IntentClassifier        IntentClassifier
-	Provenance              observe.ArgProvenanceTracker
-	PhaseManager            *phases.PhaseManager
-	RuntimeMode             RuntimeMode
-	Bootstrap               *BootstrapEnforcer
-	ToolInventory           *toolinventory.Store
-	PolicySourceType        string
-	PolicySourceID          string
-	StrictModelVerification bool
-	HMACKey                 []byte
-	SigningPrivKey          []byte
-	SigningPubKey           []byte
-	UseJCSCanonicalization  bool
-	Log                     *zap.Logger
-	Standing                *standing.Registry
+	Engine                    *policy.AtomicEngine
+	WAL                       dpr.Writer
+	Store                     dpr.StoreBackend // optional
+	DPRQueue                  jobs.DPRQueue    // optional async persistence queue
+	Sessions                  *session.Manager
+	SessionGovernor           *session.Governor
+	Defers                    *deferwork.Workflow
+	Webhooks                  *webhook.Sender
+	Degraded                  *degraded.Manager
+	SubPolicies               *multiagent.SubPolicyManager
+	RoutingGovernor           *multiagent.RoutingGovernor
+	LoopGovernor              *multiagent.LoopGovernor
+	AggregationGov            *multiagent.AggregationGovernor
+	Callbacks                 callbacks.Dispatcher
+	Revocations               PrincipalRevocationChecker
+	Elevations                PrincipalElevationResolver
+	WorkloadIdentity          WorkloadIdentityDetector
+	CredentialRouter          *credential.Router
+	IntentClassifier          IntentClassifier
+	Provenance                observe.ArgProvenanceTracker
+	PhaseManager              *phases.PhaseManager
+	RuntimeMode               RuntimeMode
+	Bootstrap                 *BootstrapEnforcer
+	ToolInventory             *toolinventory.Store
+	PolicySourceType          string
+	PolicySourceID            string
+	StrictModelVerification   bool
+	HMACKey                   []byte
+	SigningPrivKey            []byte
+	SigningPubKey             []byte
+	CanonicalizationAlgorithm string
+	Log                       *zap.Logger
+	Standing                  *standing.Registry
 }
 
 // NewPipeline constructs a Pipeline from a Config.
@@ -239,58 +240,59 @@ func NewPipeline(cfg Config) *Pipeline {
 	if len(cfg.HMACKey) > 0 {
 		cfg.Defers.SetApprovalHMACKey(cfg.HMACKey)
 	}
+	canonAlg := strings.TrimSpace(cfg.CanonicalizationAlgorithm)
+	if canonAlg == "" {
+		canonAlg = dpr.CanonicalizationJCS
+	}
 	stReg := cfg.Standing
 	if stReg == nil {
 		stReg = standing.NewRegistry()
 	}
 	p := &Pipeline{
-		engine:            cfg.Engine,
-		wal:               cfg.WAL,
-		store:             cfg.Store,
-		dprQueue:          cfg.DPRQueue,
-		sessions:          cfg.Sessions,
-		sessionGovernor:   cfg.SessionGovernor,
-		defers:            cfg.Defers,
-		chainMu:           make(map[string]string),
-		httpClient:        &http.Client{Timeout: 10 * time.Second},
-		webhooks:          cfg.Webhooks,
-		degraded:          cfg.Degraded,
-		subPolicies:       cfg.SubPolicies,
-		routingGovernor:   cfg.RoutingGovernor,
-		loopGovernor:      cfg.LoopGovernor,
-		aggGovernor:       cfg.AggregationGov,
-		crossSession:      newCrossSessionGuardTracker(),
-		callbacks:         cfg.Callbacks,
-		revocations:       cfg.Revocations,
-		elevations:        cfg.Elevations,
-		workloadIdentity:  cfg.WorkloadIdentity,
-		credentialRouter:  cfg.CredentialRouter,
-		intentClassifier:  cfg.IntentClassifier,
-		provenance:        cfg.Provenance,
-		phaseManager:      cfg.PhaseManager,
-		runtimeMode:       cfg.RuntimeMode,
-		bootstrap:         cfg.Bootstrap,
-		toolInventory:     cfg.ToolInventory,
-		policySourceType:  cfg.PolicySourceType,
-		policySourceID:    cfg.PolicySourceID,
-		strictModelVerify: cfg.StrictModelVerification,
-		hmacKey:           cfg.HMACKey,
-		signingPrivKey:    cfg.SigningPrivKey,
-		signingPubKey:     cfg.SigningPubKey,
-		log:               cfg.Log,
-		activeCallChains:  make(map[string]struct{}),
-		models:            make(map[string]ModelRegistration),
-		budgetManagers:    make(map[string]*multiagent.BudgetManager),
-		standing:          stReg,
+		engine:                    cfg.Engine,
+		wal:                       cfg.WAL,
+		store:                     cfg.Store,
+		dprQueue:                  cfg.DPRQueue,
+		sessions:                  cfg.Sessions,
+		sessionGovernor:           cfg.SessionGovernor,
+		defers:                    cfg.Defers,
+		chainMu:                   make(map[string]string),
+		httpClient:                &http.Client{Timeout: 10 * time.Second},
+		webhooks:                  cfg.Webhooks,
+		degraded:                  cfg.Degraded,
+		subPolicies:               cfg.SubPolicies,
+		routingGovernor:           cfg.RoutingGovernor,
+		loopGovernor:              cfg.LoopGovernor,
+		aggGovernor:               cfg.AggregationGov,
+		crossSession:              newCrossSessionGuardTracker(),
+		callbacks:                 cfg.Callbacks,
+		revocations:               cfg.Revocations,
+		elevations:                cfg.Elevations,
+		workloadIdentity:          cfg.WorkloadIdentity,
+		credentialRouter:          cfg.CredentialRouter,
+		intentClassifier:          cfg.IntentClassifier,
+		provenance:                cfg.Provenance,
+		phaseManager:              cfg.PhaseManager,
+		runtimeMode:               cfg.RuntimeMode,
+		bootstrap:                 cfg.Bootstrap,
+		toolInventory:             cfg.ToolInventory,
+		policySourceType:          cfg.PolicySourceType,
+		policySourceID:            cfg.PolicySourceID,
+		strictModelVerify:         cfg.StrictModelVerification,
+		hmacKey:                   cfg.HMACKey,
+		signingPrivKey:            cfg.SigningPrivKey,
+		signingPubKey:             cfg.SigningPubKey,
+		canonicalizationAlgorithm: canonAlg,
+		log:                       cfg.Log,
+		activeCallChains:          make(map[string]struct{}),
+		models:                    make(map[string]ModelRegistration),
+		budgetManagers:            make(map[string]*multiagent.BudgetManager),
+		standing:                  stReg,
 	}
 	if p.log == nil {
 		p.log = zap.NewNop()
 	}
 
-	// Configure DPR canonicalization mode globally for the dpr package.
-	if cfg.UseJCSCanonicalization {
-		dpr.UseJCSCanonicalization = true
-	}
 	p.artifacts.Store(buildPolicyArtifacts(currentEngine(cfg.Engine)))
 	// Seed chain hashes from SQLite so the DPR chain is continuous across restarts.
 	if cfg.Store != nil {
@@ -1526,30 +1528,31 @@ func (p *Pipeline) buildRecordWithID(req CanonicalActionRequest, d Decision, arg
 	}
 
 	rec := &dpr.Record{
-		SchemaVersion:      dpr.SchemaVersion,
-		CARVersion:         CARVersion,
-		RecordID:           recordID,
-		PrevRecordHash:     prevHash,
-		AgentID:            req.AgentID,
-		SessionID:          req.SessionID,
-		ToolID:             req.ToolID,
-		InterceptAdapter:   req.InterceptAdapter,
-		ExecutionTimeoutMS: req.ExecutionTimeoutMS,
-		Effect:             string(d.Effect),
-		MatchedRuleID:      d.RuleID,
-		ReasonCode:         d.ReasonCode,
-		Reason:             d.Reason,
-		DenialToken:        d.DenialToken,
-		IncidentCategory:   d.IncidentCategory,
-		IncidentSeverity:   d.IncidentSeverity,
-		PolicyVersion:      d.PolicyVersion,
-		PolicySourceType:   p.policySourceType,
-		PolicySourceID:     p.policySourceID,
-		ArgsStructuralSig:  dpr.ArgsSignature(req.Args),
-		ArgProvenance:      argProvenance,
-		SelectorSnapshot:   selectorSnapshotForRecord(req.Args),
-		ApprovalEnvelope:   d.ApprovalEnvelopeJSON,
-		CreatedAt:          req.Timestamp.UTC(),
+		SchemaVersion:             dpr.SchemaVersion,
+		CARVersion:                CARVersion,
+		CanonicalizationAlgorithm: p.canonicalizationAlgorithm,
+		RecordID:                  recordID,
+		PrevRecordHash:            prevHash,
+		AgentID:                   req.AgentID,
+		SessionID:                 req.SessionID,
+		ToolID:                    req.ToolID,
+		InterceptAdapter:          req.InterceptAdapter,
+		ExecutionTimeoutMS:        req.ExecutionTimeoutMS,
+		Effect:                    string(d.Effect),
+		MatchedRuleID:             d.RuleID,
+		ReasonCode:                d.ReasonCode,
+		Reason:                    d.Reason,
+		DenialToken:               d.DenialToken,
+		IncidentCategory:          d.IncidentCategory,
+		IncidentSeverity:          d.IncidentSeverity,
+		PolicyVersion:             d.PolicyVersion,
+		PolicySourceType:          p.policySourceType,
+		PolicySourceID:            p.policySourceID,
+		ArgsStructuralSig:         dpr.ArgsSignature(req.Args),
+		ArgProvenance:             argProvenance,
+		SelectorSnapshot:          selectorSnapshotForRecord(req.Args),
+		ApprovalEnvelope:          d.ApprovalEnvelopeJSON,
+		CreatedAt:                 req.Timestamp.UTC(),
 	}
 	if p.degraded != nil {
 		rec.DegradedMode = p.degraded.Current().String()

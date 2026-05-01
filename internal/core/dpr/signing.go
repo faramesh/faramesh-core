@@ -8,10 +8,7 @@ import (
 
 // SignWithEd25519 signs the record's canonical bytes with the provided
 // Ed25519 private key and records the signature and signer public key
-// (base64-encoded) on the Record. This function intentionally uses the
-// existing CanonicalBytes() implementation for now; a future step will
-// migrate canonicalization to JCS (RFC 8785) and re-sign as part of that
-// migration path.
+// (base64-encoded) on the Record.
 func (r *Record) SignWithEd25519(priv ed25519.PrivateKey, pub ed25519.PublicKey) error {
 	if len(priv) == 0 {
 		return errors.New("ed25519 private key is empty")

@@ -128,6 +128,7 @@ type Config struct {
 	RuntimeMode                 core.RuntimeMode
 	RequireGovernanceBootstrap  bool
 	DPRHMACKey                  string
+	CanonicalizationAlgorithm   string
 	TLSCertFile                 string
 	TLSKeyFile                  string
 	ClientCAFile                string
@@ -241,6 +242,15 @@ func New(cfg Config) (*Daemon, error) {
 	}
 	if cfg.RuntimeMode == "" {
 		cfg.RuntimeMode = core.RuntimeModeEnforce
+	}
+	if strings.TrimSpace(cfg.CanonicalizationAlgorithm) == "" {
+		canonEnv := strings.ToLower(strings.TrimSpace(os.Getenv("FARAMESH_USE_JCS")))
+		switch canonEnv {
+		case "0", "false", "no", "legacy":
+			cfg.CanonicalizationAlgorithm = dpr.CanonicalizationLegacyJSON
+		default:
+			cfg.CanonicalizationAlgorithm = dpr.CanonicalizationJCS
+		}
 	}
 	if cfg.RuntimeMode != core.RuntimeModeEnforce &&
 		cfg.RuntimeMode != core.RuntimeModeShadow &&
@@ -744,38 +754,39 @@ func (d *Daemon) start() error {
 	}
 
 	pipeline := core.NewPipeline(core.Config{
-		Engine:                  d.engine,
-		WAL:                     wal,
-		Store:                   store,
-		DPRQueue:                dprQueue,
-		Sessions:                sessionManager,
-		SessionGovernor:         sessionGovernor,
-		Standing:                standingReg,
-		Defers:                  wf,
-		Webhooks:                d.webhooks,
-		Degraded:                d.degraded,
-		SubPolicies:             subPolicies,
-		RoutingGovernor:         routingGovernor,
-		LoopGovernor:            loopGovernor,
-		AggregationGov:          aggGovernor,
-		Callbacks:               callbackManager,
-		Revocations:             revocationMgr,
-		Elevations:              elevationEngine,
-		WorkloadIdentity:        workloadProvider,
-		CredentialRouter:        credentialRouter,
-		IntentClassifier:        intentClassifier,
-		Provenance:              provenanceTracker,
-		PhaseManager:            buildPhaseManagerFromPolicy(doc),
-		RuntimeMode:             d.cfg.RuntimeMode,
-		Bootstrap:               bootstrap,
-		ToolInventory:           d.toolInventory,
-		PolicySourceType:        d.policySourceType,
-		PolicySourceID:          d.policySourceID,
-		StrictModelVerification: d.cfg.StrictPreflight,
-		HMACKey:                 hmacKey,
-		SigningPrivKey:          signPriv,
-		SigningPubKey:           signPub,
-		Log:                     d.log,
+		Engine:                    d.engine,
+		WAL:                       wal,
+		Store:                     store,
+		DPRQueue:                  dprQueue,
+		Sessions:                  sessionManager,
+		SessionGovernor:           sessionGovernor,
+		Standing:                  standingReg,
+		Defers:                    wf,
+		Webhooks:                  d.webhooks,
+		Degraded:                  d.degraded,
+		SubPolicies:               subPolicies,
+		RoutingGovernor:           routingGovernor,
+		LoopGovernor:              loopGovernor,
+		AggregationGov:            aggGovernor,
+		Callbacks:                 callbackManager,
+		Revocations:               revocationMgr,
+		Elevations:                elevationEngine,
+		WorkloadIdentity:          workloadProvider,
+		CredentialRouter:          credentialRouter,
+		IntentClassifier:          intentClassifier,
+		Provenance:                provenanceTracker,
+		PhaseManager:              buildPhaseManagerFromPolicy(doc),
+		RuntimeMode:               d.cfg.RuntimeMode,
+		Bootstrap:                 bootstrap,
+		ToolInventory:             d.toolInventory,
+		PolicySourceType:          d.policySourceType,
+		PolicySourceID:            d.policySourceID,
+		StrictModelVerification:   d.cfg.StrictPreflight,
+		HMACKey:                   hmacKey,
+		SigningPrivKey:            signPriv,
+		SigningPubKey:             signPub,
+		CanonicalizationAlgorithm: d.cfg.CanonicalizationAlgorithm,
+		Log:                       d.log,
 	})
 	d.pipeline = pipeline
 	d.elevationEngine = elevationEngine

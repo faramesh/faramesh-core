@@ -16,22 +16,23 @@ func TestStoreSavePersistsRecord(t *testing.T) {
 	defer store.Close()
 
 	rec := &Record{
-		SchemaVersion:     SchemaVersion,
-		FPLVersion:        "1.0",
-		CARVersion:        "car/1.0",
-		RecordID:          "rec-1",
-		PrevRecordHash:    GenesisPrevHash("agent-1"),
-		AgentID:           "agent-1",
-		SessionID:         "sess-1",
-		ToolID:            "http/get",
-		InterceptAdapter:  "sdk",
-		Effect:            "PERMIT",
-		MatchedRuleID:     "rule-1",
-		ReasonCode:        "RULE_PERMIT",
-		PolicyVersion:     "v-test",
-		ArgsStructuralSig: "sig-1",
-		DegradedMode:      "FULL",
-		CreatedAt:         time.Now().UTC(),
+		SchemaVersion:             SchemaVersion,
+		FPLVersion:                "1.0",
+		CARVersion:                "car/1.0",
+		CanonicalizationAlgorithm: CanonicalizationJCS,
+		RecordID:                  "rec-1",
+		PrevRecordHash:            GenesisPrevHash("agent-1"),
+		AgentID:                   "agent-1",
+		SessionID:                 "sess-1",
+		ToolID:                    "http/get",
+		InterceptAdapter:          "sdk",
+		Effect:                    "PERMIT",
+		MatchedRuleID:             "rule-1",
+		ReasonCode:                "RULE_PERMIT",
+		PolicyVersion:             "v-test",
+		ArgsStructuralSig:         "sig-1",
+		DegradedMode:              "FULL",
+		CreatedAt:                 time.Now().UTC(),
 	}
 	rec.ComputeHash()
 
@@ -48,6 +49,9 @@ func TestStoreSavePersistsRecord(t *testing.T) {
 	}
 	if recent[0].RecordID != rec.RecordID {
 		t.Fatalf("expected record id %q, got %q", rec.RecordID, recent[0].RecordID)
+	}
+	if recent[0].CanonicalizationAlgorithm != CanonicalizationJCS {
+		t.Fatalf("expected canonicalization algorithm %q, got %q", CanonicalizationJCS, recent[0].CanonicalizationAlgorithm)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -47,33 +48,8 @@ func (s *PGStore) Save(rec *Record) error {
 	cbFired := pgJSONOrNull(rec.CallbacksFired)
 	cbErrs := pgJSONOrNull(rec.CallbackErrors)
 	batchIDs := pgJSONOrNull(rec.BatchDPRIDs)
-
-	_, err := s.db.Exec(`
-		INSERT INTO dpr_records (
-			schema_version, fpl_version, car_version,
-			record_id, prev_record_hash, record_hash, hmac_signature,
-			agent_id, session_id, tool_id, intercept_adapter, execution_timeout_ms, principal_id_hash,
-			effect, matched_rule_id, reason_code, reason, denial_token,
-			incident_category, incident_severity,
-			policy_version, policy_source_type, policy_source_id,
-			args_structural_sig, arg_provenance, selector_snapshot,
-			hardening_mode, network_host_hash, network_port, network_resolved_ip_hash, network_audit_bypass, inference_model_rewrite_applied,
-			custom_operators_evaluated, operator_results, operator_registry_hash,
-			workflow_phase, phase_transition_record,
-			credential_brokered, credential_source, credential_scope,
-			execution_environment,
-			invoked_by_agent_id, invoked_by_dpr_id, inner_governance_dpr_id,
-			callbacks_fired, callback_errors,
-			degraded_mode,
-			batch_approval, batch_size, batch_dpr_ids, resolved_by_batch, batch_approval_id,
-			approval_envelope,
-			created_at
-		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
-			$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-			$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54
-		) ON CONFLICT (record_id) DO NOTHING`,
-		rec.SchemaVersion, rec.FPLVersion, rec.CARVersion,
+	args := []any{
+		rec.SchemaVersion, rec.FPLVersion, rec.CARVersion, rec.CanonicalizationAlgorithm,
 		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig,
 		rec.AgentID, rec.SessionID, rec.ToolID, rec.InterceptAdapter, rec.ExecutionTimeoutMS, rec.PrincipalIDHash,
 		rec.Effect, rec.MatchedRuleID, rec.ReasonCode, rec.Reason, rec.DenialToken,
@@ -91,7 +67,34 @@ func (s *PGStore) Save(rec *Record) error {
 		rec.BatchApproval, rec.BatchSize, batchIDs, rec.ResolvedByBatch, rec.BatchApprovalID,
 		rec.ApprovalEnvelope,
 		rec.CreatedAt.UTC(),
-	)
+	}
+	ph := make([]string, len(args))
+	for i := range args {
+		ph[i] = fmt.Sprintf("$%d", i+1)
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO dpr_records (
+			schema_version, fpl_version, car_version, canonicalization_algorithm,
+			record_id, prev_record_hash, record_hash, hmac_signature,
+			agent_id, session_id, tool_id, intercept_adapter, execution_timeout_ms, principal_id_hash,
+			effect, matched_rule_id, reason_code, reason, denial_token,
+			incident_category, incident_severity,
+			policy_version, policy_source_type, policy_source_id,
+			args_structural_sig, arg_provenance, selector_snapshot,
+			hardening_mode, network_host_hash, network_port, network_resolved_ip_hash, network_audit_bypass, inference_model_rewrite_applied,
+			custom_operators_evaluated, operator_results, operator_registry_hash,
+			workflow_phase, phase_transition_record,
+			credential_brokered, credential_source, credential_scope,
+			execution_environment,
+			invoked_by_agent_id, invoked_by_dpr_id, inner_governance_dpr_id,
+			callbacks_fired, callback_errors,
+			degraded_mode,
+			batch_approval, batch_size, batch_dpr_ids, resolved_by_batch, batch_approval_id,
+			approval_envelope,
+			created_at
+		) VALUES (`+strings.Join(ph, ",")+`) ON CONFLICT (record_id) DO NOTHING`,
+		args...)
 	return err
 }
 
@@ -221,6 +224,7 @@ const pgSelectCols = `schema_version, fpl_version, car_version,
 	incident_category, incident_severity,
 	policy_version, policy_source_type, policy_source_id,
 	args_structural_sig, arg_provenance, selector_snapshot,
+	canonicalization_algorithm,
 	hardening_mode, network_host_hash, network_port, network_resolved_ip_hash, network_audit_bypass, inference_model_rewrite_applied,
 	custom_operators_evaluated, operator_results, operator_registry_hash,
 	workflow_phase, phase_transition_record,
@@ -241,6 +245,7 @@ func pgMigrate(db *sql.DB) error {
 		schema_version             TEXT NOT NULL DEFAULT 'dpr/1.0',
 		fpl_version                TEXT DEFAULT '',
 		car_version                TEXT DEFAULT '',
+		canonicalization_algorithm TEXT DEFAULT '',
 		record_id                  TEXT NOT NULL UNIQUE,
 		prev_record_hash           TEXT NOT NULL,
 		record_hash                TEXT NOT NULL,
@@ -299,6 +304,7 @@ func pgMigrate(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_dpr_incident ON dpr_records(incident_category, incident_severity);
 	CREATE INDEX IF NOT EXISTS idx_dpr_record_hash ON dpr_records(record_hash);
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS execution_timeout_ms INTEGER DEFAULT 0;
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS canonicalization_algorithm TEXT DEFAULT '';
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS hardening_mode TEXT DEFAULT '';
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS network_host_hash TEXT DEFAULT '';
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS network_port INTEGER DEFAULT 0;
@@ -317,7 +323,7 @@ func pgScanRecords(rows *sql.Rows) ([]*Record, error) {
 		var createdAt time.Time
 		var argProv, selSnap, custOps, opRes, cbFired, cbErrs, batchIDs, approvalEnvelope sql.NullString
 		if err := rows.Scan(
-			&r.SchemaVersion, &r.FPLVersion, &r.CARVersion,
+			&r.SchemaVersion, &r.FPLVersion, &r.CARVersion, &r.CanonicalizationAlgorithm,
 			&r.RecordID, &r.PrevRecordHash, &r.RecordHash, &r.HMACSig,
 			&r.AgentID, &r.SessionID, &r.ToolID, &r.InterceptAdapter, &r.ExecutionTimeoutMS, &r.PrincipalIDHash,
 			&r.Effect, &r.MatchedRuleID, &r.ReasonCode, &r.Reason, &r.DenialToken,
