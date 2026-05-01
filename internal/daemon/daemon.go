@@ -5,12 +5,14 @@ package daemon
 import (
 	"context"
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -605,6 +607,12 @@ func (d *Daemon) start() error {
 		return fmt.Errorf("load DPR HMAC key: %w", err)
 	}
 
+	// Load or create DPR Ed25519 signing keypair (for tamper-evident receipts).
+	signPriv, signPub, err := d.loadOrCreateDPRSigningKey()
+	if err != nil {
+		return fmt.Errorf("load DPR signing key: %w", err)
+	}
+
 	sessionManager := session.NewManager()
 	dailyCostPath := filepath.Join(d.cfg.DataDir, "session_daily_costs.db")
 	if dailyStore, err := session.NewSQLiteDailyCostStore(dailyCostPath); err != nil {
@@ -764,6 +772,8 @@ func (d *Daemon) start() error {
 		PolicySourceID:          d.policySourceID,
 		StrictModelVerification: d.cfg.StrictPreflight,
 		HMACKey:                 hmacKey,
+		SigningPrivKey:          signPriv,
+		SigningPubKey:           signPub,
 		Log:                     d.log,
 	})
 	d.pipeline = pipeline
@@ -942,6 +952,43 @@ func (d *Daemon) loadOrCreateDPRHMACKey() ([]byte, error) {
 		zap.String("path", keyPath),
 		zap.String("key_prefix", hex.EncodeToString(buf[:4])))
 	return buf, nil
+}
+
+func (d *Daemon) loadOrCreateDPRSigningKey() ([]byte, []byte, error) {
+	// Persisted as base64-encoded private key in data dir: faramesh.ed25519.key
+	keyPath := filepath.Join(d.cfg.DataDir, "faramesh.ed25519.key")
+	pubPath := filepath.Join(d.cfg.DataDir, "faramesh.ed25519.pub")
+	if existing, err := os.ReadFile(keyPath); err == nil {
+		// decode base64
+		priv, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(existing)))
+		if err != nil {
+			return nil, nil, fmt.Errorf("decode persisted ed25519 key: %w", err)
+		}
+		if len(priv) != ed25519.PrivateKeySize {
+			return nil, nil, fmt.Errorf("invalid persisted ed25519 private key size: %d", len(priv))
+		}
+		pub := priv[32:]
+		d.log.Info("loaded persisted DPR Ed25519 key", zap.String("path", keyPath))
+		return priv, pub, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
+	}
+
+	// Generate new keypair and persist
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Write private key as base64
+	enc := base64.StdEncoding.EncodeToString(priv)
+	if err := os.WriteFile(keyPath, []byte(enc), 0o600); err != nil {
+		return nil, nil, err
+	}
+	// Write public key for convenience
+	encPub := base64.StdEncoding.EncodeToString(pub)
+	_ = os.WriteFile(pubPath, []byte(encPub), 0o644)
+	d.log.Info("generated and persisted DPR Ed25519 key", zap.String("path", keyPath))
+	return priv, pub, nil
 }
 
 func (d *Daemon) handleHealthz(w http.ResponseWriter, _ *http.Request) {
