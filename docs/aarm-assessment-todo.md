@@ -11,13 +11,16 @@ This checklist converts `aarm-assessment-faramesh-labs.md` into actionable items
 
 ## MUST (technical)
 
-- [🔁] R5-T: Tamper-Evident Receipts — migrate DPR signing to asymmetric keys (Ed25519), implement canonicalization (JCS/CBOR), and expose public keys for offline verification
+- [✅] R5-T: Tamper-Evident Receipts — migrate DPR signing to asymmetric keys (Ed25519), implement canonicalization (JCS/CBOR), and expose public keys for offline verification
   - Subtasks:
-    - [🔁] Add Ed25519 signature fields to `Record` (signature, signature_algorithm, signer_public_key) — added.
-    - [🔁] Implement Ed25519 sign/verify scaffold in `internal/core/dpr/signing.go` — added (uses existing canonical form for initial rollout).
-    - [⬜] Replace/customize canonicalization with JCS (RFC 8785) implementation and re-sign DPRs.
-    - [⬜] Update CLI/tools (`cmd/faramesh/audit*`, `cmd/faramesh/verify.go`) to verify Ed25519-signed DPRs and to publish/serve public keys (read-only endpoint or file in `data/keys/`).
-    - [⬜] Migration notes: keep HMAC field during transition; toolchain must verify both kinds while migrating historical records.
+    - [✅] Add Ed25519 signature fields to `Record` (signature, signature_algorithm, signer_public_key).
+    - [✅] Implement Ed25519 sign/verify scaffold in `internal/core/dpr/signing.go`.
+    - [✅] Implement JCS canonicalization (RFC 8785); record-scoped algorithm; default for new records.
+    - [✅] CLI verification/key publishing: `internal/core/dpr/verify.go` + `internal/core/dpr/kms_provider.go`.
+    - [✅] Key rotation CLI: `faramesh key rotate dpr` (--generate, --new-key-file, --apply, dry-run default).
+    - [✅] Signed migration report: `faramesh compliance resign --report`, `faramesh compliance verify-report`.
+    - [✅] Migration notes: HMAC retained for backward compatibility during rollout.
+    - [✅] KMS provider registry: pluggable infrastructure for community providers (AWS KMS, GCP KMS, Azure, etc.).
 
 - [⬜] R4-T: Authorization Decisions — implement `MODIFY`, `STEP_UP`, and DEFER cascade tracking
   - Subtasks:
@@ -41,17 +44,58 @@ This checklist converts `aarm-assessment-faramesh-labs.md` into actionable items
 
 ---
 
-## Notes / Current decisions
+## Implementation Summary
 
-- We implemented Ed25519 fields and a signing/verification scaffold using the existing canonical bytes. This allows asymmetric signatures to be produced and verified during rollout while we implement full JCS canonicalization.
-- HMAC remains supported for backward compatibility and migration tooling must accept both HMAC and asymmetric signatures until records are reissued or a migration policy is agreed.
+### R5-T: Tamper-Evident Receipts (✅ Complete)
+
+**Files Added/Modified:**
+- Core: `internal/core/dpr/signing.go`, `internal/core/dpr/signer.go`, `internal/core/dpr/kms_signer.go`, `internal/core/dpr/kms_provider.go`, `internal/core/dpr/kms_provider_init.go`, `internal/core/dpr/verify.go`, `internal/core/dpr/report.go`
+- Canonicalization: `internal/core/canonicalize/jcs.go` + tests
+- Pipeline: `internal/core/pipeline.go` (SetSigner, prefer Signer over raw keys)
+- Daemon: `internal/daemon/daemon.go` (DPRSigner config, load Signer)
+- CLI: `cmd/faramesh/key_rotate.go`, `cmd/faramesh/compliance.go` (resign/verify-report)
+- Docs: `docs/R4_IMPLEMENTATION_PLAN.md`
+
+**Key Design:**
+- Record-scoped `CanonicalizationAlgorithm`; JCS default for new records.
+- Pluggable KMS provider registry (`RegisterKMSProvider`) for extensibility.
+- Built-in providers: `file://` (on-disk) and `localkms://` (on-prem KMS).
+- Community-contributed providers (AWS KMS, GCP KMS, Azure, etc.) can be added via `dpr.RegisterKMSProvider()`.
+- Signed migration reports enable operator audit trails.
+- Ed25519 verification tied to canonical bytes and record hash validity.
+
+**Backward Compatibility:**
+- HMAC field retained; toolchain verifies both during transition.
+- Legacy records treated as LegacyJSON canonicalization.
+
+### R4-T: Authorization Decisions (⬜ Next Priority)
+
+Plan: MODIFY effect (workflow branching), STEP_UP effect (elevated approvals), DEFER cascade (dependency tracking).
+
+### R7-T: Semantic Distance Tracking (⬜ Future)
+
+Plan: Embeddings provider abstraction, cosine similarity, drift detection against known-safe sequences.
 
 ---
 
-If you'd like, I will:
+## Community Provider Integration
 
-1. Wire Ed25519 signing into the DPR write path (non-blocking fallback to HMAC if no key provided). (next step)
-2. Add minimal CLI flags / data-dir persistence for a daemon Ed25519 key (optional; recommended for production).
-3. Start a branch `feat/aarm-r5-ed25519` and open a PR with tests and docs.
+To add a new KMS provider (e.g., AWS KMS):
 
-Tell me which next action to take (I can start wiring signing into record writes now).
+1. Create provider package with factory function implementing:
+   ```go
+   func NewAWSKMSSigner(uri, dataDir string) (dpr.Signer, error) { ... }
+   ```
+
+2. Register in `init()`:
+   ```go
+   func init() {
+       dpr.RegisterKMSProvider("aws-kms", NewAWSKMSSigner)
+   }
+   ```
+
+3. URI format: `aws-kms://alias/key-alias` or `aws-kms://arn:aws:kms:...`
+
+4. Submit PR with tests and docs.
+
+**Next Steps:** Begin R4-T (MODIFY/STEP_UP/DEFER effects).
