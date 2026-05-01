@@ -552,7 +552,8 @@ The public Faramesh help surface is tiered:
 | `faramesh detect` | Detect local framework/runtime characteristics |
 | `faramesh init` | Scaffold baseline Faramesh files in a project |
 | `faramesh explain` | Explain a decision record in detail |
-| `faramesh compliance` | Export compliance-oriented artifacts |
+| `faramesh compliance` | Compliance evidence workflows (`export`, `resign`) |
+| `faramesh key` | Runtime signing key inspection/export |
 | `faramesh fleet` | Multi-instance fleet operations |
 | `faramesh delegate` | Agent-to-agent delegation chains |
 | `faramesh federation` | Cross-organization federation and trust relationships |
@@ -562,7 +563,9 @@ The public Faramesh help surface is tiered:
 
 `chaos-test`, `compensate`, `demo`, `hub`, `model`, `ops`, `sbom`, `session`, `sign`, `verify`
 
-Operator note: set `faramesh serve --dpr-hmac-key <secret>` from stable secret storage in production. If omitted, Faramesh generates an ephemeral DPR HMAC key per daemon run, so HMAC signatures are not stable across restarts.
+Operator note: set `faramesh serve --dpr-hmac-key <secret>` from stable secret storage in production. DPR records are signed with Ed25519 (persisted keypair in runtime data dir), while HMAC is still used for approval-envelope integrity and compatibility paths.
+
+Migration note: `faramesh compliance resign` supports dry-run/apply backfill of Ed25519 signatures for historical records after enabling canonicalized signing in a live environment.
 
 ## Architecture
 

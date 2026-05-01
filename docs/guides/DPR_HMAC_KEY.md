@@ -1,17 +1,50 @@
-# DPR HMAC key — production operations
+# DPR signing keys — production operations
 
-The daemon signs Decision Persistence Record (DPR) payloads with an HMAC key so approvals and audit evidence are tamper-evident. How you manage that key determines whether signatures survive restarts and who can rely on them.
+Historical note: this file started as an HMAC-only runbook. Faramesh now uses
+Ed25519 for DPR record signatures and keeps HMAC for approval-envelope
+integrity/compatibility workflows.
 
 ## Default behavior
 
-- If you **do not** pass `--dpr-hmac-key`, the daemon generates a random key and **persists** it under the data directory as `faramesh.hmac.key` (mode `0600`) so signatures remain stable across process restarts on the same host.
-- If you **do** pass `--dpr-hmac-key`, that exact secret is used; store it in a secrets manager or sealed deployment config, not in shell history.
+- DPR Ed25519 keypair is persisted under runtime data directory:
+	- `faramesh.ed25519.key` (private, mode `0600`)
+	- `faramesh.ed25519.pub` (public)
+	- `faramesh.ed25519.meta.json` (key metadata)
+- HMAC key is persisted at `faramesh.hmac.key` (mode `0600`) unless supplied explicitly via `--dpr-hmac-key`.
+- `--dpr-hmac-key` should come from secret management, not shell history.
 
 ## Operational requirements
 
-1. **Back up** `faramesh.hmac.key` with the same care as the WAL and SQLite DPR store. Losing the key does not stop enforcement, but it breaks verification of historical signatures that were produced with the old key.
-2. **Rotate** by deploying a new key file (or new `--dpr-hmac-key` value) during a maintenance window; expect a clean break for signature continuity on old records unless you keep old keys for verification tooling.
-3. **Multi-instance** deployments must share the **same** HMAC key if each instance must verify approvals or envelopes produced by another (for example Redis-backed defer with cross-node approval validation).
+1. **Back up** Ed25519 private key and HMAC key with WAL/DB backups.
+2. **Rotate** keys intentionally and keep old public/HMAC material if you need to verify historical evidence.
+3. **Multi-instance** deployments must use a consistent key-management strategy across nodes:
+	- shared verification trust for Ed25519 public keys,
+	- shared HMAC secret for approval-envelope compatibility paths.
+
+## Migration / re-sign workflow
+
+Use `compliance resign` to backfill Ed25519 signatures for historical records.
+
+Dry-run:
+
+```bash
+faramesh compliance resign --data-dir ~/.faramesh/runtime/data
+```
+
+Apply:
+
+```bash
+faramesh compliance resign --data-dir ~/.faramesh/runtime/data --apply
+```
+
+Scope controls:
+
+```bash
+faramesh compliance resign --data-dir ~/.faramesh/runtime/data --limit 5000 --only-missing
+```
+
+The command replays validated WAL records, updates signature fields in DPR store,
+and verifies chain integrity after apply.
 
 ## Standing grant admin token (related)
 
@@ -24,5 +57,7 @@ Without any of these configured, standing grant **SDK endpoints are disabled** (
 
 ## Related commands
 
+- `faramesh key export dpr` — print DPR public key (use `--verbose` for metadata).
 - `faramesh audit verify` — WAL chain replay vs SQLite spot checks.
 - `faramesh audit wal-inspect` — frame version distribution for migration planning.
+- `faramesh audit show <action-id>` — per-record cryptographic status (`record_hash_valid`, `signature_valid`).

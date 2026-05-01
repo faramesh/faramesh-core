@@ -85,6 +85,43 @@ faramesh audit verify /var/lib/faramesh/faramesh.db
 
 For programmatic use, `dpr.WAL.ReplayValidated` (package `internal/core/dpr`) applies the same chain rules as `faramesh audit verify` on a `.wal` file.
 
+## Verify cryptographic integrity in audit views
+
+Use `audit show` for per-record cryptographic status:
+
+```bash
+faramesh audit show <action-id>
+```
+
+Look for these fields in `dpr_record` output:
+
+- `canonicalization_algorithm`
+- `record_hash_valid`
+- `signature_algorithm`
+- `signature_valid`
+
+`record_hash_valid=true` and `signature_valid=true` indicate the stored record hash and Ed25519 signature both verify for that action.
+
+## Re-sign historical records (migration hardening)
+
+When rolling out canonicalized Ed25519 signing on an existing deployment, run a dry-run first:
+
+```bash
+faramesh compliance resign --data-dir ~/.faramesh/runtime/data
+```
+
+Apply signature backfill after review:
+
+```bash
+faramesh compliance resign --data-dir ~/.faramesh/runtime/data --apply
+```
+
+Optional controls:
+
+```bash
+faramesh compliance resign --data-dir ~/.faramesh/runtime/data --limit 5000 --only-missing
+```
+
 ## Export metrics to Datadog, Grafana, and New Relic
 
 Faramesh exposes Prometheus-compatible metrics at `/metrics` when `--metrics-port` is enabled.
