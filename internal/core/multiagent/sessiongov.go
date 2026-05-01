@@ -80,10 +80,10 @@ func NewSessionGovernor() *SessionGovernor {
 		namespaces: make(map[string]StateNamespace),
 		keySchemas: make(map[string]KeySchema),
 		piiPatterns: []*regexp.Regexp{
-			regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b`),                            // email
-			regexp.MustCompile(`\b\d{3}[-.]?\d{2}[-.]?\d{4}\b`),                                                    // SSN-like
-			regexp.MustCompile(`\b(?:\d{4}[-\s]?){3}\d{4}\b`),                                                      // credit card-like
-			regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`),                                          // IPv4
+			regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b`), // email
+			regexp.MustCompile(`\b\d{3}[-.]?\d{2}[-.]?\d{4}\b`),                       // SSN-like
+			regexp.MustCompile(`\b(?:\d{4}[-\s]?){3}\d{4}\b`),                         // credit card-like
+			regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`),              // IPv4
 		},
 		secretPattern: regexp.MustCompile(`(?i)(password|secret|token|api[_-]?key|private[_-]?key|credentials?)\s*[=:]\s*\S+`),
 	}

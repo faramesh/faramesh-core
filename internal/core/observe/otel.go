@@ -52,11 +52,11 @@ type SpanEvent struct {
 
 // Tracer creates and manages spans for governance operations.
 type Tracer struct {
-	mu        sync.Mutex
+	mu          sync.Mutex
 	serviceName string
-	exporter  SpanExporter
-	spans     []*Span
-	enabled   bool
+	exporter    SpanExporter
+	spans       []*Span
+	enabled     bool
 }
 
 // SpanExporter sends completed spans to a backend.
@@ -86,9 +86,9 @@ type traceKey struct{}
 
 // TraceContext carries trace information through the pipeline.
 type TraceContext struct {
-	TraceID  string
-	SpanID   string
-	AgentID  string
+	TraceID string
+	SpanID  string
+	AgentID string
 }
 
 // WithTrace attaches trace context to a Go context.

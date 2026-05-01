@@ -10,19 +10,19 @@ import (
 
 // DarwinProxyConfig configures macOS network interception.
 type DarwinProxyConfig struct {
-	ProxyPort int    // Faramesh proxy listen port (default: 18443)
-	UsePF     bool   // Use PF rules (requires sudo)
-	UseDYLD   bool   // Use DYLD_INSERT_LIBRARIES (spawned processes only)
+	ProxyPort int  // Faramesh proxy listen port (default: 18443)
+	UsePF     bool // Use PF rules (requires sudo)
+	UseDYLD   bool // Use DYLD_INSERT_LIBRARIES (spawned processes only)
 }
 
 // SetupDarwinProxy configures macOS network interception for the child process.
 //
 // Three strategies, in order of preference:
-//   1. Proxy env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY) — zero privilege,
-//      works for Python/Node agents that respect proxy settings.
-//   2. DYLD_INSERT_LIBRARIES — libc-level interception, no entitlement needed,
-//      only works for processes spawned by faramesh run.
-//   3. PF rules — kernel-level redirect, requires sudo.
+//  1. Proxy env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY) — zero privilege,
+//     works for Python/Node agents that respect proxy settings.
+//  2. DYLD_INSERT_LIBRARIES — libc-level interception, no entitlement needed,
+//     only works for processes spawned by faramesh run.
+//  3. PF rules — kernel-level redirect, requires sudo.
 func SetupDarwinProxy(cfg DarwinProxyConfig) ([]string, error) {
 	if cfg.ProxyPort == 0 {
 		cfg.ProxyPort = 18443

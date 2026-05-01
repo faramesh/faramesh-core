@@ -97,7 +97,7 @@ FROM standing_grants`)
 	for rows.Next() {
 		var (
 			id, agentID, sessionID, toolPat, polVer, ruleID, issuedBy string
-			expiresAt, createdAt, maxUses, uses                     int64
+			expiresAt, createdAt, maxUses, uses                       int64
 		)
 		if err := rows.Scan(&id, &agentID, &sessionID, &toolPat, &polVer, &ruleID,
 			&expiresAt, &maxUses, &uses, &issuedBy, &createdAt); err != nil {

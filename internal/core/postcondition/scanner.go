@@ -29,16 +29,16 @@ const (
 type Category string
 
 const (
-	CatSecretsAll     Category = "secrets_all"
-	CatSecretAWSKey   Category = "secret_aws_key"
-	CatSecretGitHub   Category = "secret_github_pat"
-	CatSecretGCPSA    Category = "secret_gcp_sa"
-	CatSecretAzure    Category = "secret_azure_conn"
-	CatSecretDBURI    Category = "secret_database_uri"
-	CatSecretSSHKey   Category = "secret_ssh_key"
-	CatSecretOpenAI   Category = "secret_openai_key"
+	CatSecretsAll      Category = "secrets_all"
+	CatSecretAWSKey    Category = "secret_aws_key"
+	CatSecretGitHub    Category = "secret_github_pat"
+	CatSecretGCPSA     Category = "secret_gcp_sa"
+	CatSecretAzure     Category = "secret_azure_conn"
+	CatSecretDBURI     Category = "secret_database_uri"
+	CatSecretSSHKey    Category = "secret_ssh_key"
+	CatSecretOpenAI    Category = "secret_openai_key"
 	CatSecretAnthropic Category = "secret_anthropic_key"
-	CatSecretBearer   Category = "secret_bearer_token"
+	CatSecretBearer    Category = "secret_bearer_token"
 
 	CatPIIEmail      Category = "pii_email"
 	CatPIIPhone      Category = "pii_phone"
@@ -53,11 +53,11 @@ const (
 
 // ScanRule is a single post-condition scanning rule from the policy.
 type ScanRule struct {
-	Pattern     string   `yaml:"pattern"`      // regex pattern (mutually exclusive with Category)
-	Category    Category `yaml:"category"`      // named pattern category
-	Action      Action   `yaml:"action"`        // what to do on match
-	Replacement string   `yaml:"replacement"`   // custom replacement text (for redact)
-	Reason      string   `yaml:"reason"`        // human-readable reason for deny/warn
+	Pattern     string   `yaml:"pattern"`     // regex pattern (mutually exclusive with Category)
+	Category    Category `yaml:"category"`    // named pattern category
+	Action      Action   `yaml:"action"`      // what to do on match
+	Replacement string   `yaml:"replacement"` // custom replacement text (for redact)
+	Reason      string   `yaml:"reason"`      // human-readable reason for deny/warn
 }
 
 // PostRule is a post-condition rule block from the policy.
@@ -74,11 +74,11 @@ type PostMatch struct {
 
 // ScanResult is the outcome of scanning a tool output.
 type ScanResult struct {
-	Outcome    Outcome       // PASS, REDACTED, or DENIED
-	Output     string        // the (possibly redacted) output
-	ReasonCode string        // machine-readable reason if denied
-	Reason     string        // human-readable reason if denied
-	Matches    []ScanMatch   // all pattern matches found
+	Outcome    Outcome     // PASS, REDACTED, or DENIED
+	Output     string      // the (possibly redacted) output
+	ReasonCode string      // machine-readable reason if denied
+	Reason     string      // human-readable reason if denied
+	Matches    []ScanMatch // all pattern matches found
 }
 
 // Outcome is the post-condition scan result.
@@ -93,11 +93,11 @@ const (
 
 // ScanMatch records a single pattern match in the output.
 type ScanMatch struct {
-	Category    string `json:"category"`
-	Action      Action `json:"action"`
-	ReasonCode  string `json:"reason_code"`
-	Offset      int    `json:"offset"`
-	Length      int    `json:"length"`
+	Category   string `json:"category"`
+	Action     Action `json:"action"`
+	ReasonCode string `json:"reason_code"`
+	Offset     int    `json:"offset"`
+	Length     int    `json:"length"`
 }
 
 // Scanner holds compiled post-condition rules and executes output scanning.
@@ -178,7 +178,7 @@ func (s *Scanner) Scan(toolID, output string) ScanResult {
 				Action:     cs.action,
 				ReasonCode: cs.reasonCode,
 				Offset:     loc[0],
-				Length:      loc[1] - loc[0],
+				Length:     loc[1] - loc[0],
 			})
 		}
 

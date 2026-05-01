@@ -460,14 +460,14 @@ func emitPackMetadata(pv *hub.PackVersionResponse, preview bool) error {
 }
 
 type installedPackRow struct {
-	Name         string `json:"name"`
-	Version      string `json:"version"`
-	TrustTier    string `json:"trust_tier,omitempty"`
-	Description  string `json:"description,omitempty"`
-	AppliedMode  string `json:"applied_mode,omitempty"`
-	Disabled     bool   `json:"disabled"`
-	HasFPL       bool   `json:"has_policy_fpl,omitempty"`
-	HasCompiled  bool   `json:"has_policy_compiled,omitempty"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	TrustTier   string `json:"trust_tier,omitempty"`
+	Description string `json:"description,omitempty"`
+	AppliedMode string `json:"applied_mode,omitempty"`
+	Disabled    bool   `json:"disabled"`
+	HasFPL      bool   `json:"has_policy_fpl,omitempty"`
+	HasCompiled bool   `json:"has_policy_compiled,omitempty"`
 }
 
 func listInstalledPacks(root string) ([]installedPackRow, error) {
@@ -493,14 +493,14 @@ func listInstalledPacks(root string) ([]installedPackRow, error) {
 		_, hasFPL := os.Stat(filepath.Join(dir, "policy.fpl"))
 		_, hasCompiled := os.Stat(filepath.Join(dir, "policy.compiled.yaml"))
 		rows = append(rows, installedPackRow{
-			Name:         man.Name,
-			Version:      man.Version,
-			TrustTier:    man.TrustTier,
-			Description:  man.Description,
-			AppliedMode:  man.AppliedMode,
-			Disabled:     disabledErr == nil,
-			HasFPL:       hasFPL == nil,
-			HasCompiled:  hasCompiled == nil,
+			Name:        man.Name,
+			Version:     man.Version,
+			TrustTier:   man.TrustTier,
+			Description: man.Description,
+			AppliedMode: man.AppliedMode,
+			Disabled:    disabledErr == nil,
+			HasFPL:      hasFPL == nil,
+			HasCompiled: hasCompiled == nil,
 		})
 		return nil
 	})

@@ -12,33 +12,33 @@ import (
 
 // NetworkReachingTools is the default set of tools that reach the network.
 var NetworkReachingTools = map[string]bool{
-	"http/request":   true,
-	"api/call":       true,
-	"api/post":       true,
-	"api/get":        true,
-	"email/send":     true,
-	"webhook/call":   true,
-	"net/connect":    true,
-	"db/query":       true,
-	"db/write":       true,
-	"upload":         true,
-	"shell/exec":     true,
+	"http/request": true,
+	"api/call":     true,
+	"api/post":     true,
+	"api/get":      true,
+	"email/send":   true,
+	"webhook/call": true,
+	"net/connect":  true,
+	"db/query":     true,
+	"db/write":     true,
+	"upload":       true,
+	"shell/exec":   true,
 }
 
 // BootstrapState tracks whether an agent has been governed before network access.
 type BootstrapState struct {
 	AgentID       string    `json:"agent_id"`
-	Governed      bool      `json:"governed"`       // has govern() been called?
+	Governed      bool      `json:"governed"` // has govern() been called?
 	FirstGoverned time.Time `json:"first_governed"`
-	Violations    int       `json:"violations"`     // pre-governance network attempts
+	Violations    int       `json:"violations"` // pre-governance network attempts
 }
 
 // BootstrapEnforcer enforces governance-before-network policy.
 type BootstrapEnforcer struct {
-	mu               sync.Mutex
-	agents           map[string]*BootstrapState
-	networkTools     map[string]bool
-	enforceMode      bool // false = log-only, true = deny
+	mu           sync.Mutex
+	agents       map[string]*BootstrapState
+	networkTools map[string]bool
+	enforceMode  bool // false = log-only, true = deny
 }
 
 // NewBootstrapEnforcer creates a bootstrap enforcer.

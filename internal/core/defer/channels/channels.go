@@ -127,8 +127,8 @@ func (c *TeamsChannel) Send(ctx context.Context, n Notification) error {
 	card := map[string]any{
 		"@type":      "MessageCard",
 		"@context":   "http://schema.org/extensions",
-		"themeColor":  teamsColor(n.Priority),
-		"summary":     "Faramesh DEFER Request",
+		"themeColor": teamsColor(n.Priority),
+		"summary":    "Faramesh DEFER Request",
 		"sections": []map[string]any{
 			{
 				"activityTitle": fmt.Sprintf("DEFER: %s → %s", n.AgentID, n.ToolID),
@@ -142,13 +142,13 @@ func (c *TeamsChannel) Send(ctx context.Context, n Notification) error {
 		},
 		"potentialAction": []map[string]any{
 			{
-				"@type": "HttpPOST",
-				"name":  "Approve",
+				"@type":  "HttpPOST",
+				"name":   "Approve",
 				"target": n.ApproveURL,
 			},
 			{
-				"@type": "HttpPOST",
-				"name":  "Deny",
+				"@type":  "HttpPOST",
+				"name":   "Deny",
 				"target": n.DenyURL,
 			},
 		},

@@ -301,4 +301,3 @@ func hashChildren(left, right []byte) []byte {
 	h.Write(right)
 	return h.Sum(nil)
 }
-

@@ -11,12 +11,12 @@ import (
 
 // AzureKeyVaultConfig configures the Azure Key Vault broker.
 type AzureKeyVaultConfig struct {
-	VaultURL string // e.g. https://myvault.vault.azure.net
-	TenantID string
-	ClientID string
+	VaultURL     string // e.g. https://myvault.vault.azure.net
+	TenantID     string
+	ClientID     string
 	ClientSecret string
-	Endpoint string // override for testing
-	Timeout  time.Duration
+	Endpoint     string // override for testing
+	Timeout      time.Duration
 }
 
 func (c *AzureKeyVaultConfig) defaults() {
@@ -158,7 +158,10 @@ type azureSecretResponse struct {
 	ID    string `json:"id"`
 }
 
-type stringReaderType struct{ s string; i int }
+type stringReaderType struct {
+	s string
+	i int
+}
 
 func (r *stringReaderType) Read(p []byte) (int, error) {
 	if r.i >= len(r.s) {

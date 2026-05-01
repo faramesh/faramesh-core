@@ -24,8 +24,8 @@ type PackVersionResponse struct {
 	Name       string `json:"name"`
 	Version    string `json:"version"`
 
-	Description         string                 `json:"description,omitempty"`
-	PolicyYAML          string                 `json:"policy_yaml"`
+	Description string `json:"description,omitempty"`
+	PolicyYAML  string `json:"policy_yaml"`
 	// PolicyFPL is optional authored FPL; when set, install writes policy.fpl beside policy.yaml.
 	PolicyFPL           string                 `json:"policy_fpl,omitempty"`
 	SHA256Hex           string                 `json:"sha256_hex"`

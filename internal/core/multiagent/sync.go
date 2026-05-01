@@ -15,7 +15,7 @@ import (
 type AgentState int
 
 const (
-	StateRunning   AgentState = iota
+	StateRunning AgentState = iota
 	StateCompleted
 	StateFailed
 	StateCancelled
@@ -41,11 +41,11 @@ func (s AgentState) String() string {
 
 // SyncPolicy defines the completion requirements for a sync gate.
 type SyncPolicy struct {
-	RequiredAgents     []string `json:"required_agents"`       // must complete
-	MinCompletionFrac  float64  `json:"min_completion_frac"`   // e.g. 0.75 = 75%
-	Timeout            time.Duration `json:"timeout"`
-	OnTimeout          string   `json:"on_timeout"`            // "proceed" or "deny"
-	CountFailedAsComplete bool  `json:"count_failed_as_complete"` // include failed in fraction
+	RequiredAgents        []string      `json:"required_agents"`     // must complete
+	MinCompletionFrac     float64       `json:"min_completion_frac"` // e.g. 0.75 = 75%
+	Timeout               time.Duration `json:"timeout"`
+	OnTimeout             string        `json:"on_timeout"`               // "proceed" or "deny"
+	CountFailedAsComplete bool          `json:"count_failed_as_complete"` // include failed in fraction
 }
 
 // SyncGate tracks parallel agent completion and enforces sync policies.
