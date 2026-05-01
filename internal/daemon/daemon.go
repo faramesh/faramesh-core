@@ -129,6 +129,9 @@ type Config struct {
 	RequireGovernanceBootstrap  bool
 	DPRHMACKey                  string
 	CanonicalizationAlgorithm   string
+	// DPRSigner configures which signing backend to use for DPR records.
+	// Supported values: "" (default = on-disk keypair), "file", or a KMS URI like "kms://...".
+	DPRSigner                   string
 	TLSCertFile                 string
 	TLSKeyFile                  string
 	ClientCAFile                string
@@ -789,6 +792,40 @@ func (d *Daemon) start() error {
 		Log:                       d.log,
 	})
 	d.pipeline = pipeline
+	// Configure optional DPR Signer backend per R4 design. If DPRSigner is
+	// empty or "file", prefer the on-disk keypair already present under
+	// DataDir. Future work: support KMS URIs (kms://...).
+	ds := strings.TrimSpace(d.cfg.DPRSigner)
+	if ds == "" || ds == "file" {
+		privPath := filepath.Join(d.cfg.DataDir, "faramesh.ed25519.key")
+		pubPath := filepath.Join(d.cfg.DataDir, "faramesh.ed25519.pub")
+		if privBytes, err := os.ReadFile(privPath); err == nil {
+			if pubBytes, err := os.ReadFile(pubPath); err == nil {
+				fs := dpr.NewFileSigner(privBytes, pubBytes)
+				pipeline.SetSigner(fs)
+				d.log.Info("configured file-based DPR signer from data dir", zap.String("data_dir", d.cfg.DataDir))
+			} else {
+				d.log.Warn("DPR signer public key not found; continuing without signer", zap.String("pub_path", pubPath), zap.Error(err))
+			}
+		} else {
+			d.log.Warn("DPR signer private key not found; continuing without signer", zap.String("priv_path", privPath), zap.Error(err))
+		}
+	} else if strings.HasPrefix(ds, "localkms://") {
+		// localkms://<keyid>
+		keyID := strings.TrimPrefix(ds, "localkms://")
+		if keyID != "" {
+			if lks, err := dpr.NewLocalKMSSigner(d.cfg.DataDir, keyID); err == nil {
+				pipeline.SetSigner(lks)
+				d.log.Info("configured local-kms DPR signer", zap.String("key_id", keyID))
+			} else {
+				d.log.Warn("configure local-kms signer failed; continuing without signer", zap.Error(err))
+			}
+		} else {
+			d.log.Warn("localkms URI missing key id; continuing without signer", zap.String("dpr_signer", d.cfg.DPRSigner))
+		}
+	} else {
+		d.log.Info("DPR signer configured (non-file); KMS signer support is TODO", zap.String("dpr_signer", d.cfg.DPRSigner))
+	}
 	d.elevationEngine = elevationEngine
 	d.revocationMgr = revocationMgr
 	d.workloadProvider = workloadProvider

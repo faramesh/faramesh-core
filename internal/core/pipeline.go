@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -110,6 +111,7 @@ type Pipeline struct {
 	hmacKey                   []byte
 	signingPrivKey            []byte
 	signingPubKey             []byte
+	signer                    dpr.Signer
 	canonicalizationAlgorithm string
 	log                       *zap.Logger
 	artifacts                 atomic.Value // *policyArtifacts
@@ -225,6 +227,8 @@ func NewPipeline(cfg Config) *Pipeline {
 	if cfg.WAL == nil {
 		cfg.WAL = &dpr.NullWAL{}
 	}
+
+	// setter for optional Signer will be provided via SetSigner method.
 	if cfg.Sessions == nil {
 		cfg.Sessions = session.NewManager()
 	}
@@ -378,6 +382,13 @@ func (p *Pipeline) currentArtifacts() *policyArtifacts {
 		}
 	}
 	return buildPolicyArtifacts(currentEngine(p.engine))
+}
+
+// SetSigner configures an external Signer (KMS, HSM, or file-backed) for
+// use when signing DPR records. If not set, Pipeline falls back to using
+// the in-process `signingPrivKey`/`signingPubKey` bytes when available.
+func (p *Pipeline) SetSigner(s dpr.Signer) {
+	p.signer = s
 }
 
 // ApplyPolicyBundle atomically applies a new policy generation bundle.
@@ -1576,8 +1587,34 @@ func (p *Pipeline) buildRecordWithID(req CanonicalActionRequest, d Decision, arg
 	}
 
 	rec.ComputeHash()
-	// Prefer asymmetric Ed25519 signing when available; fall back to HMAC.
-	if len(p.signingPrivKey) > 0 && len(p.signingPubKey) > 0 {
+	// Prefer an injected Signer (KMS/HSM/file) when available; otherwise
+	// fall back to the in-process Ed25519 keypair or HMAC.
+	if p.signer != nil {
+		// Use the Signer to sign the canonical bytes and record the public key.
+		pub, perr := p.signer.PublicKey()
+		if perr == nil {
+			sig, serr := p.signer.Sign(rec.CanonicalBytes())
+			if serr == nil {
+				rec.Signature = base64.StdEncoding.EncodeToString(sig)
+				rec.SignatureAlg = "ed25519"
+				rec.SignerPublicKey = base64.StdEncoding.EncodeToString(pub)
+			} else {
+				p.log.Warn("external signer failed; falling back to HMAC if available", zap.Error(serr))
+				if len(p.hmacKey) > 0 {
+					m := hmac.New(sha256.New, p.hmacKey)
+					_, _ = m.Write([]byte(rec.RecordID + rec.RecordHash))
+					rec.HMACSig = fmt.Sprintf("%x", m.Sum(nil))
+				}
+			}
+		} else {
+			p.log.Warn("external signer public key unavailable; falling back to HMAC if available", zap.Error(perr))
+			if len(p.hmacKey) > 0 {
+				m := hmac.New(sha256.New, p.hmacKey)
+				_, _ = m.Write([]byte(rec.RecordID + rec.RecordHash))
+				rec.HMACSig = fmt.Sprintf("%x", m.Sum(nil))
+			}
+		}
+	} else if len(p.signingPrivKey) > 0 && len(p.signingPubKey) > 0 {
 		// Attempt Ed25519 signing. Use dpr.SignWithEd25519 which handles
 		// base64 encoding of signature and public key fields.
 		if err := rec.SignWithEd25519(ed25519.PrivateKey(p.signingPrivKey), ed25519.PublicKey(p.signingPubKey)); err != nil {

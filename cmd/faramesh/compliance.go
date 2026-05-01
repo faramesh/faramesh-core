@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/faramesh/faramesh-core/internal/core/dpr"
@@ -25,6 +28,8 @@ var (
 	complianceResignApply       bool
 	complianceResignLimit       int
 	complianceResignOnlyMissing bool
+	complianceResignReport      bool
+	complianceResignReportOut   string
 )
 
 var complianceCmd = &cobra.Command{
@@ -51,6 +56,7 @@ Default mode is dry-run. Use --apply to persist signature fields.`,
 func init() {
 	complianceCmd.AddCommand(complianceExportCmd)
 	complianceCmd.AddCommand(complianceResignCmd)
+	complianceCmd.AddCommand(complianceVerifyReportCmd)
 	complianceExportCmd.Flags().StringVar(&complianceExportWALPath, "wal", "", "path to DPR WAL file")
 	complianceExportCmd.Flags().StringVar(&complianceExportOutPath, "out", "", "output path for JSON bundle (default stdout)")
 	_ = complianceExportCmd.MarkFlagRequired("wal")
@@ -61,6 +67,8 @@ func init() {
 	complianceResignCmd.Flags().BoolVar(&complianceResignApply, "apply", false, "persist signature updates (default: dry-run)")
 	complianceResignCmd.Flags().IntVar(&complianceResignLimit, "limit", 0, "max records to inspect from WAL (0 = all)")
 	complianceResignCmd.Flags().BoolVar(&complianceResignOnlyMissing, "only-missing", true, "only sign records that do not already have ed25519 signatures")
+	complianceResignCmd.Flags().BoolVar(&complianceResignReport, "report", false, "generate signed migration report JSON")
+	complianceResignCmd.Flags().StringVar(&complianceResignReportOut, "report-out", "", "path to write signed report JSON (default: <data-dir>/compliance-reports/<report_id>.json)")
 }
 
 func runComplianceExport(cmd *cobra.Command, _ []string) error {
@@ -133,6 +141,14 @@ func runComplianceResign(cmd *cobra.Command, _ []string) error {
 	}
 	st := stats{total: len(records)}
 
+	reportEntries := make([]dpr.ResignReportRecord, 0, len(records))
+	var newSignerID string
+	// compute new signer id from current priv/pub
+	if len(pub) == ed25519.PublicKeySize {
+		sum := sha256.Sum256(pub)
+		newSignerID = hex.EncodeToString(sum[:])
+	}
+
 	for _, walRec := range records {
 		if walRec == nil || strings.TrimSpace(walRec.RecordID) == "" {
 			continue
@@ -164,12 +180,30 @@ func runComplianceResign(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("sign record %s: %w", dbRec.RecordID, err)
 		}
 		st.candidates++
+		// Track report entry
+		recEntry := dpr.ResignReportRecord{
+			RecordID: dbRec.RecordID,
+			OldHash:  dbRec.RecordHash,
+			NewHash:  clone.RecordHash,
+			ReSigned: false,
+			OldSignerID: "",
+			NewSignerID: newSignerID,
+		}
+		if dbRec.SignerPublicKey != "" {
+            if sid, err := dpr.ComputeSignerIDFromPubB64(dbRec.SignerPublicKey); err == nil {
+                recEntry.OldSignerID = sid
+            }
+        }
+
 		if !complianceResignApply {
+			reportEntries = append(reportEntries, recEntry)
 			continue
 		}
 		if err := store.UpdateSignature(clone.RecordID, clone.SignatureAlg, clone.Signature, clone.SignerPublicKey); err != nil {
 			return fmt.Errorf("update signature for %s: %w", clone.RecordID, err)
 		}
+		recEntry.ReSigned = true
+		reportEntries = append(reportEntries, recEntry)
 		st.updated++
 	}
 
@@ -193,8 +227,64 @@ func runComplianceResign(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Printf("compliance resign (%s): total=%d candidates=%d updated=%d already_signed=%d hash_mismatch=%d missing_in_db=%d db_mismatch=%d\n",
 		mode, st.total, st.candidates, st.updated, st.alreadySigned, st.hashMismatch, st.missingInDB, st.dbMismatch)
+
+	// Generate signed migration report if requested
+	if complianceResignReport {
+		report := dpr.ResignReport{
+			ReportID:  uuid.NewString(),
+			CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			CreatedBy: os.Getenv("USER"),
+			Records:   reportEntries,
+			Summary: map[string]int{
+				"total":      st.total,
+				"candidates": st.candidates,
+				"updated":    st.updated,
+			},
+		}
+		payload, err := report.MarshalWithoutSignature()
+		if err != nil {
+			return fmt.Errorf("marshal report payload: %w", err)
+		}
+		sig := ed25519.Sign(priv, payload)
+report.AttachOperatorSignature(sig, pub)
+
+		outPath := complianceResignReportOut
+		if strings.TrimSpace(outPath) == "" {
+			dir := filepath.Join(dataDir, "compliance-reports")
+			_ = os.MkdirAll(dir, 0o755)
+			outPath = filepath.Join(dir, report.ReportID+".json")
+		}
+		b, _ := json.MarshalIndent(report, "", "  ")
+		if err := os.WriteFile(outPath, b, 0o644); err != nil {
+			return fmt.Errorf("write report: %w", err)
+		}
+		fmt.Println("wrote signed report:", outPath)
+	}
 	return nil
 }
+
+var complianceVerifyReportCmd = &cobra.Command{
+	Use:   "verify-report",
+	Short: "Verify a signed resign report JSON",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		path := args[0]
+		bm, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read report: %w", err)
+		}
+		var report dpr.ResignReport
+		if err := json.Unmarshal(bm, &report); err != nil {
+			return fmt.Errorf("unmarshal report: %w", err)
+		}
+		if err := report.VerifyOperatorSignature(); err != nil {
+			return fmt.Errorf("verify report operator signature: %w", err)
+		}
+		fmt.Println("report signature OK")
+		return nil
+	},
+}
+
 
 func readRecordsFromWAL(path string) ([]*dpr.Record, error) {
 	w, err := dpr.OpenWAL(path)
