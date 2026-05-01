@@ -9,6 +9,7 @@ import (
 	"github.com/expr-lang/expr"
 	"github.com/expr-lang/expr/vm"
 
+	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/multiagent"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
 )
@@ -98,6 +99,9 @@ func (p *Pipeline) GovernOutput(req GovernOutputRequest) GovernOutputResult {
 	governor := p.aggGovernor
 	if governor == nil {
 		governor = multiagent.NewAggregationGovernor(multiagent.AggregatePolicy{})
+	}
+	if governor.SemanticDriftObserver() == nil {
+		governor.SetSemanticDriftObserver(observe.Default)
 	}
 
 	governedOutput, entities, err := governor.GovernOutput(aggregate)

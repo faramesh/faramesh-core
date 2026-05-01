@@ -118,6 +118,11 @@ const (
 	// PERMIT because an operator-registered standing grant matched and was consumed.
 	StandingApprovalConsumed = "STANDING_APPROVAL_CONSUMED"
 
+	// Cascade and DEFER codes (R4-T)
+	CyclePrevention   = "CYCLE_PREVENTION"   // Cascade would create cycle; denied
+	CascadeDepthLimit = "CASCADE_DEPTH_LIMIT" // Cascade exceeds max depth
+	CascadeTimeout    = "CASCADE_TIMEOUT"     // Cascade approval timed out
+
 	// Compensation codes
 	CompensationExecuted = "COMPENSATION_EXECUTED"
 	CompensationFailed   = "COMPENSATION_FAILED"

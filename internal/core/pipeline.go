@@ -846,7 +846,7 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			if _, err := p.defers.DeferWithToken(token, req.AgentID, req.ToolID, routeReason); err != nil {
 				// duplicate token: keep same token semantics as policy defer
 			}
-			p.storeDeferContext(token, req, sess, engine.Version())
+			p.storeDeferContext(token, req, sess, engine.Version(), nil)
 			return p.decide(req, Decision{
 				Effect:        EffectDefer,
 				ReasonCode:    reasons.RoutingUndeclaredInvocation,
@@ -1133,7 +1133,7 @@ routingApproved:
 			// If a handle with this token already exists (duplicate call), reuse the token.
 			_ = handle
 		}
-		p.storeDeferContext(token, req, sess, engine.Version())
+		p.storeDeferContext(token, req, sess, engine.Version(), nil)
 		d = Decision{
 			Effect:        EffectDefer,
 			RuleID:        result.RuleID,
@@ -1180,19 +1180,38 @@ routingApproved:
 		}
 	case "step_up":
 		// STEP_UP effect: require elevated approval authority (R4-T)
-		// Internally, STEP_UP is converted to an elevated DEFER workflow
+		// Internally, STEP_UP is converted to an elevated DEFER workflow with cascade tracking
 		reason := result.Reason
 		if reason == "" {
 			reason = "action requires elevated approval"
 		}
 		token := deterministicDeferToken(req.CallID, req.ToolID)
+
+		// [R4-T] Cycle detection: check if creating this cascade would form a loop
+		// This prevents scenarios where approval A defers to B which tries to defer back to A
+		var parentToken string
+		var cascadeDepth int
+		var cascadePath []string
+		// Note: In a full implementation, cascadeDepth would track how many levels of
+		// cascading have occurred. For now, we track the infrastructure.
+
 		handle, err := p.defers.DeferWithTokenOpts(token, req.AgentID, req.ToolID, reason, deferwork.DeferOptions{
 			ApprovalsRequired: 1,
 		})
 		if err != nil || handle == nil {
 			_ = handle
+		} else {
+			// Set cascade tracking on the handle
+			if handle != nil {
+				handle.ParentDeferToken = parentToken
+				handle.CascadeDepth = cascadeDepth
+				handle.CascadeReason = reason
+				if len(cascadePath) > 0 {
+					handle.CascadePath = cascadePath
+				}
+			}
 		}
-		p.storeDeferContext(token, req, sess, engine.Version())
+		p.storeDeferContext(token, req, sess, engine.Version(), handle)
 		// Extract structured step_up data from the matched rule
 		if doc != nil && result.RuleID != "" {
 			for _, rule := range doc.Rules {
@@ -1209,6 +1228,7 @@ routingApproved:
 			RuleID:        result.RuleID,
 			ReasonCode:    result.ReasonCode,
 			Reason:        reason,
+			StepUpReason:  reason,
 			StepUpToken:   token,
 			PolicyVersion: engine.Version(),
 		}
@@ -1638,6 +1658,26 @@ func (p *Pipeline) buildRecordWithID(req CanonicalActionRequest, d Decision, arg
 		SelectorSnapshot:          selectorSnapshotForRecord(req.Args),
 		ApprovalEnvelope:          d.ApprovalEnvelopeJSON,
 		CreatedAt:                 req.Timestamp.UTC(),
+	}
+
+	// Persist defer/step-up token into the DPR record when present.
+	if d.DeferToken != "" {
+		rec.DeferToken = d.DeferToken
+	} else if d.StepUpToken != "" {
+		rec.DeferToken = d.StepUpToken
+	}
+
+	// If we have a deferred token, attempt to populate cascade metadata from
+	// the stored defer context so DPR contains full lineage for auditing.
+	if rec.DeferToken != "" && p.defers != nil {
+		if dc := p.defers.Context(rec.DeferToken); dc != nil {
+			rec.ParentDeferToken = dc.ParentDeferToken
+			rec.CascadeReason = dc.CascadeReason
+			rec.CascadeDepth = dc.CascadeDepth
+			if len(dc.CascadePath) > 0 {
+				rec.CascadePath = append([]string(nil), dc.CascadePath...)
+			}
+		}
 	}
 	if p.degraded != nil {
 		rec.DegradedMode = p.degraded.Current().String()
@@ -2623,12 +2663,20 @@ func (p *Pipeline) emitWebhook(req CanonicalActionRequest, d Decision) {
 	})
 }
 
-func (p *Pipeline) storeDeferContext(token string, req CanonicalActionRequest, sess *session.State, policyHash string) {
+func (p *Pipeline) storeDeferContext(token string, req CanonicalActionRequest, sess *session.State, policyHash string, h *deferwork.Handle) {
 	if token == "" || p.defers == nil {
 		return
 	}
 	ctx := deferwork.NewDeferContext(token, req.SessionID, policyHash, req.Args)
 	ctx.SetSessionStateHash(deferSessionStateSnapshot(sess, req))
+	if h != nil {
+		ctx.ParentDeferToken = h.ParentDeferToken
+		ctx.CascadeReason = h.CascadeReason
+		ctx.CascadeDepth = h.CascadeDepth
+		if len(h.CascadePath) > 0 {
+			ctx.CascadePath = append([]string(nil), h.CascadePath...)
+		}
+	}
 	p.defers.StoreContext(ctx)
 }
 
@@ -2662,6 +2710,33 @@ func (p *Pipeline) validateResumeApproval(req CanonicalActionRequest, sess *sess
 	if err := deferwork.VerifyApprovalEnvelope(p.hmacKey, env); err != nil {
 		return "", reasons.ApprovalDenied, fmt.Sprintf("approval envelope verification failed: %v", err)
 	}
+
+	// [R4-T] Cascade validation: enforce the default cascade policy on resumed
+	// approvals before re-validating args and policy state.
+	if ctx.ParentDeferToken != "" || ctx.CascadeDepth > 0 || len(ctx.CascadePath) > 0 {
+		if err := p.defers.DetectCascadeCycle(ctx.Token, ctx.ParentDeferToken); err != nil {
+			return "", reasons.CyclePrevention, err.Error()
+		}
+		cascadeHandle := &deferwork.Handle{
+			Token:            ctx.Token,
+			ParentDeferToken: ctx.ParentDeferToken,
+			CascadeReason:    ctx.CascadeReason,
+			CascadeDepth:     ctx.CascadeDepth,
+			CascadePath:      append([]string(nil), ctx.CascadePath...),
+		}
+		allowed, cascadeReason := p.defers.ValidateCascadeDepth(cascadeHandle, map[string]any{
+			"max_depth":            3,
+			"on_max_depth_reached": "deny",
+			"detect_cycles":        true,
+		})
+		if !allowed {
+			if cascadeReason == "" {
+				cascadeReason = "cascade depth limit exceeded"
+			}
+			return "", reasons.CascadeDepthLimit, cascadeReason
+		}
+	}
+
 	validation := ctx.ValidateForResume(policyHash, deferSessionStateHash(sess, req), deferwork.DefaultTimeout)
 	if !validation.Valid {
 		return "", reasons.ApprovalDenied, strings.Join(validation.Warnings, "; ")

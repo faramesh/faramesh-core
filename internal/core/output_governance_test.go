@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/multiagent"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
 )
@@ -102,6 +103,7 @@ rules:
 	p.aggGovernor = multiagent.NewAggregationGovernor(multiagent.AggregatePolicy{
 		BlockedEntityTypes: []string{"email"},
 	})
+	p.aggGovernor.SetSemanticDriftObserver(observe.Default)
 
 	res := p.GovernOutput(GovernOutputRequest{
 		AgentID:    "orch-1",

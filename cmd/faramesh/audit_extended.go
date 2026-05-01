@@ -356,6 +356,11 @@ func buildAuditTraceOutput(visibilityURL string, action map[string]any, dbOverri
 						"credential_brokered":        rec.CredentialBrokered,
 						"credential_source":          rec.CredentialSource,
 						"credential_scope":           rec.CredentialScope,
+						"defer_token":                rec.DeferToken,
+						"parent_defer_token":         rec.ParentDeferToken,
+						"cascade_reason":             rec.CascadeReason,
+						"cascade_depth":              rec.CascadeDepth,
+						"cascade_path":               rec.CascadePath,
 					}
 					out["linkage"] = map[string]any{
 						"record_id_match":    rec.RecordID == recordID,

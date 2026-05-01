@@ -410,6 +410,110 @@ default_effect: deny
 	}
 }
 
+func TestPipeline_ModifyEffectCarriesStructuredArgs(t *testing.T) {
+	yamlPolicy := `
+faramesh-version: "1.0"
+agent-id: "modify-agent"
+rules:
+  - id: "cap-refund"
+    match:
+      tool: "stripe/refund"
+    effect: modify
+    modify_args:
+      limit: 500
+      isolation: docker
+    modify_reason: "refund capped by policy"
+    modify_required: true
+default_effect: deny
+`
+
+	doc, version, err := policy.LoadBytes([]byte(yamlPolicy))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	p := NewPipeline(Config{Engine: policy.NewAtomicEngine(eng)})
+
+	decision := p.Evaluate(CanonicalActionRequest{
+		CallID:    "modify-call",
+		AgentID:   "modify-agent",
+		SessionID: "modify-session",
+		ToolID:    "stripe/refund",
+		Args:      map[string]any{"amount": 1000},
+		Timestamp: time.Now().UTC(),
+	})
+
+	if decision.Effect != EffectModify {
+		t.Fatalf("expected MODIFY decision, got %s (%s)", decision.Effect, decision.Reason)
+	}
+	if !decision.RequiredModifications {
+		t.Fatal("expected required modifications to be true")
+	}
+	if decision.ModifyReason != "refund capped by policy" {
+		t.Fatalf("modify reason = %q", decision.ModifyReason)
+	}
+	if got := decision.ModifiedArgs["limit"]; got != 500 {
+		t.Fatalf("modified limit = %v, want 500", got)
+	}
+	if got := decision.ModifiedArgs["isolation"]; got != "docker" {
+		t.Fatalf("modified isolation = %v, want docker", got)
+	}
+}
+
+func TestPipeline_StepUpEffectCarriesAuthorityMetadata(t *testing.T) {
+	yamlPolicy := `
+faramesh-version: "1.0"
+agent-id: "stepup-agent"
+rules:
+  - id: "high-value-refund"
+    match:
+      tool: "stripe/refund"
+    effect: step_up
+    step_up_level: 2
+    step_up_authority: "finance_manager"
+    step_up_reason: "manager approval required for refunds above threshold"
+default_effect: deny
+`
+
+	doc, version, err := policy.LoadBytes([]byte(yamlPolicy))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	p := NewPipeline(Config{Engine: policy.NewAtomicEngine(eng), Defers: deferwork.NewWorkflow("")})
+
+	decision := p.Evaluate(CanonicalActionRequest{
+		CallID:    "step-up-call",
+		AgentID:   "stepup-agent",
+		SessionID: "stepup-session",
+		ToolID:    "stripe/refund",
+		Args:      map[string]any{"amount": 7500},
+		Timestamp: time.Now().UTC(),
+	})
+
+	if decision.Effect != EffectStepUp {
+		t.Fatalf("expected STEP_UP decision, got %s (%s)", decision.Effect, decision.Reason)
+	}
+	if decision.StepUpToken == "" {
+		t.Fatal("expected step-up token to be populated")
+	}
+	if decision.ElevationLevel != 2 {
+		t.Fatalf("elevation level = %d, want 2", decision.ElevationLevel)
+	}
+	if decision.RequiredAuthority != "finance_manager" {
+		t.Fatalf("required authority = %q", decision.RequiredAuthority)
+	}
+	if decision.StepUpReason != "manager approval required for refunds above threshold" {
+		t.Fatalf("step-up reason = %q", decision.StepUpReason)
+	}
+}
+
 func TestPipelineResumeValidationRequiresSignedApprovalEnvelope(t *testing.T) {
 	policyYAML := `
 faramesh_version: "1.0"
@@ -474,6 +578,69 @@ rules:
 	}, p.sessions.Get("agent-a"), version)
 	if code != reasons.ApprovalDenied || !strings.Contains(reason, "resume args do not match") {
 		t.Fatalf("tampered resume = (%q, %q), want approval denied args mismatch", code, reason)
+	}
+}
+
+func TestPipelineApprovedResumeRejectsCascadeDepthLimit(t *testing.T) {
+	policyYAML := `
+faramesh_version: "1.0"
+agent_id: "agent-a"
+default_effect: deny
+rules:
+  - id: "defer-dangerous"
+    tool: "dangerous/run"
+    effect: "defer"
+    reason: "human approval required"
+`
+	doc, version, err := policy.LoadBytes([]byte(policyYAML))
+	if err != nil {
+		t.Fatalf("load policy: %v", err)
+	}
+	eng, err := policy.NewEngine(doc, version)
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
+	}
+	wf := deferwork.NewWorkflow("")
+	key := []byte("approval-secret")
+	wf.SetApprovalHMACKey(key)
+	p := NewPipeline(Config{
+		Engine:   policy.NewAtomicEngine(eng),
+		Sessions: session.NewManager(),
+		Defers:   wf,
+		HMACKey:  key,
+	})
+
+	first := p.Evaluate(CanonicalActionRequest{
+		CallID:    "cascade-call-1",
+		AgentID:   "agent-a",
+		SessionID: "sess-1",
+		ToolID:    "dangerous/run",
+		Args:      map[string]any{"target": "prod"},
+		Timestamp: time.Now(),
+	})
+	if first.Effect != EffectDefer {
+		t.Fatalf("first effect = %q, want defer", first.Effect)
+	}
+	ctx := wf.Context(first.DeferToken)
+	if ctx == nil {
+		t.Fatal("expected defer context to be stored")
+	}
+	ctx.CascadeDepth = 4
+	ctx.CascadeReason = "policy_changed"
+
+	if err := wf.Resolve(first.DeferToken, true, "approver-1", "approved"); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	_, code, reason := p.validateResumeApproval(CanonicalActionRequest{
+		CallID:    "cascade-call-1-resume",
+		AgentID:   "agent-a",
+		SessionID: "sess-1",
+		ToolID:    "dangerous/run",
+		Args:      map[string]any{"target": "prod"},
+	}, p.sessions.Get("agent-a"), version)
+	if code != reasons.CascadeDepthLimit {
+		t.Fatalf("cascade resume code = %q, want %q (reason=%q)", code, reasons.CascadeDepthLimit, reason)
 	}
 }
 

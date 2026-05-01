@@ -267,6 +267,31 @@ func TestResolveWithModifiedArgsRejectsMultiApproval(t *testing.T) {
 	}
 }
 
+func TestDetectCascadeCycleFindsLoop(t *testing.T) {
+	w := NewWorkflow("")
+	w.pending["tok-a"] = &Handle{Token: "tok-a", ParentDeferToken: "tok-b"}
+	w.pending["tok-b"] = &Handle{Token: "tok-b", ParentDeferToken: "tok-c"}
+	w.pending["tok-c"] = &Handle{Token: "tok-c", ParentDeferToken: "tok-a"}
+
+	if err := w.DetectCascadeCycle("tok-a", "tok-b"); err == nil {
+		t.Fatal("expected cascade cycle error")
+	}
+}
+
+func TestValidateCascadeDepthEnforcesLimit(t *testing.T) {
+	w := NewWorkflow("")
+	allowed, reason := w.ValidateCascadeDepth(&Handle{CascadeDepth: 4}, map[string]any{
+		"max_depth":             3,
+		"on_max_depth_reached": "deny",
+	})
+	if allowed {
+		t.Fatal("expected cascade depth to be denied")
+	}
+	if reason == "" {
+		t.Fatal("expected depth limit reason")
+	}
+}
+
 func TestResolveCapturesApproverIdentity(t *testing.T) {
 	w := NewWorkflow("")
 	h, err := w.DeferWithToken("tok-approver", "agent-a", "tool-a", "needs review")
