@@ -121,6 +121,13 @@ type Record struct {
 	BatchApprovalID  string   `json:"batch_approval_id,omitempty"`
 	ApprovalEnvelope string   `json:"approval_envelope,omitempty"`
 
+	// ── DEFER Cascade Metadata (R4-T) ──
+	DeferToken       string   `json:"defer_token,omitempty"`
+	ParentDeferToken string   `json:"parent_defer_token,omitempty"`
+	CascadeReason    string   `json:"cascade_reason,omitempty"`
+	CascadeDepth     int      `json:"cascade_depth,omitempty"`
+	CascadePath      []string `json:"cascade_path,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -165,6 +172,11 @@ func (r *Record) CanonicalBytes() []byte {
 			WorkflowPhase             string    `json:"workflow_phase,omitempty"`
 			CredentialBrokered        bool      `json:"credential_brokered,omitempty"`
 			ApprovalEnvelope          string    `json:"approval_envelope,omitempty"`
+			DeferToken                string    `json:"defer_token,omitempty"`
+			ParentDeferToken          string    `json:"parent_defer_token,omitempty"`
+			CascadeReason             string    `json:"cascade_reason,omitempty"`
+			CascadeDepth              int       `json:"cascade_depth,omitempty"`
+			CascadePath               []string  `json:"cascade_path,omitempty"`
 			DegradedMode              string    `json:"degraded_mode,omitempty"`
 			CreatedAt                 time.Time `json:"created_at"`
 		}
@@ -198,6 +210,11 @@ func (r *Record) CanonicalBytes() []byte {
 			WorkflowPhase:             r.WorkflowPhase,
 			CredentialBrokered:        r.CredentialBrokered,
 			ApprovalEnvelope:          r.ApprovalEnvelope,
+			DeferToken:                r.DeferToken,
+			ParentDeferToken:          r.ParentDeferToken,
+			CascadeReason:             r.CascadeReason,
+			CascadeDepth:              r.CascadeDepth,
+			CascadePath:               r.CascadePath,
 			DegradedMode:              r.DegradedMode,
 			CreatedAt:                 r.CreatedAt.UTC(),
 		}
@@ -237,6 +254,11 @@ func (r *Record) CanonicalBytes() []byte {
 		WorkflowPhase             string    `json:"workflow_phase,omitempty"`
 		CredentialBrokered        bool      `json:"credential_brokered,omitempty"`
 		ApprovalEnvelope          string    `json:"approval_envelope,omitempty"`
+			DeferToken                string    `json:"defer_token,omitempty"`
+			ParentDeferToken          string    `json:"parent_defer_token,omitempty"`
+			CascadeReason             string    `json:"cascade_reason,omitempty"`
+			CascadeDepth              int       `json:"cascade_depth,omitempty"`
+			CascadePath               []string  `json:"cascade_path,omitempty"`
 		DegradedMode              string    `json:"degraded_mode,omitempty"`
 		CreatedAt                 time.Time `json:"created_at"`
 	}
@@ -269,7 +291,12 @@ func (r *Record) CanonicalBytes() []byte {
 		InferenceRewrite:          r.InferenceModelRewriteApplied,
 		WorkflowPhase:             r.WorkflowPhase,
 		CredentialBrokered:        r.CredentialBrokered,
-		ApprovalEnvelope:          r.ApprovalEnvelope,
+			ApprovalEnvelope:          r.ApprovalEnvelope,
+			DeferToken:                r.DeferToken,
+			ParentDeferToken:          r.ParentDeferToken,
+			CascadeReason:             r.CascadeReason,
+			CascadeDepth:              r.CascadeDepth,
+			CascadePath:               r.CascadePath,
 		DegradedMode:              r.DegradedMode,
 		CreatedAt:                 r.CreatedAt.UTC(),
 	})

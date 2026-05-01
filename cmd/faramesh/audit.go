@@ -200,7 +200,6 @@ func runAuditTail(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 }
-
 func runAuditVerify(cmd *cobra.Command, args []string) error {
 	path := ""
 	if len(args) > 0 {
@@ -314,11 +313,13 @@ func verifyWAL(path string, bold, green, red *color.Color) error {
 	defer wal.Close()
 
 	bold.Printf("\nVerifying DPR chain integrity (WAL): %s\n", path)
-	fmt.Println("Mode: full chain validation (genesis + hash + chain links per agent)")
+	fmt.Println("Mode: full chain validation (genesis + hash + chain links per agent + cascade lineage)")
 
 	count := 0
+	var records []*dpr.Record
 	err = wal.ReplayValidated(func(rec *dpr.Record) error {
 		count++
+		records = append(records, rec)
 		return nil
 	})
 
@@ -328,9 +329,13 @@ func verifyWAL(path string, bold, green, red *color.Color) error {
 		printNextStepLine("Inspect latest evidence: faramesh audit show <action-id>")
 		return fmt.Errorf("audit chain verification failed after %d records: %w", count, err)
 	}
+	if err := dpr.VerifyCascadeChain(records); err != nil {
+		red.Printf("\n✗ CASCADE VIOLATION: %v\n", err)
+		return fmt.Errorf("audit cascade verification failed after %d records: %w", count, err)
+	}
 
 	green.Printf("\n✓ Chain integrity verified. %d records, 0 violations.\n", count)
-	fmt.Println("  Checked: per-frame CRC32, canonical hash, genesis markers, chain links")
+	fmt.Println("  Checked: per-frame CRC32, canonical hash, genesis markers, chain links, cascade lineage")
 	printSuccessLine("Audit integrity verification completed")
 	fmt.Println()
 	return nil
@@ -360,6 +365,10 @@ func verifyDB(dbPath string, bold, green, red *color.Color) error {
 			red.Printf("✗ HASH VIOLATION record %d: %s\n", i, rec.RecordID)
 			violations++
 		}
+	}
+	if err := dpr.VerifyCascadeChain(records); err != nil {
+		red.Printf("✗ CASCADE VIOLATION: %v\n", err)
+		return fmt.Errorf("audit cascade verification failed: %w", err)
 	}
 
 	if violations == 0 {

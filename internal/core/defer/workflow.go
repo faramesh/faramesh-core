@@ -559,6 +559,79 @@ func Wait(h *Handle) (Resolution, bool) {
 	return r, r.Status == StatusApproved
 }
 
+// DetectCascadeCycle checks if setting parentToken as the parent of currentToken
+// would create a cycle in the cascade chain. Returns error if cycle detected.
+// Cycles prevent infinite approval loops (e.g., A defers to B defers to A).
+func (w *Workflow) DetectCascadeCycle(currentToken, parentToken string) error {
+	if currentToken == "" || parentToken == "" {
+		return nil // no cycle if either is empty
+	}
+	if currentToken == parentToken {
+		return fmt.Errorf("cascade cycle: token cannot be its own parent")
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// Walk up the parent chain from parentToken to check if we reach currentToken
+	seen := make(map[string]bool)
+	walkerToken := parentToken
+	for walkerToken != "" && len(seen) < 1000 { // 1000 limit prevents infinite loops on bad data
+		if seen[walkerToken] {
+			return fmt.Errorf("cascade cycle detected at token %q", walkerToken)
+		}
+		seen[walkerToken] = true
+
+		if walkerToken == currentToken {
+			return fmt.Errorf("cascade cycle: %q would create loop back to %q", parentToken, currentToken)
+		}
+
+		// Get the parent of walkerToken
+		var nextParent string
+		if h, ok := w.pending[walkerToken]; ok {
+			nextParent = h.ParentDeferToken
+		} else if r, ok := w.resolved[walkerToken]; ok {
+			// For resolved handles, we don't have cascade info; stop here
+			_ = r
+			break
+		} else {
+			// Token not found; break chain
+			break
+		}
+		walkerToken = nextParent
+	}
+	return nil
+}
+
+// ValidateCascadeDepth checks if a cascade satisfies configured depth limits.
+// Returns (allowed, errorReason) where allowed=false means cascade exceeds policy.
+// policy defaults: MaxDepth=3, OnMaxDepthReached="escalate"
+// Note: cascadePolicy parameter should be *core.DeferCascadePolicy; passed as interface{} to avoid circular import
+func (w *Workflow) ValidateCascadeDepth(h *Handle, cascadePolicyMap map[string]any) (bool, string) {
+	if h == nil || cascadePolicyMap == nil {
+		return true, "" // no policy = allowed
+	}
+
+	maxDepth := 3 // default
+	if v, ok := cascadePolicyMap["max_depth"].(int); ok && v > 0 {
+		maxDepth = v
+	}
+
+	onMaxAction := "escalate" // default
+	if v, ok := cascadePolicyMap["on_max_depth_reached"].(string); ok && v != "" {
+		onMaxAction = v
+	}
+
+	// CascadeDepth is 0 for original, 1 for first cascade, etc.
+	// So max allowed depth is MaxDepth-1 (0-indexed)
+	if h.CascadeDepth > maxDepth {
+		reason := fmt.Sprintf("cascade depth %d exceeds max %d (action: %s)",
+			h.CascadeDepth, maxDepth, onMaxAction)
+		// Return allowed=true but with reason; caller decides action
+		return onMaxAction != "deny", reason
+	}
+	return true, ""
+}
+
 // Pending returns a snapshot of all pending tokens and their tool/agent info.
 func (w *Workflow) Pending() []map[string]string {
 	if w.backend != nil {
@@ -671,7 +744,7 @@ func (w *Workflow) resolveLocalOnly(token string, res Resolution) (bool, error) 
 }
 
 func (w *Workflow) backendItemFromHandle(h *Handle, priority string) backendstore.DeferItem {
-	return backendstore.DeferItem{
+	item := backendstore.DeferItem{
 		Token:     h.Token,
 		AgentID:   h.AgentID,
 		ToolID:    h.ToolID,
@@ -680,6 +753,20 @@ func (w *Workflow) backendItemFromHandle(h *Handle, priority string) backendstor
 		CreatedAt: h.CreatedAt,
 		Deadline:  h.Deadline,
 	}
+	// Include cascade metadata for durable backends
+	if h.ParentDeferToken != "" {
+		item.ParentDeferToken = h.ParentDeferToken
+	}
+	if h.CascadeReason != "" {
+		item.CascadeReason = h.CascadeReason
+	}
+	if h.CascadeDepth != 0 {
+		item.CascadeDepth = h.CascadeDepth
+	}
+	if len(h.CascadePath) > 0 {
+		item.CascadePath = append([]string(nil), h.CascadePath...)
+	}
+	return item
 }
 
 func backendResolutionFromResolution(token string, res Resolution) backendstore.DeferResolution {

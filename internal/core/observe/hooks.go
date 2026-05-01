@@ -23,6 +23,20 @@ type RuleObservation struct {
 	Timestamp time.Time
 }
 
+// SemanticDriftObservation captures a scored semantic drift event.
+type SemanticDriftObservation struct {
+	ProviderID    string
+	SessionID     string
+	AggregateHash string
+	Similarity    float64
+	Distance      float64
+	Threshold     float64
+	SourceCount   int
+	Triggered     bool
+	Denied        bool
+	Timestamp     time.Time
+}
+
 // CrossSessionTracker records PERMIT access events.
 type CrossSessionTracker interface {
 	RecordAccess(AccessEvent) error
@@ -40,3 +54,12 @@ type RuleObserver interface {
 type noOpRuleObserver struct{}
 
 func (noOpRuleObserver) ObserveRule(RuleObservation) error { return nil }
+
+// SemanticDriftObserver receives scored semantic drift events.
+type SemanticDriftObserver interface {
+	ObserveSemanticDrift(SemanticDriftObservation) error
+}
+
+type noOpSemanticDriftObserver struct{}
+
+func (noOpSemanticDriftObserver) ObserveSemanticDrift(SemanticDriftObservation) error { return nil }
