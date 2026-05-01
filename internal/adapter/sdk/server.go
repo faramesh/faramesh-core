@@ -56,6 +56,7 @@ import (
 
 	"github.com/faramesh/faramesh-core/internal/core"
 	"github.com/faramesh/faramesh-core/internal/core/credential"
+	"github.com/faramesh/faramesh-core/internal/core/delegate"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/principal"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
@@ -430,6 +431,7 @@ type Server struct {
 	// standing grant APIs are disabled (fail closed).
 	standingAdminToken string
 	shutdownFunc       func()
+	delegate           *delegate.Service
 }
 
 // NewServer creates a new SDK socket server.
@@ -469,6 +471,12 @@ func (s *Server) SetStandingAdminToken(token string) {
 }
 
 // SetShutdownFunc configures the callback used by socket shutdown requests.
+// SetDelegateService injects the delegation grant service used by the
+// "delegate" socket dispatch. When unset, delegate requests fail closed.
+func (s *Server) SetDelegateService(svc *delegate.Service) {
+	s.delegate = svc
+}
+
 func (s *Server) SetShutdownFunc(fn func()) {
 	s.shutdownFunc = fn
 }
@@ -757,6 +765,8 @@ func (s *Server) handle(conn net.Conn) {
 			s.handleIncident(conn, line)
 		case "compensate":
 			s.handleCompensate(conn, line)
+		case "delegate":
+			s.handleDelegate(conn, line)
 		case "poll_defer":
 			s.handlePollDefer(conn, line)
 		case "approve_defer":
