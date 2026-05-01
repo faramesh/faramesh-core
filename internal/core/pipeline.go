@@ -1150,6 +1150,80 @@ routingApproved:
 			Reason:        result.Reason,
 			PolicyVersion: engine.Version(),
 		}
+	case "modify":
+		// MODIFY effect: allow action with constraints/policy lowering (R4-T)
+		d = Decision{
+			Effect:                   EffectModify,
+			RuleID:                   result.RuleID,
+			ReasonCode:               result.ReasonCode,
+			Reason:                   result.Reason,
+			PolicyVersion:            engine.Version(),
+		}
+		// Extract structured modify data from the matched rule if available
+		if doc != nil && result.RuleID != "" {
+			for _, rule := range doc.Rules {
+				if rule.ID == result.RuleID {
+					if rule.ModifyArgs != nil && len(rule.ModifyArgs) > 0 {
+						d.ModifiedArgs = rule.ModifyArgs
+					}
+					if rule.ModifyReason != "" {
+						d.ModifyReason = rule.ModifyReason
+					}
+					d.RequiredModifications = rule.ModifyRequired
+					break
+				}
+			}
+		}
+		// Default reason if not explicitly provided in rule
+		if d.ModifyReason == "" {
+			d.ModifyReason = "action approved with modifications"
+		}
+	case "step_up":
+		// STEP_UP effect: require elevated approval authority (R4-T)
+		// Internally, STEP_UP is converted to an elevated DEFER workflow
+		reason := result.Reason
+		if reason == "" {
+			reason = "action requires elevated approval"
+		}
+		token := deterministicDeferToken(req.CallID, req.ToolID)
+		handle, err := p.defers.DeferWithTokenOpts(token, req.AgentID, req.ToolID, reason, deferwork.DeferOptions{
+			ApprovalsRequired: 1,
+		})
+		if err != nil || handle == nil {
+			_ = handle
+		}
+		p.storeDeferContext(token, req, sess, engine.Version())
+		// Extract structured step_up data from the matched rule
+		if doc != nil && result.RuleID != "" {
+			for _, rule := range doc.Rules {
+				if rule.ID == result.RuleID {
+					if rule.StepUpReason != "" {
+						reason = rule.StepUpReason
+					}
+					break
+				}
+			}
+		}
+		d = Decision{
+			Effect:        EffectStepUp,
+			RuleID:        result.RuleID,
+			ReasonCode:    result.ReasonCode,
+			Reason:        reason,
+			StepUpToken:   token,
+			PolicyVersion: engine.Version(),
+		}
+		// Extract elevation level and authority from rule if available
+		if doc != nil && result.RuleID != "" {
+			for _, rule := range doc.Rules {
+				if rule.ID == result.RuleID {
+					d.ElevationLevel = rule.StepUpLevel
+					if rule.StepUpAuthority != "" {
+						d.RequiredAuthority = rule.StepUpAuthority
+					}
+					break
+				}
+			}
+		}
 	default:
 		d = Decision{
 			Effect:        EffectDeny,
