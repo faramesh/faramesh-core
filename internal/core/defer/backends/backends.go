@@ -31,6 +31,12 @@ type DeferItem struct {
 	CreatedAt time.Time         `json:"created_at"`
 	Deadline  time.Time         `json:"deadline"`
 	Metadata  map[string]string `json:"metadata,omitempty"`
+
+	// Cascade tracking (R4-T enhancement)
+	ParentDeferToken string   `json:"parent_defer_token,omitempty"` // parent in cascade chain
+	CascadeReason    string   `json:"cascade_reason,omitempty"`      // why cascaded
+	CascadeDepth     int      `json:"cascade_depth"`                 // 0=original, 1=first cascade, etc
+	CascadePath      []string `json:"cascade_path,omitempty"`        // lineage of tokens
 }
 
 // DeferResolution is the outcome of a resolved DEFER from a backend.

@@ -53,6 +53,20 @@ type Handle struct {
 	approvalsRequired int
 	signOffs          map[string]string
 	finalizeStarted   bool
+
+	// Cascade tracking fields (for R4-T DEFER cascade enhancement)
+	// ParentDeferToken is set if this DEFER was triggered by another DEFER cascade.
+	ParentDeferToken string
+
+	// CascadeReason explains why this DEFER was triggered by a cascade.
+	// E.g., "policy_changed", "elevated_routing", "toctou_re_evaluation".
+	CascadeReason string
+
+	// CascadeDepth tracks how deeply nested this DEFER is (0 = original, 1 = first cascade, etc.).
+	CascadeDepth int
+
+	// CascadePath contains the full lineage of DEFER tokens from origin.
+	CascadePath []string
 }
 
 // DeferOptions configures registration of a deferred call.
@@ -83,6 +97,22 @@ type ApprovalEnvelope struct {
 	ResolvedAt   time.Time      `json:"resolved_at"`
 	ModifiedArgs map[string]any `json:"modified_args,omitempty"`
 	Signature    string         `json:"signature"`
+}
+
+// GetCascadeMetrics returns statistics about this cascade chain.
+func (h *Handle) GetCascadeMetrics() map[string]any {
+	return map[string]any{
+		"depth":           h.CascadeDepth,
+		"total_in_chain":  len(h.CascadePath) + 1,
+		"has_parent":      h.ParentDeferToken != "",
+		"reason":          h.CascadeReason,
+		"parent_token":    h.ParentDeferToken,
+	}
+}
+
+// IsInCascade returns true if this DEFER is part of a cascade chain (not the original).
+func (h *Handle) IsInCascade() bool {
+	return h.ParentDeferToken != ""
 }
 
 // resolvedHandle stores the final resolution for completed DEFERs so
