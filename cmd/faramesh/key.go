@@ -26,6 +26,7 @@ var keyExportDPRCmd = &cobra.Command{
 	Use:   "dpr",
 	Short: "Export DPR Ed25519 public key and metadata",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		verbose, _ := cmd.Flags().GetBool("verbose")
 		dataDir, _ := cmd.Flags().GetString("data-dir")
 		if strings.TrimSpace(dataDir) == "" {
 			home, err := os.UserHomeDir()
@@ -38,15 +39,31 @@ var keyExportDPRCmd = &cobra.Command{
 		pubPath := filepath.Join(dataDir, "faramesh.ed25519.pub")
 		metaPath := filepath.Join(dataDir, "faramesh.ed25519.meta.json")
 
-		out := map[string]any{
-			"data_dir": dataDir,
-			"found":    false,
+		// Minimal default output: only print the base64 public key.
+		// Use --verbose to receive JSON with metadata and paths.
+		found := false
+		var pubB64 string
+		if b, err := os.ReadFile(pubPath); err == nil {
+			pubB64 = strings.TrimSpace(string(b))
+			found = true
+		}
+		if !verbose {
+			if found {
+				fmt.Println(pubB64)
+				return nil
+			}
+			// Minimal UX: print a short stderr message when not found.
+			fmt.Fprintln(os.Stderr, "no dpr key found")
+			return nil
 		}
 
-		if b, err := os.ReadFile(pubPath); err == nil {
-			pubB64 := strings.TrimSpace(string(b))
+		out := map[string]any{
+			"data_dir":    dataDir,
+			"found":       found,
+			"exported_at": time.Now().UTC().Format(time.RFC3339Nano),
+		}
+		if found {
 			pubBytes, _ := base64.StdEncoding.DecodeString(pubB64)
-			out["found"] = true
 			out["public_key_b64"] = pubB64
 			out["public_key_len"] = len(pubBytes)
 		}
@@ -55,7 +72,6 @@ var keyExportDPRCmd = &cobra.Command{
 			_ = json.Unmarshal(bm, &meta)
 			out["metadata"] = meta
 		}
-		out["exported_at"] = time.Now().UTC().Format(time.RFC3339Nano)
 		enc, _ := json.MarshalIndent(out, "", "  ")
 		fmt.Println(string(enc))
 		return nil
@@ -63,6 +79,7 @@ var keyExportDPRCmd = &cobra.Command{
 }
 
 func init() {
+	keyExportDPRCmd.Flags().BoolP("verbose", "v", false, "verbose JSON output with metadata")
 	keyExportDPRCmd.Flags().String("data-dir", "", "data directory where faramesh keys are stored (default: ~/.faramesh/runtime/data)")
 	keyExportCmd.AddCommand(keyExportDPRCmd)
 	keyCmd.AddCommand(keyExportCmd)
