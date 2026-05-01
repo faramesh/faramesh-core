@@ -3,7 +3,8 @@
 // optimization (<50ms init), env-based config, and SQS-backed DEFER polling.
 //
 // Architecture:
-//   Agent Process ←→ [In-Process Faramesh] → Pipeline → Decision
+//
+//	Agent Process ←→ [In-Process Faramesh] → Pipeline → Decision
 //
 // No network hop — the governance engine runs inside the serverless function.
 // Policy is loaded from an environment variable or embedded in the deployment.

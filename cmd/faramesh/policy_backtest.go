@@ -52,9 +52,9 @@ type policyBacktestFailure struct {
 }
 
 type policyBacktestReport struct {
-	Total    int                    `json:"total"`
-	Passed   int                    `json:"passed"`
-	Failed   int                    `json:"failed"`
+	Total    int                     `json:"total"`
+	Passed   int                     `json:"passed"`
+	Failed   int                     `json:"failed"`
 	Failures []policyBacktestFailure `json:"failures,omitempty"`
 }
 

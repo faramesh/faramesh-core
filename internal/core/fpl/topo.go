@@ -17,8 +17,8 @@ type TopoStatement struct {
 	UndeclaredPolicy string
 
 	// Allow line (manifest allow … agent …)
-	AllowOrchID   string
-	TargetAgentID string
-	MaxPerSession int  // 0 = unlimited / unset
+	AllowOrchID      string
+	TargetAgentID    string
+	MaxPerSession    int // 0 = unlimited / unset
 	RequiresApproval bool
 }

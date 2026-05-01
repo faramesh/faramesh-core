@@ -8,11 +8,12 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/hex"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -986,8 +987,26 @@ func (d *Daemon) loadOrCreateDPRSigningKey() ([]byte, []byte, error) {
 	}
 	// Write public key for convenience
 	encPub := base64.StdEncoding.EncodeToString(pub)
-	_ = os.WriteFile(pubPath, []byte(encPub), 0o644)
-	d.log.Info("generated and persisted DPR Ed25519 key", zap.String("path", keyPath))
+	if err := os.WriteFile(pubPath, []byte(encPub), 0o644); err != nil {
+		return nil, nil, err
+	}
+
+	// Compute key id and write metadata file for offline verification and rotation tracking
+	sum := sha256.Sum256(pub)
+	keyID := hex.EncodeToString(sum[:])
+	meta := map[string]any{
+		"key_id":         keyID,
+		"algorithm":      "ed25519",
+		"public_key_b64": encPub,
+		"created_at":     time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	metaBytes, _ := json.MarshalIndent(meta, "", "  ")
+	metaPath := filepath.Join(d.cfg.DataDir, "faramesh.ed25519.meta.json")
+	if err := os.WriteFile(metaPath, metaBytes, 0o644); err != nil {
+		return nil, nil, err
+	}
+
+	d.log.Info("generated and persisted DPR Ed25519 key", zap.String("path", keyPath), zap.String("meta", metaPath))
 	return priv, pub, nil
 }
 

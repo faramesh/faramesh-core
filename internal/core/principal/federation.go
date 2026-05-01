@@ -75,8 +75,8 @@ func (td *TrustDocument) Hash() string {
 // FederationRegistry manages trust documents between organizations.
 type FederationRegistry struct {
 	mu        sync.RWMutex
-	documents map[string]*TrustDocument          // documentID → doc
-	trustMap  map[string]map[string][]string      // grantorOrg → granteeOrg → []documentIDs
+	documents map[string]*TrustDocument      // documentID → doc
+	trustMap  map[string]map[string][]string // grantorOrg → granteeOrg → []documentIDs
 }
 
 // NewFederationRegistry creates a new federation registry.

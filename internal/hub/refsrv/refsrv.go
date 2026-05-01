@@ -22,10 +22,10 @@ type Catalog struct {
 
 // PackCatalogEntry is one pack with versioned policy files on disk.
 type PackCatalogEntry struct {
-	Name           string            `json:"name"`
-	LatestVersion  string            `json:"latest_version"`
-	Description    string            `json:"description"`
-	TrustTier      string            `json:"trust_tier,omitempty"`
+	Name              string            `json:"name"`
+	LatestVersion     string            `json:"latest_version"`
+	Description       string            `json:"description"`
+	TrustTier         string            `json:"trust_tier,omitempty"`
 	Versions          map[string]string `json:"versions"` // version -> relative path to policy YAML
 	PublisherVerified bool              `json:"publisher_verified,omitempty"`
 	PublisherID       string            `json:"publisher_id,omitempty"`
@@ -121,7 +121,7 @@ func NewHandler(c *Catalog) http.Handler {
 		}
 		sum := sha256.Sum256(body)
 		resp := hub.PackVersionResponse{
-			APIVersion: hub.APIVersion,
+			APIVersion:  hub.APIVersion,
 			Name:        name,
 			Version:     version,
 			Description: "reference registry pack",

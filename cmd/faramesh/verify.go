@@ -30,12 +30,12 @@ Examples:
 }
 
 var (
-	verifyManifestPath  string
-	verifyBaseDir         string
-	verifyManifestGenOut  string
-	verifySigPub          string
-	verifySigFile         string
-	verifySigData         string
+	verifyManifestPath   string
+	verifyBaseDir        string
+	verifyManifestGenOut string
+	verifySigPub         string
+	verifySigFile        string
+	verifySigData        string
 )
 
 var verifyDigestCmd = &cobra.Command{

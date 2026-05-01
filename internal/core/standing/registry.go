@@ -15,17 +15,17 @@ import (
 // Grant is a standing approval record. When the daemon uses OpenRegistryStore,
 // grants persist across restarts in SQLite under the data directory.
 type Grant struct {
-	ID             string    `json:"id"`
-	AgentID        string    `json:"agent_id"`
-	SessionID      string    `json:"session_id,omitempty"`
-	ToolPattern    string    `json:"tool_pattern"`
-	PolicyVersion  string    `json:"policy_version,omitempty"`
-	RuleID         string    `json:"rule_id,omitempty"`
-	ExpiresAt      time.Time `json:"expires_at"`
-	MaxUses        int       `json:"max_uses"`
-	Uses           int       `json:"uses"`
-	IssuedBy       string    `json:"issued_by"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID            string    `json:"id"`
+	AgentID       string    `json:"agent_id"`
+	SessionID     string    `json:"session_id,omitempty"`
+	ToolPattern   string    `json:"tool_pattern"`
+	PolicyVersion string    `json:"policy_version,omitempty"`
+	RuleID        string    `json:"rule_id,omitempty"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	MaxUses       int       `json:"max_uses"`
+	Uses          int       `json:"uses"`
+	IssuedBy      string    `json:"issued_by"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // Input describes a new standing grant from an operator.
@@ -80,16 +80,16 @@ func (r *Registry) Add(in Input) (*Grant, error) {
 	}
 	now := time.Now().UTC()
 	g := &Grant{
-		ID:             id,
-		AgentID:        agent,
-		SessionID:      strings.TrimSpace(in.SessionID),
-		ToolPattern:    pat,
-		PolicyVersion:  strings.TrimSpace(in.PolicyVersion),
-		RuleID:         strings.TrimSpace(in.RuleID),
-		ExpiresAt:      now.Add(in.TTL),
-		MaxUses:        in.MaxUses,
-		IssuedBy:       by,
-		CreatedAt:      now,
+		ID:            id,
+		AgentID:       agent,
+		SessionID:     strings.TrimSpace(in.SessionID),
+		ToolPattern:   pat,
+		PolicyVersion: strings.TrimSpace(in.PolicyVersion),
+		RuleID:        strings.TrimSpace(in.RuleID),
+		ExpiresAt:     now.Add(in.TTL),
+		MaxUses:       in.MaxUses,
+		IssuedBy:      by,
+		CreatedAt:     now,
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()

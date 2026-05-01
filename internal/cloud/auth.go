@@ -27,13 +27,13 @@ const (
 
 // TokenInfo holds the stored authentication state.
 type TokenInfo struct {
-	Token        string    `json:"token"`
-	OrgID        string    `json:"org_id"`
-	OrgName      string    `json:"org_name"`
-	UserEmail    string    `json:"user_email"`
-	HorizonURL   string    `json:"horizon_url"`
-	ExpiresAt    time.Time `json:"expires_at,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
+	Token      string    `json:"token"`
+	OrgID      string    `json:"org_id"`
+	OrgName    string    `json:"org_name"`
+	UserEmail  string    `json:"user_email"`
+	HorizonURL string    `json:"horizon_url"`
+	ExpiresAt  time.Time `json:"expires_at,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // IsExpired reports whether the token has expired.

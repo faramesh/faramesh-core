@@ -26,16 +26,16 @@ func TestRunExplainFound(t *testing.T) {
 	policyPath := writeReplayTestPolicy(t, dir, explainTestPolicyYAML)
 	walPath := writeReplayTestWAL(t, dir, []*dpr.Record{
 		{
-			RecordID:       "rec-1",
-			AgentID:        "agent-a",
-			SessionID:      "sess-1",
-			ToolID:         "http/get",
-			Effect:         "permit",
-			MatchedRuleID:  "permit-safe-http",
-			ReasonCode:     "RULE_PERMIT",
-			PolicyVersion:  "policy-v1",
+			RecordID:         "rec-1",
+			AgentID:          "agent-a",
+			SessionID:        "sess-1",
+			ToolID:           "http/get",
+			Effect:           "permit",
+			MatchedRuleID:    "permit-safe-http",
+			ReasonCode:       "RULE_PERMIT",
+			PolicyVersion:    "policy-v1",
 			SelectorSnapshot: map[string]any{"endpoint": "https://safe.example"},
-			CreatedAt:      time.Date(2026, time.March, 21, 9, 10, 0, 0, time.UTC),
+			CreatedAt:        time.Date(2026, time.March, 21, 9, 10, 0, 0, time.UTC),
 		},
 	})
 

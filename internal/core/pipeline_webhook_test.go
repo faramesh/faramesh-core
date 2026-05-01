@@ -155,4 +155,3 @@ func TestPipelineWebhookPayloadSchemaVersionAndStableKeys(t *testing.T) {
 		}
 	}
 }
-

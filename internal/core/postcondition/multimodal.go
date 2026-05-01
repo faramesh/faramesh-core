@@ -13,18 +13,18 @@ import (
 
 // BinaryScanResult holds the result of scanning a binary argument.
 type BinaryScanResult struct {
-	ArgPath     string   `json:"arg_path"`
-	Encoding    string   `json:"encoding"` // "base64", "hex", "raw"
-	Threats     []Threat `json:"threats,omitempty"`
-	Safe        bool     `json:"safe"`
+	ArgPath  string   `json:"arg_path"`
+	Encoding string   `json:"encoding"` // "base64", "hex", "raw"
+	Threats  []Threat `json:"threats,omitempty"`
+	Safe     bool     `json:"safe"`
 }
 
 // Threat represents a detected injection pattern.
 type Threat struct {
-	Type        string `json:"type"`        // "prompt_injection", "code_injection", "command_injection"
-	Pattern     string `json:"pattern"`     // the matched pattern (truncated)
-	Position    int    `json:"position"`    // byte position in decoded content
-	Severity    string `json:"severity"`    // "critical", "high", "medium"
+	Type     string `json:"type"`     // "prompt_injection", "code_injection", "command_injection"
+	Pattern  string `json:"pattern"`  // the matched pattern (truncated)
+	Position int    `json:"position"` // byte position in decoded content
+	Severity string `json:"severity"` // "critical", "high", "medium"
 }
 
 // MultimodalScanner scans binary/encoded arguments for injection patterns.

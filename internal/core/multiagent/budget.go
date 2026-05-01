@@ -13,11 +13,11 @@ import (
 
 // AgentBudget represents an individual agent's budget within an aggregate.
 type AgentBudget struct {
-	AgentID      string  `json:"agent_id"`
-	MaxCostUSD   float64 `json:"max_cost_usd"`
-	SpentUSD     float64 `json:"spent_usd"`
-	ReservedUSD  float64 `json:"reserved_usd"`
-	Cancelled    bool    `json:"cancelled"`
+	AgentID     string  `json:"agent_id"`
+	MaxCostUSD  float64 `json:"max_cost_usd"`
+	SpentUSD    float64 `json:"spent_usd"`
+	ReservedUSD float64 `json:"reserved_usd"`
+	Cancelled   bool    `json:"cancelled"`
 }
 
 // Remaining returns the available budget for this agent.
