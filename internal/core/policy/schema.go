@@ -112,6 +112,30 @@ type Rule struct {
 	// ApprovalsRequired is how many distinct approver_ids must approve before a
 	// defer from this rule completes. 0 or 1 means single approver (default).
 	ApprovalsRequired int `yaml:"approvals_required,omitempty"`
+
+	// R4-T: MODIFY and STEP_UP structured effect data
+
+	// ModifyArgs contains modifications to apply when Effect == "modify".
+	// Key-value pairs representing constraints or transformations.
+	ModifyArgs map[string]any `yaml:"modify_args,omitempty"`
+
+	// ModifyReason is a human-readable explanation for why the action is being modified.
+	ModifyReason string `yaml:"modify_reason,omitempty"`
+
+	// ModifyRequired indicates whether the agent MUST apply these modifications
+	// (vs. optional guidance). Defaults to false.
+	ModifyRequired bool `yaml:"modify_required,omitempty"`
+
+	// StepUpLevel indicates approval hierarchy required (0-4 scale).
+	// 0=peer, 1=manager, 2=director, 3=executive, 4=security/compliance.
+	StepUpLevel int `yaml:"step_up_level,omitempty"`
+
+	// StepUpAuthority is a regex/label matching the required approver role.
+	// E.g., "finance_manager|finance_director", "security_team", "incident_commander".
+	StepUpAuthority string `yaml:"step_up_authority,omitempty"`
+
+	// StepUpReason is a human-readable explanation for why escalation is needed.
+	StepUpReason string `yaml:"step_up_reason,omitempty"`
 }
 
 // Match defines the conditions under which a rule fires.
