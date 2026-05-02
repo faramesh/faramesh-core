@@ -60,6 +60,7 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/principal"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
+	"github.com/faramesh/faramesh-core/internal/core/schedule"
 	"github.com/google/uuid"
 	"go.uber.org/zap/zapcore"
 )
@@ -432,6 +433,7 @@ type Server struct {
 	standingAdminToken string
 	shutdownFunc       func()
 	delegate           *delegate.Service
+	schedule           *schedule.Service
 }
 
 // NewServer creates a new SDK socket server.
@@ -475,6 +477,12 @@ func (s *Server) SetStandingAdminToken(token string) {
 // "delegate" socket dispatch. When unset, delegate requests fail closed.
 func (s *Server) SetDelegateService(svc *delegate.Service) {
 	s.delegate = svc
+}
+
+// SetScheduleService injects the scheduled-execution service used by the
+// "schedule" socket dispatch. When unset, schedule requests fail closed.
+func (s *Server) SetScheduleService(svc *schedule.Service) {
+	s.schedule = svc
 }
 
 func (s *Server) SetShutdownFunc(fn func()) {
@@ -767,6 +775,8 @@ func (s *Server) handle(conn net.Conn) {
 			s.handleCompensate(conn, line)
 		case "delegate":
 			s.handleDelegate(conn, line)
+		case "schedule":
+			s.handleSchedule(conn, line)
 		case "poll_defer":
 			s.handlePollDefer(conn, line)
 		case "approve_defer":
