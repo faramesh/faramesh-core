@@ -101,6 +101,8 @@ const (
 	DelegationExceedsAuthority     = "DELEGATION_EXCEEDS_AUTHORITY"
 	DelegationDepthExceeded        = "DELEGATION_DEPTH_EXCEEDED"
 	DelegationOriginBlocked        = "DELEGATION_ORIGIN_BLOCKED"
+	DelegationTokenInvalid         = "DELEGATION_TOKEN_INVALID"
+	DelegationTokenAgentMismatch   = "DELEGATION_TOKEN_AGENT_MISMATCH"
 	PrincipalElevationExpired      = "PRINCIPAL_ELEVATION_EXPIRED"
 	PrincipalRevoked               = "PRINCIPAL_REVOKED"
 	PrincipalVerificationUntrusted = "PRINCIPAL_VERIFICATION_UNTRUSTED"
@@ -119,7 +121,7 @@ const (
 	StandingApprovalConsumed = "STANDING_APPROVAL_CONSUMED"
 
 	// Cascade and DEFER codes (R4-T)
-	CyclePrevention   = "CYCLE_PREVENTION"   // Cascade would create cycle; denied
+	CyclePrevention   = "CYCLE_PREVENTION"    // Cascade would create cycle; denied
 	CascadeDepthLimit = "CASCADE_DEPTH_LIMIT" // Cascade exceeds max depth
 	CascadeTimeout    = "CASCADE_TIMEOUT"     // Cascade approval timed out
 
@@ -285,6 +287,8 @@ var canonical = map[string]struct{}{
 	DelegationExceedsAuthority:     {},
 	DelegationDepthExceeded:        {},
 	DelegationOriginBlocked:        {},
+	DelegationTokenInvalid:         {},
+	DelegationTokenAgentMismatch:   {},
 	PrincipalElevationExpired:      {},
 	PrincipalRevoked:               {},
 	PrincipalVerificationUntrusted: {},

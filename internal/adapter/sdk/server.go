@@ -83,6 +83,7 @@ type governRequest struct {
 	ToolID             string              `json:"tool_id"`
 	Args               map[string]any      `json:"args"`
 	PrincipalToken     string              `json:"principal_token,omitempty"`
+	DelegationToken    string              `json:"delegation_token,omitempty"`
 	ExecutionTimeoutMs int                 `json:"execution_timeout_ms,omitempty"`
 	Model              *core.ModelIdentity `json:"model,omitempty"`
 	ModelName          string              `json:"model_name,omitempty"`
@@ -100,6 +101,7 @@ type governJSONRPCParams struct {
 	Operation          string              `json:"operation"`
 	Args               map[string]any      `json:"args"`
 	PrincipalToken     string              `json:"principal_token,omitempty"`
+	DelegationToken    string              `json:"delegation_token,omitempty"`
 	ExecutionTimeoutMs int                 `json:"execution_timeout_ms,omitempty"`
 	Model              *core.ModelIdentity `json:"model,omitempty"`
 	ModelName          string              `json:"model_name,omitempty"`
@@ -822,6 +824,15 @@ func (s *Server) resolveGovernRequest(req governRequest) (governResponse, core.D
 		}, decision, resolvedPrincipal, nil
 	}
 
+	delegationChain, delegationDenial := s.resolveDelegationChain(req)
+	if delegationDenial != nil {
+		return governResponse{
+			CallID:    req.CallID,
+			Effect:    string(delegationDenial.Effect),
+			LatencyMs: 0,
+		}, *delegationDenial, resolvedPrincipal, nil
+	}
+
 	car := core.CanonicalActionRequest{
 		CallID:             req.CallID,
 		AgentID:            req.AgentID,
@@ -829,6 +840,7 @@ func (s *Server) resolveGovernRequest(req governRequest) (governResponse, core.D
 		ToolID:             req.ToolID,
 		Args:               req.Args,
 		Principal:          resolvedPrincipal,
+		Delegation:         delegationChain,
 		ExecutionTimeoutMS: req.ExecutionTimeoutMs,
 		Model:              modelIdentityFromRequest(req.Model, req.ModelName, req.ModelFingerprint, req.ModelProvider, req.ModelVersion),
 		Timestamp:          time.Now(),
@@ -1020,6 +1032,7 @@ func (s *Server) handleGovernJSONRPC(conn net.Conn, msg map[string]json.RawMessa
 		ToolID:             toolID,
 		Args:               p.Args,
 		PrincipalToken:     p.PrincipalToken,
+		DelegationToken:    p.DelegationToken,
 		ExecutionTimeoutMs: p.ExecutionTimeoutMs,
 		Model:              p.Model,
 		ModelName:          p.ModelName,
