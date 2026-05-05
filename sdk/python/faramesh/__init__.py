@@ -82,6 +82,11 @@ from .gate import (
     ReplayResult,
 )
 
+# Import socket-stream submodules:
+#   audit     -> wraps `audit_subscribe`     (governance decisions)
+#   callbacks -> wraps `callback_subscribe`  (lifecycle events: defer_resolved, etc.)
+from . import audit, callbacks
+
 # Import version
 from .client import __version__
 
@@ -181,6 +186,10 @@ __all__ = [
     "GovernorAuthError",
     "GovernorConnectionError",
     
+    # Socket-stream submodules
+    "audit",
+    "callbacks",
+
     # Version
     "__version__",
 ]
