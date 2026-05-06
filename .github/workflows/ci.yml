@@ -18,7 +18,7 @@ jobs:
       - name: Regenerate and verify committed matrix
         run: make corpus-check
       - name: Upload corpus matrix
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: corpus-coverage-matrix
           path: |
@@ -90,7 +90,7 @@ jobs:
         run: bash scripts/run_corpus_entry.sh "${{ matrix.entry }}"
       - name: Upload corpus harness artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: corpus-harness-${{ matrix.id }}
           path: .tmp/
@@ -133,7 +133,7 @@ jobs:
       - name: Run tests
         run: go test -race -count=1 -coverprofile=coverage.out ./...
       - name: Upload coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage
           path: coverage.out
@@ -271,7 +271,7 @@ jobs:
             -o faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }} \
             ./cmd/faramesh
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: faramesh-${{ matrix.suffix }}
           path: faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }}
