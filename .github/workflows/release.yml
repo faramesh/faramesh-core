@@ -223,7 +223,7 @@ jobs:
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
 
       - name: Build and push GHCR
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -237,7 +237,7 @@ jobs:
 
       - name: Build and push Docker Hub
         if: ${{ steps.dockerhub_creds.outputs.available == 'true' }}
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
