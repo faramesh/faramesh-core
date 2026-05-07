@@ -54,6 +54,11 @@ jobs:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - name: Dispatch fpl-lang compatibility run
+        # Only run dispatch if the secret token is configured. When the token
+        # is missing the action errors with "Input required and not supplied:
+        # github-token" — guard the step to keep the workflow green for forks
+        # or repos that don't configure the token yet.
+        if: ${{ secrets.CORE_FPL_SYNC_TOKEN != '' }}
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.CORE_FPL_SYNC_TOKEN }}
