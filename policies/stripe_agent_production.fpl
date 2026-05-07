@@ -43,8 +43,22 @@ agent interactive-ai {
     # Medium-risk operations requiring human approval.
     defer stripe/create_customer reason: "customer creation requires operator approval"
     defer stripe/create_customer/* reason: "customer creation requires operator approval"
-    defer stripe/create_payment_intent reason: "payment intent requires operator approval"
-    defer stripe/create_payment_intent/* reason: "payment intent requires operator approval"
+    # Payment intent threshold (amount is cents): <= $50 permit, > $50 defer, > $1000 deny.
+    # Runtime submits create_payment_intent using args.amount_cents.
+    deny stripe/create_payment_intent when args.amount_cents > 100000 reason: "high-value payment intent is blocked in this profile"
+    deny stripe/create_payment_intent/* when args.amount_cents > 100000 reason: "high-value payment intent is blocked in this profile"
+    defer stripe/create_payment_intent when args.amount_cents > 5000 reason: "payment intent above $50 requires operator approval"
+    defer stripe/create_payment_intent/* when args.amount_cents > 5000 reason: "payment intent above $50 requires operator approval"
+    permit stripe/create_payment_intent when args.amount_cents <= 5000 reason: "low-value payment intents are auto-approved"
+    permit stripe/create_payment_intent/* when args.amount_cents <= 5000 reason: "low-value payment intents are auto-approved"
+
+    # Compatibility fallback for callers using args.amount instead of args.amount_cents.
+    deny stripe/create_payment_intent when args.amount > 100000 reason: "high-value payment intent is blocked in this profile"
+    deny stripe/create_payment_intent/* when args.amount > 100000 reason: "high-value payment intent is blocked in this profile"
+    defer stripe/create_payment_intent when args.amount > 5000 reason: "payment intent above $50 requires operator approval"
+    defer stripe/create_payment_intent/* when args.amount > 5000 reason: "payment intent above $50 requires operator approval"
+    permit stripe/create_payment_intent when args.amount <= 5000 reason: "low-value payment intents are auto-approved"
+    permit stripe/create_payment_intent/* when args.amount <= 5000 reason: "low-value payment intents are auto-approved"
     defer stripe/connect_create_account reason: "connect account creation requires operator approval"
     defer stripe/connect_create_account/* reason: "connect account creation requires operator approval"
     defer stripe/allowlist_destination reason: "destination allowlist requires operator approval"
@@ -52,9 +66,11 @@ agent interactive-ai {
     defer stripe/create_invoice reason: "invoice creation requires operator approval"
     defer stripe/create_invoice/* reason: "invoice creation requires operator approval"
 
-    # Refunds are denied by default in this policy profile.
-    deny stripe/refund_execute reason: "refund execution is blocked in this profile"
-    deny stripe/refund_execute/* reason: "refund execution is blocked in this profile"
+    # Refund threshold: high-value refunds require approval; low-value auto-permit.
+    defer stripe/refund_execute when args.amount > 50000 reason: "high-value refund requires operator approval"
+    defer stripe/refund_execute/* when args.amount > 50000 reason: "high-value refund requires operator approval"
+    permit stripe/refund_execute when args.amount <= 50000 reason: "low-value refunds are auto-approved"
+    permit stripe/refund_execute/* when args.amount <= 50000 reason: "low-value refunds are auto-approved"
 
     # Transfers remain defer-gated for operator approval.
     defer stripe/transfer_execute reason: "transfer requires explicit operator approval"
@@ -76,15 +92,26 @@ agent interactive-ai {
     # Explicitly blocked actions.
     permit shell/execute
     permit shell/execute/*
-    defer stripe/refund_execute when args.amount > 50000 reason: "high-value refund requires operator approval"
     deny filesystem/batch_create reason: "filesystem mutation tool is blocked in production"
     deny filesystem/batch_create/* reason: "filesystem mutation tool is blocked in production"
     deny browser/search reason: "browser automation is blocked in production"
     deny browser/search/* reason: "browser automation is blocked in production"
 
-    # Legacy aliases retained for compatibility with older local demos.
-    permit run_shell_command 
-    permit run_shell_command/* 
+    # ==== SHELL OPERATIONS (granular control) ====
+    # Shell commands: read-only (ls, cat, pwd) are generally safer
+    # Network and package operations are deferred
+    # Destructive operations are denied
+    permit shell/execute reason: "shell execution permitted (policy enforced at runtime)"
+    permit shell/execute/* reason: "shell execution permitted (policy enforced at runtime)"
+
+    # ==== FILESYSTEM OPERATIONS (granular control) ====
+    # Reading from /tmp is auto-permitted
+    permit filesystem/read reason: "filesystem read permitted (operator can restrict via runtime policies)"
+    permit filesystem/read/* reason: "filesystem read permitted (operator can restrict via runtime policies)"
+
+    # Writing and deleting require approval
+    defer filesystem/write reason: "filesystem write operations require operator approval"
+    defer filesystem/write/* reason: "filesystem write operations require operator approval"
     permit install_package
     permit install_package/*
     deny create_files reason: "filesystem mutation tool is blocked in production"

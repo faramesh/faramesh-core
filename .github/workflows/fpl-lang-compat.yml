@@ -1,0 +1,69 @@
+name: FPL Lang Compatibility
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "internal/core/fpl/**"
+      - "packs/**"
+      - "cmd/faramesh/policy_nlp.go"
+      - ".github/workflows/fpl-lang-compat.yml"
+  pull_request:
+    paths:
+      - "internal/core/fpl/**"
+      - "packs/**"
+      - "cmd/faramesh/policy_nlp.go"
+      - ".github/workflows/fpl-lang-compat.yml"
+  repository_dispatch:
+    types: ["fpl-lang-fpl-updated"]
+  workflow_dispatch:
+
+jobs:
+  core-language:
+    name: Core FPL Engine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test core FPL engine
+        run: go test ./internal/core/fpl ./packs/...
+
+  fpl-lang-parity:
+    name: FPL Language Parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone fpl-lang
+        run: git clone --depth 1 https://github.com/faramesh/fpl-lang.git /tmp/fpl-lang
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+      - name: Test reference parser
+        working-directory: /tmp/fpl-lang/reference/go
+        run: go test ./...
+      - name: Run conformance suite
+        working-directory: /tmp/fpl-lang
+        run: bash scripts/run-conformance.sh
+
+  notify-fpl-lang:
+    name: Notify FPL Lang
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - name: Dispatch fpl-lang compatibility run
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.CORE_FPL_SYNC_TOKEN }}
+          script: |
+            await github.rest.repos.createDispatchEvent({
+              owner: 'faramesh',
+              repo: 'fpl-lang',
+              event_type: 'faramesh-core-fpl-updated',
+              client_payload: {
+                source_repo: 'faramesh-core',
+                source_sha: context.sha,
+              },
+            })

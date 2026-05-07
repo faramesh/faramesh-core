@@ -48,6 +48,7 @@ func (s *PGStore) Save(rec *Record) error {
 	cbFired := pgJSONOrNull(rec.CallbacksFired)
 	cbErrs := pgJSONOrNull(rec.CallbackErrors)
 	batchIDs := pgJSONOrNull(rec.BatchDPRIDs)
+	cascadePath := pgJSONOrNull(rec.CascadePath)
 	args := []any{
 		rec.SchemaVersion, rec.FPLVersion, rec.CARVersion, rec.CanonicalizationAlgorithm,
 		rec.RecordID, rec.PrevRecordHash, rec.RecordHash, rec.HMACSig, rec.SignatureAlg, rec.Signature, rec.SignerPublicKey,
@@ -66,6 +67,7 @@ func (s *PGStore) Save(rec *Record) error {
 		rec.DegradedMode,
 		rec.BatchApproval, rec.BatchSize, batchIDs, rec.ResolvedByBatch, rec.BatchApprovalID,
 		rec.ApprovalEnvelope,
+		rec.DeferToken, rec.ParentDeferToken, rec.CascadeReason, rec.CascadeDepth, cascadePath,
 		rec.CreatedAt.UTC(),
 	}
 	ph := make([]string, len(args))
@@ -92,6 +94,7 @@ func (s *PGStore) Save(rec *Record) error {
 			degraded_mode,
 			batch_approval, batch_size, batch_dpr_ids, resolved_by_batch, batch_approval_id,
 			approval_envelope,
+			defer_token, parent_defer_token, cascade_reason, cascade_depth, cascade_path,
 			created_at
 		) VALUES (`+strings.Join(ph, ",")+`) ON CONFLICT (record_id) DO NOTHING`,
 		args...)
@@ -249,6 +252,7 @@ const pgSelectCols = `schema_version, fpl_version, car_version,
 	degraded_mode,
 	batch_approval, batch_size, batch_dpr_ids, resolved_by_batch, batch_approval_id,
 	approval_envelope,
+	defer_token, parent_defer_token, cascade_reason, cascade_depth, cascade_path,
 	created_at`
 
 func pgMigrate(db *sql.DB) error {
@@ -313,6 +317,11 @@ func pgMigrate(db *sql.DB) error {
 		resolved_by_batch          BOOLEAN DEFAULT FALSE,
 		batch_approval_id          TEXT DEFAULT '',
 		approval_envelope          TEXT DEFAULT '',
+		defer_token                TEXT DEFAULT '',
+		parent_defer_token         TEXT DEFAULT '',
+		cascade_reason             TEXT DEFAULT '',
+		cascade_depth              INTEGER DEFAULT 0,
+		cascade_path               JSONB DEFAULT '[]',
 		created_at                 TIMESTAMPTZ NOT NULL
 	);
 	CREATE INDEX IF NOT EXISTS idx_dpr_agent_time ON dpr_records(agent_id, created_at);
@@ -332,6 +341,11 @@ func pgMigrate(db *sql.DB) error {
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS network_audit_bypass BOOLEAN DEFAULT FALSE;
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS inference_model_rewrite_applied BOOLEAN DEFAULT FALSE;
 	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS approval_envelope TEXT DEFAULT '';
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS defer_token TEXT DEFAULT '';
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS parent_defer_token TEXT DEFAULT '';
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS cascade_reason TEXT DEFAULT '';
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS cascade_depth INTEGER DEFAULT 0;
+	ALTER TABLE dpr_records ADD COLUMN IF NOT EXISTS cascade_path JSONB DEFAULT '[]';
 	`)
 	return err
 }
@@ -341,7 +355,7 @@ func pgScanRecords(rows *sql.Rows) ([]*Record, error) {
 	for rows.Next() {
 		var r Record
 		var createdAt time.Time
-		var argProv, selSnap, custOps, opRes, cbFired, cbErrs, batchIDs, approvalEnvelope sql.NullString
+		var argProv, selSnap, custOps, opRes, cbFired, cbErrs, batchIDs, approvalEnvelope, cascadePath sql.NullString
 		if err := rows.Scan(
 			&r.SchemaVersion, &r.FPLVersion, &r.CARVersion, &r.CanonicalizationAlgorithm,
 			&r.RecordID, &r.PrevRecordHash, &r.RecordHash, &r.HMACSig, &r.SignatureAlg, &r.Signature, &r.SignerPublicKey,
@@ -360,6 +374,7 @@ func pgScanRecords(rows *sql.Rows) ([]*Record, error) {
 			&r.DegradedMode,
 			&r.BatchApproval, &r.BatchSize, &batchIDs, &r.ResolvedByBatch, &r.BatchApprovalID,
 			&approvalEnvelope,
+			&r.DeferToken, &r.ParentDeferToken, &r.CascadeReason, &r.CascadeDepth, &cascadePath,
 			&createdAt,
 		); err != nil {
 			return nil, err
@@ -373,6 +388,7 @@ func pgScanRecords(rows *sql.Rows) ([]*Record, error) {
 		pgJSONUnmarshal(cbErrs, &r.CallbackErrors)
 		pgJSONUnmarshal(batchIDs, &r.BatchDPRIDs)
 		r.ApprovalEnvelope = approvalEnvelope.String
+		pgJSONUnmarshal(cascadePath, &r.CascadePath)
 		records = append(records, &r)
 	}
 	return records, rows.Err()
