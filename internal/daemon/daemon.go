@@ -57,6 +57,7 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/policy"
 	"github.com/faramesh/faramesh-core/internal/core/principal"
 	principalidp "github.com/faramesh/faramesh-core/internal/core/principal/idp"
+	"github.com/faramesh/faramesh-core/internal/core/schedule"
 	"github.com/faramesh/faramesh-core/internal/core/session"
 	"github.com/faramesh/faramesh-core/internal/core/standing"
 	"github.com/faramesh/faramesh-core/internal/core/toolinventory"
@@ -132,13 +133,13 @@ type Config struct {
 	CanonicalizationAlgorithm   string
 	// DPRSigner configures which signing backend to use for DPR records.
 	// Supported values: "" (default = on-disk keypair), "file", or a KMS URI like "kms://...".
-	DPRSigner                   string
-	TLSCertFile                 string
-	TLSKeyFile                  string
-	ClientCAFile                string
-	TLSAuto                     bool
-	PagerDutyRoutingKey         string
-	PolicyAdminToken            string
+	DPRSigner           string
+	TLSCertFile         string
+	TLSKeyFile          string
+	ClientCAFile        string
+	TLSAuto             bool
+	PagerDutyRoutingKey string
+	PolicyAdminToken    string
 	// StandingAdminToken authenticates standing_grant_* SDK messages. If empty,
 	// serve resolves it from FARAMESH_STANDING_ADMIN_TOKEN or falls back to PolicyAdminToken.
 	StandingAdminToken    string
@@ -208,6 +209,8 @@ type Daemon struct {
 	ebpfAdapter          ebpf.Lifecycle
 	delegate             *delegate.Service
 	delegateStore        *delegate.SQLiteStore
+	schedule             *schedule.Service
+	scheduleStore        *schedule.SQLiteStore
 	log                  *zap.Logger
 	fleetPolicyApply     func(context.Context, fleetPolicyReloadEvent) (bool, error)
 }
@@ -647,6 +650,14 @@ func (d *Daemon) start() error {
 		nil,
 	)
 
+	scheduleDBPath := filepath.Join(d.cfg.DataDir, "schedules.db")
+	scheduleStore, err := schedule.OpenSQLiteStore(scheduleDBPath)
+	if err != nil {
+		return fmt.Errorf("open schedule store: %w", err)
+	}
+	d.scheduleStore = scheduleStore
+	d.schedule = schedule.NewService(scheduleStore, nil, nil)
+
 	sessionManager := session.NewManager()
 	dailyCostPath := filepath.Join(d.cfg.DataDir, "session_daily_costs.db")
 	if dailyStore, err := session.NewSQLiteDailyCostStore(dailyCostPath); err != nil {
@@ -886,6 +897,9 @@ func (d *Daemon) start() error {
 
 	if d.delegate != nil {
 		server.SetDelegateService(d.delegate)
+	}
+	if d.schedule != nil {
+		server.SetScheduleService(d.schedule)
 	}
 	if err := server.Listen(d.cfg.SocketPath); err != nil {
 		return fmt.Errorf("start SDK server: %w", err)
@@ -1981,6 +1995,9 @@ func (d *Daemon) stop() error {
 	}
 	if d.delegateStore != nil {
 		_ = d.delegateStore.Close()
+	}
+	if d.scheduleStore != nil {
+		_ = d.scheduleStore.Close()
 	}
 	if d.webhooks != nil {
 		d.webhooks.Close()
