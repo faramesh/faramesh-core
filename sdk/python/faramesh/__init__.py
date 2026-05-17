@@ -59,6 +59,8 @@ from .client import (
 # Import new modules
 from .govern import govern
 from .governed_tool import governed_tool
+from .governed_toolset import GovernedToolSet
+from .exceptions import ToolDeniedException
 from .snapshot import ActionSnapshotStore, get_default_store
 from .policy_helpers import validate_policy_file, test_policy_against_action
 
@@ -156,6 +158,8 @@ __all__ = [
     
     # Governance gate
     "govern",
+    "GovernedToolSet",
+    "ToolDeniedException",
 
     # Decorators
     "governed_tool",

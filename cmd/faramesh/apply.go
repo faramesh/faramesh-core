@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 
@@ -49,6 +50,9 @@ func runApply(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	if doc.Runtime != nil && doc.Runtime.ImmutableConfig {
+		_ = security.UnlockConfigFile(path)
+	}
 	diags := governance.Check(doc, governance.CheckOptions{RequireEnv: true})
 	if len(diags) > 0 {
 		governance.PrintDiagnostics(os.Stderr, diags)
@@ -94,5 +98,26 @@ func runApply(_ *cobra.Command, _ []string) error {
 		fmt.Printf("→ runtime started (pid=%d)\n", result.State.DaemonPID)
 	}
 	fmt.Printf("→ Unix socket: %s\n", result.State.SocketPath)
+	printEnforcementPlatformNote()
+	if compiled.Daemon.ImmutableConfig {
+		if err := security.LockConfigFile(path); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: immutable_config: %v\n", err)
+		} else {
+			fmt.Printf("→ config locked: %s\n", path)
+		}
+	}
 	return nil
+}
+
+func printEnforcementPlatformNote() {
+	switch runtime.GOOS {
+	case "linux":
+		fmt.Println("→ OS enforcement: seccomp + Landlock when agents run via faramesh run --enforce full")
+	case "darwin":
+		fmt.Println("→ OS enforcement: Seatbelt (sandbox-exec) when agents run via faramesh run --enforce full")
+	case "windows":
+		fmt.Println("→ OS enforcement: network proxy + SDK tier; syscall sandbox not available on windows")
+	default:
+		fmt.Println("→ OS enforcement: use faramesh run --enforce full on linux or darwin for syscall/filesystem sandbox")
+	}
 }

@@ -164,11 +164,14 @@ def _govern_via_socket(socket_path: str, tool_id: str, args: dict[str, Any]) -> 
             raise RuntimeError("missing JSON-RPC result")
 
         effect = _normalize_effect(result.get("effect", ""))
-        return {
+        out: dict[str, Any] = {
             "effect": effect,
             "reason_code": result.get("reason_code", ""),
             "defer_token": result.get("defer_token", ""),
         }
+        if isinstance(result.get("structured_denial"), dict):
+            out["structured_denial"] = result["structured_denial"]
+        return out
     except Exception as exc:
         logger.error("faramesh socket govern error (fail-closed): %s", exc)
         raise RuntimeError(f"Faramesh governance denied: {exc}") from exc
