@@ -30,7 +30,7 @@ jobs:
     if: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Regenerate and verify committed matrix
         run: make corpus-check
       - uses: actions/upload-artifact@v4
@@ -83,7 +83,7 @@ jobs:
             entry: tests/corpus/runtime-core/socket-e2e-acceptance
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -144,7 +144,7 @@ jobs:
             ext: .exe
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-go@v5
         with:
@@ -184,7 +184,7 @@ jobs:
     needs: build-binaries
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: docker/setup-buildx-action@v3
 
@@ -257,7 +257,7 @@ jobs:
     needs: [build-binaries, corpus-matrix, corpus-harness]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -373,7 +373,7 @@ jobs:
 
       - name: Checkout homebrew-tap
         if: ${{ steps.tap_token.outputs.available == 'true' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: faramesh/homebrew-tap
           token: ${{ secrets.TAP_GITHUB_TOKEN }}
@@ -466,7 +466,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Extract version
         id: version
@@ -554,7 +554,7 @@ jobs:
       id-token: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Extract version
         id: version
