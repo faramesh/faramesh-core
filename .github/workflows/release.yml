@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Regenerate and verify committed matrix
         run: make corpus-check
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: corpus-coverage-matrix
           path: |
@@ -108,7 +108,7 @@ jobs:
           vault version
       - name: Run corpus entry
         run: bash scripts/run_corpus_entry.sh "${{ matrix.entry }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: corpus-harness-${{ matrix.id }}
@@ -169,7 +169,7 @@ jobs:
           sha256sum faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }} \
             > faramesh-${{ matrix.suffix }}.sha256
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: faramesh-${{ matrix.suffix }}
           path: |
