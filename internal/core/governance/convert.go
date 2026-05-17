@@ -107,6 +107,12 @@ func runtimeFromFields(fields map[string]fpl.ConfigValue) *ast.Runtime {
 			rt.DPRKMSKeyRef = configString(v)
 		case "govern_tool_responses":
 			rt.GovernToolResponses = configBool(v)
+		case "os_tier":
+			rt.OSTier = configBool(v)
+		case "strip_ambient_credentials":
+			rt.StripAmbientCredentials = configBool(v)
+		case "agent_enforce_profile":
+			rt.AgentEnforceProfile = configString(v)
 		default:
 			rt.Extra[k] = configString(v)
 		}

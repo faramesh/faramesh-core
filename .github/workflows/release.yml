@@ -426,7 +426,7 @@ jobs:
                 Zero-infrastructure local governance:
                   faramesh init
                   faramesh dev
-                  faramesh run --broker -- python your_agent.py
+                  .faramesh/bin/agent -- python your_agent.py
 
                 Production:
                   faramesh apply
@@ -438,7 +438,7 @@ jobs:
             test do
               assert_match version.to_s, shell_output("#{bin}/faramesh --version")
               shell_output("#{bin}/faramesh init --help")
-              shell_output("#{bin}/faramesh run --help")
+              shell_output("#{bin}/faramesh apply --help")
             end
           end
           FORMULA

@@ -63,6 +63,9 @@ type Runtime struct {
 	DPRKMSProvider               string
 	DPRKMSKeyRef                 string
 	GovernToolResponses          bool
+	OSTier                       bool
+	StripAmbientCredentials      bool
+	AgentEnforceProfile          string
 	Extra                        map[string]string
 }
 

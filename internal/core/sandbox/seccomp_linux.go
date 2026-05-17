@@ -65,7 +65,7 @@ func WriteSeccompProfile(p *SeccompProfile, path string) error {
 // and inherited by all child processes. This is the strongest enforcement —
 // even root cannot remove it.
 //
-// This should be called by faramesh run just before execve() of the child.
+// Called from __agent-exec (apply-generated .faramesh/bin/agent) before execve of the child.
 func InstallSeccompFilter(cfg *SandboxConfig) error {
 	allowed := cfg.AllowedSyscalls
 	if len(allowed) == 0 {

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/faramesh/faramesh-core/internal/core/governance"
+	"github.com/faramesh/faramesh-core/internal/runtimeagent"
 	"github.com/faramesh/faramesh-core/internal/security"
 )
 
@@ -98,7 +99,16 @@ func runApply(_ *cobra.Command, _ []string) error {
 		fmt.Printf("→ runtime started (pid=%d)\n", result.State.DaemonPID)
 	}
 	fmt.Printf("→ Unix socket: %s\n", result.State.SocketPath)
-	printEnforcementPlatformNote()
+	compiled.StackDir = stackDir
+	if exe, err := os.Executable(); err == nil {
+		settings := runtimeagent.SettingsFromCompiled(compiled)
+		if err := runtimeagent.WriteArtifacts(exe, settings); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: agent launcher: %v\n", err)
+		} else {
+			fmt.Printf("→ agent launcher: %s\n", runtimeagent.LaunchHint(stackDir))
+		}
+	}
+	printEnforcementPlatformNote(compiled)
 	if compiled.Daemon.ImmutableConfig {
 		if err := security.LockConfigFile(path); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: immutable_config: %v\n", err)
@@ -109,15 +119,17 @@ func runApply(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-func printEnforcementPlatformNote() {
-	switch runtime.GOOS {
-	case "linux":
-		fmt.Println("→ OS enforcement: seccomp + Landlock when agents run via faramesh run --enforce full")
-	case "darwin":
-		fmt.Println("→ OS enforcement: Seatbelt (sandbox-exec) when agents run via faramesh run --enforce full")
-	case "windows":
-		fmt.Println("→ OS enforcement: network proxy + SDK tier; syscall sandbox not available on windows")
-	default:
-		fmt.Println("→ OS enforcement: use faramesh run --enforce full on linux or darwin for syscall/filesystem sandbox")
+func printEnforcementPlatformNote(compiled *governance.Compiled) {
+	if compiled != nil && compiled.Daemon.OSTier {
+		switch runtime.GOOS {
+		case "linux":
+			fmt.Println("→ OS tier: seccomp + Landlock (runtime { os_tier = true }) via .faramesh/bin/agent")
+		case "darwin":
+			fmt.Println("→ OS tier: Seatbelt sandbox-exec (runtime { os_tier = true }) via .faramesh/bin/agent")
+		default:
+			fmt.Println("→ OS tier: configured; platform sandbox may be limited on this OS")
+		}
+		return
 	}
+	fmt.Println("→ enforcement: SDK/proxy tier (set runtime { os_tier = true } for syscall/filesystem sandbox)")
 }

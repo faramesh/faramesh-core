@@ -19,6 +19,22 @@ type Report struct {
 	Skipped      map[string]string
 }
 
+// ReportFromEnv builds a report from environment (apply-generated agent.env).
+func ReportFromEnv(profile string) Report {
+	if profile == "" {
+		profile = os.Getenv("FARAMESH_ENFORCE_PROFILE")
+	}
+	if profile == "" {
+		profile = "auto"
+	}
+	broker := os.Getenv("FARAMESH_STRIP_AMBIENT") == "1"
+	return Report{
+		Profile: profile,
+		Broker:  broker,
+		Layers:  sandbox.ActivePlatformLayers(profile),
+	}
+}
+
 func (r Report) Write(w io.Writer) {
 	fmt.Fprintln(w, "Faramesh Enforcement Report")
 	fmt.Fprintf(w, "  Host OS: %s/%s\n", runtime.GOOS, runtime.GOARCH)

@@ -62,6 +62,9 @@ type DaemonSnapshot struct {
 	TenantID                   string `json:"tenant_id,omitempty"`
 	GovernToolResponses        bool   `json:"govern_tool_responses,omitempty"`
 	ImmutableConfig            bool   `json:"immutable_config,omitempty"`
+	OSTier                     bool   `json:"os_tier,omitempty"`
+	StripAmbientCredentials    bool   `json:"strip_ambient_credentials,omitempty"`
+	AgentEnforceProfile        string `json:"agent_enforce_profile,omitempty"`
 	BudgetPools                []agentgov.BudgetPool `json:"budget_pools,omitempty"`
 }
 
