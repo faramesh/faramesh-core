@@ -30,12 +30,10 @@ func ResolveImports(doc *ast.Document, offline bool) error {
 	cacheDir := filepath.Join(stackDir, ".faramesh", "import-cache")
 	_ = os.MkdirAll(cacheDir, 0o755)
 
-	baseURL := registryBaseURL("")
-	client, err := hub.NewClient(baseURL)
+	reg, err := registry.NewResolver()
 	if err != nil {
 		return err
 	}
-	reg := registry.NewClient(client)
 
 	for _, imp := range doc.Imports {
 		ref := strings.TrimSpace(imp.Ref)
@@ -55,8 +53,8 @@ func ResolveImports(doc *ast.Document, offline bool) error {
 		cancel()
 		if err != nil {
 			loc := importLocation(doc, imp)
-			if strings.TrimSpace(os.Getenv("FARAMESH_REGISTRY_URL")) == "" {
-				return fmt.Errorf("%s — import %q\n  Registry URL not configured and pack not in local bundle.\n  Set FARAMESH_REGISTRY_URL or run faramesh bundle for offline use.", loc, ref)
+			if strings.TrimSpace(os.Getenv("FARAMESH_REGISTRY_URL")) == "" && strings.TrimSpace(os.Getenv("FARAMESH_REGISTRY_ROOT")) == "" {
+				return fmt.Errorf("%s — import %q\n  Registry not configured and pack not in local bundle.\n  Set FARAMESH_REGISTRY_URL, FARAMESH_REGISTRY_ROOT, or run faramesh bundle for offline use.", loc, ref)
 			}
 			return fmt.Errorf("import %q: fetch failed: %w", ref, err)
 		}

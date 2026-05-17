@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/faramesh/faramesh-core/internal/core/governance/ast"
-	"github.com/faramesh/faramesh-core/internal/hub"
 	"github.com/faramesh/faramesh-core/internal/registry"
 )
 
@@ -30,11 +29,10 @@ func ResolveProviderImports(doc *ast.Document, stackDir string, offline bool) er
 		}
 	}
 
-	client, err := hub.NewClient(registryBaseURL(""))
+	reg, err := registry.NewResolver()
 	if err != nil {
 		return err
 	}
-	reg := registry.NewClient(client)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -55,7 +53,7 @@ func ResolveProviderImports(doc *ast.Document, stackDir string, offline bool) er
 		if info, err := os.Stat(binPath); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
 			continue
 		}
-		if _, err := registry.InstallProviderBinary(ctx, reg, parsed, stackDir); err != nil {
+		if _, err := reg.InstallProviderBinary(ctx, parsed, stackDir); err != nil {
 			return fmt.Errorf("provider import %q: %w", ref, err)
 		}
 		marker := filepath.Join(stackDir, ".faramesh", "import-cache", "providers", parsed.Name+"@"+parsed.Version+".resolved")
