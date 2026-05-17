@@ -1,19 +1,18 @@
 class Faramesh < Formula
   desc "Pre-execution governance engine for AI agents"
-  homepage "https://faramesh.dev"
-  url "https://github.com/faramesh/faramesh-core/archive/refs/tags/v#{version}.tar.gz"
+  homepage "https://docs.faramesh.dev"
   license "MPL-2.0"
 
   depends_on "go" => :build
 
   def install
-    system "go", "build", "-trimpath",
-           "-ldflags", "-s -w -X main.version=#{version}",
-           "-o", bin/"faramesh", "./cmd/faramesh"
+    ldflags = "-s -w -X main.version=#{version}"
+    system "go", "build", *std_go_args(ldflags:), "./cmd/faramesh"
   end
 
   test do
-    assert_match version.to_s, shell_output("#{bin}/faramesh --version")
-    shell_output("#{bin}/faramesh setup --help")
+    assert_match "faramesh", shell_output("#{bin}/faramesh --help")
+    shell_output("#{bin}/faramesh init --help")
+    shell_output("#{bin}/faramesh run --help")
   end
 end

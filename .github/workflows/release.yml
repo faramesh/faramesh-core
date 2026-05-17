@@ -423,26 +423,22 @@ jobs:
 
             def caveats
               <<~EOS
-                Run the demo to see Faramesh in action:
-                  faramesh demo
+                Zero-infrastructure local governance:
+                  faramesh init
+                  faramesh dev
+                  faramesh run --broker -- python your_agent.py
 
-                Start the guided setup flow:
-                  faramesh setup flow
+                Production:
+                  faramesh apply
 
-                Uninstall from a project and clean up local state:
-                  faramesh setup uninstall --path /path/to/project --yes
-
-                Start the governance daemon:
-                  faramesh serve --policy policy.yaml
-
-                Docs: https://faramesh.dev/docs
+                Docs: https://docs.faramesh.dev
               EOS
             end
 
             test do
               assert_match version.to_s, shell_output("#{bin}/faramesh --version")
-              shell_output("#{bin}/faramesh setup --help")
-              system bin/"faramesh", "demo"
+              shell_output("#{bin}/faramesh init --help")
+              shell_output("#{bin}/faramesh run --help")
             end
           end
           FORMULA
