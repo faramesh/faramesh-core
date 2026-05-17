@@ -105,6 +105,8 @@ func runtimeFromMap(m map[string]any) *ast.Runtime {
 			rt.StripAmbientCredentials = scalarBool(v)
 		case "agent_enforce_profile":
 			rt.AgentEnforceProfile = s
+		case "supervised_command":
+			rt.SupervisedCommand = s
 		case "govern_tool_responses":
 			rt.GovernToolResponses = scalarBool(v)
 		default:

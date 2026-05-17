@@ -113,6 +113,8 @@ func runtimeFromFields(fields map[string]fpl.ConfigValue) *ast.Runtime {
 			rt.StripAmbientCredentials = configBool(v)
 		case "agent_enforce_profile":
 			rt.AgentEnforceProfile = configString(v)
+		case "supervised_command":
+			rt.SupervisedCommand = configString(v)
 		default:
 			rt.Extra[k] = configString(v)
 		}

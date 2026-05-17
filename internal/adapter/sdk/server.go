@@ -57,6 +57,7 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core"
 	"github.com/faramesh/faramesh-core/internal/core/credential"
 	"github.com/faramesh/faramesh-core/internal/core/delegate"
+	"github.com/faramesh/faramesh-core/internal/daemon/agentsupervisor"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/principal"
 	"github.com/faramesh/faramesh-core/internal/core/reasons"
@@ -437,6 +438,7 @@ type Server struct {
 	standingAdminToken string
 	shutdownFunc       func()
 	delegate           *delegate.Service
+	supervisor         *agentsupervisor.Supervisor
 }
 
 // NewServer creates a new SDK socket server.
@@ -772,6 +774,12 @@ func (s *Server) handle(conn net.Conn) {
 			s.handleCompensate(conn, line)
 		case "delegate":
 			s.handleDelegate(conn, line)
+		case "supervisor_launch":
+			s.handleSupervisorLaunch(conn, line)
+		case "supervisor_stop":
+			s.handleSupervisorStop(conn, line)
+		case "supervisor_list":
+			s.handleSupervisorList(conn)
 		case "poll_defer":
 			s.handlePollDefer(conn, line)
 		case "approve_defer":

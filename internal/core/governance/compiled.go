@@ -65,6 +65,7 @@ type DaemonSnapshot struct {
 	OSTier                     bool   `json:"os_tier,omitempty"`
 	StripAmbientCredentials    bool   `json:"strip_ambient_credentials,omitempty"`
 	AgentEnforceProfile        string `json:"agent_enforce_profile,omitempty"`
+	SupervisedCommand          string `json:"supervised_command,omitempty"`
 	BudgetPools                []agentgov.BudgetPool `json:"budget_pools,omitempty"`
 }
 
@@ -145,6 +146,11 @@ func (c *Compiled) ToDaemonConfig() daemon.Config {
 	cfg.BudgetPools = append([]agentgov.BudgetPool(nil), c.BudgetPools...)
 	cfg.StackDir = strings.TrimSpace(c.StackDir)
 	cfg.ImmutableConfig = s.ImmutableConfig
+	cfg.OSTier = s.OSTier
+	cfg.StripAmbientCredentials = s.StripAmbientCredentials
+	cfg.AgentEnforceProfile = s.AgentEnforceProfile
+	cfg.SupervisedCommand = s.SupervisedCommand
+	cfg.PrimaryAgentID = strings.TrimSpace(c.PrimaryAgentID)
 	// Compiled stacks are load-once; changes require faramesh apply (privileged).
 	cfg.PolicyHotReload = false
 	return cfg

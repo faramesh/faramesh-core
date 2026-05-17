@@ -66,6 +66,7 @@ type Runtime struct {
 	OSTier                       bool
 	StripAmbientCredentials      bool
 	AgentEnforceProfile          string
+	SupervisedCommand            string
 	Extra                        map[string]string
 }
 

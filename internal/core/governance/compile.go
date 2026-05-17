@@ -171,6 +171,7 @@ func daemonSnapshotFromAST(doc *ast.Document, stackDir, policyPath string) (Daem
 		snap.OSTier = rt.OSTier
 		snap.StripAmbientCredentials = rt.StripAmbientCredentials
 		snap.AgentEnforceProfile = strings.TrimSpace(rt.AgentEnforceProfile)
+		snap.SupervisedCommand = strings.TrimSpace(rt.SupervisedCommand)
 	}
 	if snap.DPRKMSProvider == "" {
 		snap.DPRKMSProvider = firstKMSProviderName(doc)
