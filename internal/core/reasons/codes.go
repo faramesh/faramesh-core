@@ -145,6 +145,13 @@ const (
 	// Token budget (LLM context) — enforced when adapters report usage via args.
 	BudgetSessionTokensExceeded = "BUDGET_SESSION_TOKENS_EXCEEDED"
 	BudgetDailyTokensExceeded   = "BUDGET_DAILY_TOKENS_EXCEEDED"
+	BudgetWarning               = "BUDGET_WARNING"
+	RateExceeded                = "RATE_EXCEEDED"
+	RedactionFailure            = "REDACTION_FAILURE"
+	DaemonNotReady              = "DAEMON_NOT_READY"
+	CompletionBlocked           = "COMPLETION_BLOCKED"
+	EgressDenied                = "EGRESS_DENIED"
+	ProviderUnhealthy           = "PROVIDER_UNHEALTHY"
 
 	// Degraded mode codes
 	GovernanceDegradedStateless = "GOVERNANCE_DEGRADED_STATELESS"
@@ -319,6 +326,11 @@ var canonical = map[string]struct{}{
 
 	BudgetSessionTokensExceeded: {},
 	BudgetDailyTokensExceeded:   {},
+	BudgetWarning:               {},
+	RateExceeded:                {},
+	RedactionFailure:            {},
+	DaemonNotReady:              {},
+	CompletionBlocked:           {},
 
 	GovernanceDegradedStateless: {},
 	GovernanceDegradedMinimal:   {},

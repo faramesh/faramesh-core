@@ -83,6 +83,20 @@ func TestParseRulesWhenSupportsSingleQuotedStrings(t *testing.T) {
 	}
 }
 
+func TestParseRulesWhenPreservesComparisonOperators(t *testing.T) {
+	src := `permit issue_credit when args.amount <= 25`
+	rules, err := ParseRules(src)
+	if err != nil {
+		t.Fatalf("parse comparison when expression: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].Condition != "args.amount <= 25" {
+		t.Fatalf("unexpected condition: %q", rules[0].Condition)
+	}
+}
+
 func TestParseRulesWithNetworkSelectors(t *testing.T) {
 	src := `permit proxy/http host: api.openai.com port: 443 method: POST path: /v1/* query: model=gpt-* header: x-org=acme when args.user == "alice"`
 	rules, err := ParseRules(src)

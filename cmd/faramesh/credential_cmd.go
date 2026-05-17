@@ -228,7 +228,7 @@ var credentialStatusCmd = &cobra.Command{
 			"next_steps": []string{
 				"faramesh credential enable --policy <policy> --import-env",
 				"faramesh up --policy <policy>",
-				"faramesh run --broker -- <agent-command>",
+				"faramesh dev  # then connect your agent to the Unix socket",
 			},
 		}
 
@@ -476,7 +476,7 @@ func runCredentialEnable(_ *cobra.Command, _ []string) error {
 
 	printReadyLine("credential sequestration defaults are active")
 	printNextStepLine("review readiness: faramesh credential status")
-	printNextStepLine("run governed command: faramesh run --broker -- <agent-command>")
+	printNextStepLine("run governed stack: faramesh dev, then connect your agent via GovernedToolSet")
 	printNextStepLine("open approval queue: faramesh approvals")
 	return nil
 }
@@ -722,8 +722,6 @@ func applyCredentialProfileRuntime(policyPath string, restart bool) error {
 }
 
 func init() {
-	rootCmd.AddCommand(credentialCmd)
-
 	credentialRegisterCmd.Flags().StringVar(&credRegisterKey, "key", "", "credential key or secret value")
 	credentialRegisterCmd.Flags().StringVar(&credRegisterScope, "scope", "", "allowed scope for this credential")
 	credentialRegisterCmd.Flags().StringVar(&credRegisterMaxScope, "max-scope", "", "maximum scope ceiling")
@@ -844,7 +842,7 @@ func printCredentialStatusSummary(out map[string]any, showDetails bool) {
 	}
 
 	printNextStepLine("Enable defaults: faramesh credential enable --policy <policy> --import-env")
-	printNextStepLine("Run governed agent: faramesh run --broker -- <agent-command>")
+	printNextStepLine("Run governed agent: faramesh dev, then GovernedToolSet against the daemon socket")
 }
 
 func ternary(condition bool, yes, no string) string {

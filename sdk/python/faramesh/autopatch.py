@@ -82,11 +82,25 @@ def install() -> list[str]:
 def _govern_call(tool_id: str, args: dict[str, Any]) -> dict[str, Any]:
     """Submit a tool call to the Faramesh daemon for governance.
 
-    Tries socket-based governance first (fastest, used with `faramesh run`),
-    falls back to the HTTP SDK client.
+    Uses FARAMESH_REMOTE_URL, FARAMESH_SOCKET, or FARAMESH_BASE_URL (see transport.py),
+    then falls back to the legacy gate HTTP client.
     """
-    socket_path = os.environ.get("FARAMESH_SOCKET", "/tmp/faramesh.sock")
+    try:
+        from faramesh.transport import detect_transport, govern_via_transport
 
+        transport = detect_transport()
+        result = govern_via_transport(transport, tool_id, args)
+        effect = _normalize_effect(result.get("effect", ""))
+        out: dict[str, Any] = {"effect": effect}
+        if effect == "DENY":
+            out["reason_code"] = result.get("reason_code", "")
+        if effect == "DEFER":
+            out["defer_token"] = result.get("defer_token", "")
+        return out
+    except RuntimeError:
+        pass
+
+    socket_path = os.environ.get("FARAMESH_SOCKET", "/tmp/faramesh.sock")
     if os.path.exists(socket_path):
         return _govern_via_socket(socket_path, tool_id, args)
 

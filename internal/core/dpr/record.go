@@ -15,8 +15,11 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/canonicalize"
 )
 
-// SchemaVersion is the DPR schema version embedded in every record.
-const SchemaVersion = "dpr/1.0"
+// SchemaVersion is the DPR schema version embedded in new records.
+const SchemaVersion = "dpr/2.0"
+
+// SchemaVersionV1 is the legacy DPR schema still accepted on WAL replay.
+const SchemaVersionV1 = "dpr/1.0"
 
 const (
 	// CanonicalizationLegacyJSON preserves the original DPR JSON serialization.
@@ -46,11 +49,16 @@ type Record struct {
 	Signature       string `json:"signature,omitempty"`
 	SignatureAlg    string `json:"signature_algorithm,omitempty"`
 	SignerPublicKey string `json:"signer_public_key,omitempty"`
+	KMSSignature    string `json:"kms_signature,omitempty"`
+	KMSKeyRef       string `json:"kms_key_ref,omitempty"`
 
 	// ── Identity & Request ──
 	AgentID            string `json:"agent_id"`
 	SessionID          string `json:"session_id"`
 	ToolID             string `json:"tool_id"`
+	ActionType         string `json:"action_type,omitempty"`
+	LamportSeq         uint64 `json:"lamport_seq,omitempty"`
+	ReasoningSummary   string `json:"reasoning_summary,omitempty"`
 	InterceptAdapter   string `json:"intercept_adapter"`
 	ExecutionTimeoutMS int    `json:"execution_timeout_ms,omitempty"`
 	PrincipalIDHash    string `json:"principal_id_hash,omitempty"` // HMAC pseudonymized (GDPR)

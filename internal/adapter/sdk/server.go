@@ -81,6 +81,8 @@ type governRequest struct {
 	AgentID            string              `json:"agent_id"`
 	SessionID          string              `json:"session_id"`
 	ToolID             string              `json:"tool_id"`
+	ActionType         string              `json:"action_type,omitempty"`
+	ReasoningSummary   string              `json:"reasoning_summary,omitempty"`
 	Args               map[string]any      `json:"args"`
 	PrincipalToken     string              `json:"principal_token,omitempty"`
 	DelegationToken    string              `json:"delegation_token,omitempty"`
@@ -112,12 +114,13 @@ type governJSONRPCParams struct {
 
 // governResponse is the server → client message for a decision.
 type governResponse struct {
-	CallID         string `json:"call_id"`
-	Effect         string `json:"effect"`
-	DenialToken    string `json:"denial_token,omitempty"`
-	RetryPermitted bool   `json:"retry_permitted,omitempty"`
-	DeferToken     string `json:"defer_token,omitempty"`
-	LatencyMs      int64  `json:"latency_ms"`
+	CallID           string `json:"call_id"`
+	Effect           string `json:"effect"`
+	DenialToken      string `json:"denial_token,omitempty"`
+	RetryPermitted   bool   `json:"retry_permitted,omitempty"`
+	DeferToken       string `json:"defer_token,omitempty"`
+	LatencyMs        int64  `json:"latency_ms"`
+	StructuredDenial any    `json:"structured_denial,omitempty"`
 }
 
 type auditEvent struct {
@@ -838,6 +841,8 @@ func (s *Server) resolveGovernRequest(req governRequest) (governResponse, core.D
 		AgentID:            req.AgentID,
 		SessionID:          req.SessionID,
 		ToolID:             req.ToolID,
+		ActionType:         core.ActionType(req.ActionType),
+		ReasoningSummary:   req.ReasoningSummary,
 		Args:               req.Args,
 		Principal:          resolvedPrincipal,
 		Delegation:         delegationChain,
@@ -849,12 +854,13 @@ func (s *Server) resolveGovernRequest(req governRequest) (governResponse, core.D
 
 	decision := s.pipeline.Evaluate(car)
 	resp := governResponse{
-		CallID:         req.CallID,
-		Effect:         string(decision.Effect),
-		DenialToken:    decision.DenialToken,
-		RetryPermitted: decision.RetryPermitted,
-		DeferToken:     decision.DeferToken,
-		LatencyMs:      decision.Latency.Milliseconds(),
+		CallID:           req.CallID,
+		Effect:           string(decision.Effect),
+		DenialToken:      decision.DenialToken,
+		RetryPermitted:   decision.RetryPermitted,
+		DeferToken:       decision.DeferToken,
+		LatencyMs:        decision.Latency.Milliseconds(),
+		StructuredDenial: decision.StructuredDenial,
 	}
 	return resp, decision, resolvedPrincipal, nil
 }

@@ -138,11 +138,7 @@ This keeps one telemetry endpoint while supporting multiple backends.
 faramesh policy reload
 ```
 
-Operator note: reload policy after updates without restarting runtime:
-
-```bash
-faramesh policy reload
-```
+Use `faramesh policy reload --data-dir <path>` when the daemon state lives outside the default runtime directory.
 
 ## See deny reason details
 

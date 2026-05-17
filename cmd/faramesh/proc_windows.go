@@ -13,5 +13,5 @@ func terminateProcessGroup(pid int) (bool, error) {
 }
 
 func isProcessGroupAlive(pid int) bool {
-	return false
+	return isProcessAlive(pid)
 }

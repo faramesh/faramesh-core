@@ -213,6 +213,9 @@ func (g *StdioGateway) handleLocalControl(msg MCPMessage) (bool, MCPMessage, err
 		return false, MCPMessage{}, nil
 	}
 	switch strings.TrimSpace(msg.Method) {
+	case "faramesh/tasks/complete":
+		out, err := g.evaluateTaskCompletion(msg)
+		return true, out, err
 	case "faramesh/defer/status":
 		var params deferStatusParams
 		if err := json.Unmarshal(msg.Params, &params); err != nil {

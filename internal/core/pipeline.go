@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/faramesh/faramesh-core/internal/core/agentgov"
 	"github.com/faramesh/faramesh-core/internal/core/callbacks"
 	"github.com/faramesh/faramesh-core/internal/core/canonicalize"
 	"github.com/faramesh/faramesh-core/internal/core/contextguard"
@@ -26,6 +27,7 @@ import (
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
 	"github.com/faramesh/faramesh-core/internal/core/degraded"
 	"github.com/faramesh/faramesh-core/internal/core/dpr"
+	"github.com/faramesh/faramesh-core/internal/core/governstate"
 	"github.com/faramesh/faramesh-core/internal/core/jobs"
 	"github.com/faramesh/faramesh-core/internal/core/multiagent"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
@@ -122,6 +124,18 @@ type Pipeline struct {
 	budgetMu                  sync.Mutex
 	budgetManagers            map[string]*multiagent.BudgetManager
 	standing                  *standing.Registry
+	agentGovernance           map[string]agentgov.Spec
+	governState               *governstate.Tracker
+	lifecycle                 GovernanceLifecycle
+	providerHealth            ProviderHealthChecker
+	auditSinks                []AuditSinkClient
+	costEstimator             CostEstimatorClient
+	lamportMu                 sync.Mutex
+	lamportByAgent            map[string]uint64
+	stackTenantID             string
+	governToolResponses       bool
+	budgetPools               []agentgov.BudgetPool
+	budgetPoolTrack           *budgetPoolTracker
 }
 
 type policyArtifacts struct {
@@ -218,6 +232,8 @@ type Config struct {
 	CanonicalizationAlgorithm string
 	Log                       *zap.Logger
 	Standing                  *standing.Registry
+	AgentGovernance           map[string]agentgov.Spec
+	GovernState               *governstate.Tracker
 }
 
 // NewPipeline constructs a Pipeline from a Config.
@@ -289,12 +305,37 @@ func NewPipeline(cfg Config) *Pipeline {
 		canonicalizationAlgorithm: canonAlg,
 		log:                       cfg.Log,
 		activeCallChains:          make(map[string]struct{}),
+		lamportByAgent:            make(map[string]uint64),
 		models:                    make(map[string]ModelRegistration),
 		budgetManagers:            make(map[string]*multiagent.BudgetManager),
 		standing:                  stReg,
+		agentGovernance:           cfg.AgentGovernance,
+		governState:               cfg.GovernState,
+	}
+	if p.governState == nil && len(cfg.AgentGovernance) > 0 {
+		p.governState = governstate.New()
 	}
 	if p.log == nil {
 		p.log = zap.NewNop()
+	}
+
+	if w, ok := cfg.WAL.(*dpr.WAL); ok && p.governState != nil {
+		if err := p.governState.ReplayFromWAL(w); err != nil {
+			p.log.Warn("governstate wal replay failed", zap.Error(err))
+		}
+	}
+	if w, ok := cfg.WAL.(*dpr.WAL); ok {
+		_ = w.ReplayValidated(func(rec *dpr.Record) error {
+			if rec == nil || rec.LamportSeq == 0 {
+				return nil
+			}
+			p.lamportMu.Lock()
+			if rec.LamportSeq > p.lamportByAgent[rec.AgentID] {
+				p.lamportByAgent[rec.AgentID] = rec.LamportSeq
+			}
+			p.lamportMu.Unlock()
+			return nil
+		})
 	}
 
 	p.artifacts.Store(buildPolicyArtifacts(currentEngine(cfg.Engine)))
@@ -464,6 +505,19 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	if req.Timestamp.IsZero() {
 		req.Timestamp = start
 	}
+	req.ActionType = NormalizeActionType(req.ActionType)
+	req.ReasoningSummary = TruncateReasoningSummary(req.ReasoningSummary)
+
+	if d, denied := p.lifecycleDeny(req, start); denied {
+		return d
+	}
+	if d, denied := p.evaluateByActionType(req, start); denied {
+		return d
+	}
+	if NormalizeActionType(req.ActionType) == ActionTypeModelCall && strings.TrimSpace(req.ToolID) == "" {
+		req.ToolID = "model/invoke"
+	}
+
 	if req.InterceptAdapter == "" {
 		req.InterceptAdapter = "sdk"
 	}
@@ -476,6 +530,10 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 			}, p.sessions.Get(req.AgentID), start, nil)
 		}
 		defer p.leaveCallChain(req.CallID)
+	}
+
+	if d, blocked := p.rejectToolResponseIfDisabled(req); blocked {
+		return p.decide(req, d, p.sessions.Get(req.AgentID), start, nil)
 	}
 
 	// [0] Fail-closed on null-byte payloads to block string-termination bypasses.
@@ -494,6 +552,34 @@ func (p *Pipeline) Evaluate(req CanonicalActionRequest) Decision {
 	// [0.2] Canonicalize tool ID: apply the same NFKC + confusable mapping
 	// to prevent Unicode spoofing attacks on tool identifiers.
 	req.ToolID = canonicalize.ToolID(req.ToolID)
+
+	// [0.25] Agent redaction — keyed HMAC on configured arg paths before WAL (fail-closed).
+	if err := p.applyAgentRedaction(&req); err != nil {
+		return p.decide(req, Decision{
+			Effect:     EffectDeny,
+			ReasonCode: reasons.RedactionFailure,
+			Reason:     err.Error(),
+		}, p.sessions.Get(req.AgentID), start, nil)
+	}
+
+	// [0.26] Agent rate limits — durable counters replayed from WAL control frames.
+	if denied, code, reason := p.checkAgentRateLimit(req); denied {
+		return p.decide(req, Decision{
+			Effect:     EffectDeny,
+			ReasonCode: code,
+			Reason:     reason,
+		}, p.sessions.Get(req.AgentID), start, nil)
+	}
+
+	if d, ok := p.checkProviderHealth(req); ok {
+		return d
+	}
+	if d, ok := p.checkAgentEgress(req); ok {
+		return d
+	}
+	if d, ok := p.checkCompletionGate(req); ok {
+		return d
+	}
 
 	// [0.2] Workload identity fallback — if principal is missing or unverified,
 	// try to inject an auto-detected workload identity.
@@ -929,6 +1015,7 @@ routingApproved:
 
 	// [4.5] Tool metadata lookup — needed by both budget reservation and policy conditions.
 	toolMeta, toolCostUSD := lookupToolMeta(doc, req.ToolID)
+	toolCostUSD = p.estimatedToolCostUSD(req, toolCostUSD)
 	reservedCostUSD := 0.0
 	reservedTokens := int64(0)
 	finalizeDecision := func(dec Decision) Decision {
@@ -989,6 +1076,23 @@ routingApproved:
 				})
 			}
 			reservedTokens = incomingTok
+		}
+
+		sessCost := subtractReservedCost(sess.CurrentCostUSD(), reservedCostUSD)
+		dailyCost := subtractReservedCost(sess.DailyCostUSD(), reservedCostUSD)
+		if denied, code, reason := p.checkBudgetPool(req.AgentID, toolCostUSD); denied {
+			return finalizeDecision(Decision{
+				Effect:     EffectDeny,
+				ReasonCode: code,
+				Reason:     reason,
+			})
+		}
+		if warn, code, reason := p.checkBudgetWarnAt(req.AgentID, doc.Budget, sessCost, dailyCost); warn {
+			return finalizeDecision(Decision{
+				Effect:     EffectDefer,
+				ReasonCode: code,
+				Reason:     reason,
+			})
 		}
 
 		if denied, code, reason := p.checkBudget(req.AgentID, doc.Budget, callCount, reservedCostUSD); denied {
@@ -1373,6 +1477,7 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 	defer observe.EndOTLPSpan(decisionSpan, nil)
 
 	d = p.applyRuntimeMode(d)
+	p.enrichStructuredDenial(req, &d)
 	d.Latency = time.Since(start)
 	d.AgentID = req.AgentID
 	d.ToolID = req.ToolID
@@ -1436,6 +1541,17 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 		}
 	}
 	observe.Default.RecordWALWrite(true)
+	p.replicateToAuditSinks(rec)
+	dpr.NotifyWatchdog()
+	p.evaluateAgentAlerts(req, d)
+
+	var toolCostUSD float64
+	if art := p.currentArtifacts(); art.engine != nil {
+		if doc := art.engine.Doc(); doc != nil {
+			_, toolCostUSD = lookupToolMeta(doc, req.ToolID)
+		}
+	}
+	p.persistAgentGovernance(req, d, toolCostUSD)
 
 	if p.routingGovernor != nil && d.Effect == EffectPermit && topologyInvokeTool(req.ToolID) && p.routingGovernor.HasManifest(req.AgentID) {
 		if target := extractTargetAgentID(req.Args); target != "" {
@@ -1497,6 +1613,11 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 				if manager := p.ensureParallelBudgetManager(doc, req.SessionID, req.AgentID); manager != nil {
 					if _, toolCostUSD := lookupToolMeta(doc, req.ToolID); toolCostUSD > 0 {
 						_, _ = manager.RecordCost(req.AgentID, toolCostUSD)
+					}
+				}
+				if d.Effect == EffectPermit && p.budgetPoolTrack != nil {
+					if _, toolCostUSD := lookupToolMeta(doc, req.ToolID); toolCostUSD > 0 {
+						p.recordBudgetPoolSpend(req.AgentID, toolCostUSD)
 					}
 				}
 			}
@@ -1632,9 +1753,20 @@ func (p *Pipeline) buildRecordWithID(req CanonicalActionRequest, d Decision, arg
 		recordID = uuid.New().String()
 	}
 
+	p.lamportMu.Lock()
+	if p.lamportByAgent == nil {
+		p.lamportByAgent = make(map[string]uint64)
+	}
+	p.lamportByAgent[req.AgentID]++
+	lamport := p.lamportByAgent[req.AgentID]
+	p.lamportMu.Unlock()
+
 	rec := &dpr.Record{
 		SchemaVersion:             dpr.SchemaVersion,
 		CARVersion:                CARVersion,
+		ActionType:                string(NormalizeActionType(req.ActionType)),
+		LamportSeq:                lamport,
+		ReasoningSummary:          TruncateReasoningSummary(req.ReasoningSummary),
 		CanonicalizationAlgorithm: p.canonicalizationAlgorithm,
 		RecordID:                  recordID,
 		PrevRecordHash:            prevHash,
@@ -3157,6 +3289,10 @@ func sanitizeSelectorValue(v any) any {
 				continue
 			}
 			if isSensitiveSelectorKey(key) {
+				if s, ok := child.(string); ok && strings.HasPrefix(s, "hmac:") {
+					out[key] = s
+					continue
+				}
 				out[key] = "[redacted]"
 				continue
 			}
@@ -3179,6 +3315,9 @@ func sanitizeSelectorValue(v any) any {
 		s := strings.TrimSpace(x)
 		if s == "" {
 			return x
+		}
+		if strings.HasPrefix(s, "hmac:") {
+			return s
 		}
 		// Redact obvious secret material in values, but keep path-like strings that
 		// scanners match (e.g. /etc/passwd) so WAL replay can reproduce scanner DENY

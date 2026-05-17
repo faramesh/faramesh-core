@@ -4,13 +4,15 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
 User=faramesh
 Group=faramesh
-# Adjust paths to your install (e.g. /usr/local/bin/faramesh from package).
-ExecStart=/usr/local/bin/faramesh serve --policy /etc/faramesh/policy.yaml --socket /run/faramesh/faramesh.sock
-Restart=on-failure
+# Adjust paths to your stack (governance.compiled.json from faramesh apply).
+ExecStart=/usr/local/bin/faramesh serve --from-compiled /var/lib/faramesh/governance.compiled.json
+Restart=always
 RestartSec=2
+WatchdogSec=30
+NotifyAccess=main
 RuntimeDirectory=faramesh
 RuntimeDirectoryMode=0755
 # Hardening (tune for your site)

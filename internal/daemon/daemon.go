@@ -43,6 +43,7 @@ import (
 	"github.com/faramesh/faramesh-core/internal/artifactverify"
 	"github.com/faramesh/faramesh-core/internal/cloud"
 	"github.com/faramesh/faramesh-core/internal/core"
+	"github.com/faramesh/faramesh-core/internal/core/agentgov"
 	"github.com/faramesh/faramesh-core/internal/core/callbacks"
 	"github.com/faramesh/faramesh-core/internal/core/credential"
 	deferwork "github.com/faramesh/faramesh-core/internal/core/defer"
@@ -61,6 +62,8 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/standing"
 	"github.com/faramesh/faramesh-core/internal/core/toolinventory"
 	"github.com/faramesh/faramesh-core/internal/core/webhook"
+	"github.com/faramesh/faramesh-core/internal/provider"
+	"github.com/faramesh/faramesh-core/internal/remote"
 	"github.com/faramesh/faramesh-core/internal/reprobuild"
 	"github.com/faramesh/faramesh-core/internal/sbom"
 )
@@ -131,8 +134,19 @@ type Config struct {
 	DPRHMACKey                  string
 	CanonicalizationAlgorithm   string
 	// DPRSigner configures which signing backend to use for DPR records.
-	// Supported values: "" (default = on-disk keypair), "file", or a KMS URI like "kms://...".
+	// Supported values: "" (default = on-disk keypair), "file", "localkms://key", or provider-kms via DPRKMSProvider.
 	DPRSigner                   string
+	// DPRKMSProvider names a provider block with KMS capability (production signing; key never in daemon).
+	DPRKMSProvider              string
+	DPRKMSKeyRef                string
+	// StackTenantID scopes WAL/data paths for multi-tenant stacks (Phase 12).
+	StackTenantID               string
+	// GovernToolResponses enables governance of tool_response action types.
+	GovernToolResponses         bool
+	// BudgetPools are shared USD ceilings across agent sets (Phase 12).
+	BudgetPools                 []agentgov.BudgetPool
+	// StackDir is the governance stack root (provider binary verification, .faramesh state).
+	StackDir                    string
 	TLSCertFile                 string
 	TLSKeyFile                  string
 	ClientCAFile                string
@@ -170,6 +184,21 @@ type Config struct {
 	AzureTenantID     string
 	AzureClientID     string
 	AzureClientSecret string
+
+	// Providers are declared governance provider blocks (GaC). When set, the
+	// credential router is built from ProviderService instead of legacy flags.
+	Providers []provider.Spec
+
+	// AgentGovernance carries per-agent rate_limit, redact, and warn_at from governance.fms.
+	AgentGovernance map[string]agentgov.Spec
+
+	// ColdStartDenyWindow bounds INITIALIZING before HALT (zero = disabled).
+	ColdStartDenyWindow time.Duration
+
+	// DevMode enables in-memory WAL and built-in provider stubs (faramesh dev).
+	DevMode bool
+	// WALBackend overrides WAL implementation ("memory" in dev).
+	WALBackend string
 }
 
 // Daemon is the governance daemon.
@@ -210,6 +239,8 @@ type Daemon struct {
 	delegateStore        *delegate.SQLiteStore
 	log                  *zap.Logger
 	fleetPolicyApply     func(context.Context, fleetPolicyReloadEvent) (bool, error)
+	providerReg          *provider.Registry
+	lifecycle            *Lifecycle
 }
 
 type fleetPolicyReloadEvent struct {
@@ -520,14 +551,46 @@ func (d *Daemon) start() error {
 		return fmt.Errorf("create data dir: %w", err)
 	}
 
+	d.lifecycle = NewLifecycle(d.cfg.ColdStartDenyWindow)
+	d.lifecycle.MarkInitializing()
+
 	tlsCfg, err := d.buildAdapterTLSConfig()
 	if err != nil {
 		return err
 	}
+	// Open WAL.
+	var wal dpr.Writer
+	if d.cfg.DevMode || strings.EqualFold(strings.TrimSpace(d.cfg.WALBackend), "memory") {
+		wal = &dpr.NullWAL{}
+		d.log.Info("dev mode: in-memory WAL enabled")
+	} else {
+		walPath := filepath.Join(d.cfg.DataDir, "faramesh.wal")
+		var err error
+		wal, err = dpr.OpenWAL(walPath)
+		if err != nil {
+			return fmt.Errorf("open WAL: %w", err)
+		}
+	}
+	d.wal = wal
 
-	// Load and compile policy.
+	if err := d.initProviders(context.Background()); err != nil {
+		return fmt.Errorf("init providers: %w", err)
+	}
+	if err := d.haltIfColdStartExceeded(); err != nil {
+		return err
+	}
+	if err := d.replayWALGovernanceState(wal); err != nil {
+		return err
+	}
+	if err := d.verifyDPRChainOnStartup(wal); err != nil {
+		return err
+	}
+
 	doc, version, err := d.loadInitialPolicy()
 	if err != nil {
+		return err
+	}
+	if err := d.haltIfColdStartExceeded(); err != nil {
 		return err
 	}
 	if err := observe.InitOTLP(context.Background(), observe.OTLPConfig{
@@ -551,22 +614,14 @@ func (d *Daemon) start() error {
 		zap.String("source_id", d.policySourceID),
 	)
 
-	// Open WAL.
-	walPath := filepath.Join(d.cfg.DataDir, "faramesh.wal")
-	wal, err := dpr.OpenWAL(walPath)
-	if err != nil {
-		return fmt.Errorf("open WAL: %w", err)
-	}
-	d.wal = wal
-
 	// Open SQLite DPR store.
 	dbPath := filepath.Join(d.cfg.DataDir, "faramesh.db")
 	sqliteStore, err := dpr.OpenStore(dbPath)
 	if err != nil {
 		d.log.Warn("failed to open DPR SQLite store; audit queries will be unavailable",
 			zap.Error(err))
-	} else {
-		warnOnDPRReconciliationDrift(d.log, wal, sqliteStore)
+	} else if walFile, ok := wal.(*dpr.WAL); ok {
+		warnOnDPRReconciliationDrift(d.log, walFile, sqliteStore)
 	}
 
 	// Optional PostgreSQL mirror for DPR writes.
@@ -758,7 +813,7 @@ func (d *Daemon) start() error {
 		cancel()
 	}
 
-	credentialRouter := buildCredentialRouter(d.cfg)
+	credentialRouter := buildCredentialRouter(d.cfg, d.providerReg)
 	if err := d.enforceStartupPreflight(doc, workloadProvider); err != nil {
 		return err
 	}
@@ -810,41 +865,40 @@ func (d *Daemon) start() error {
 		SigningPubKey:             signPub,
 		CanonicalizationAlgorithm: d.cfg.CanonicalizationAlgorithm,
 		Log:                       d.log,
+		AgentGovernance:           d.cfg.AgentGovernance,
 	})
 	d.pipeline = pipeline
-	// Configure optional DPR Signer backend per R4 design. If DPRSigner is
-	// empty or "file", prefer the on-disk keypair already present under
-	// DataDir. Future work: support KMS URIs (kms://...).
-	ds := strings.TrimSpace(d.cfg.DPRSigner)
-	if ds == "" || ds == "file" {
-		privPath := filepath.Join(d.cfg.DataDir, "faramesh.ed25519.key")
-		pubPath := filepath.Join(d.cfg.DataDir, "faramesh.ed25519.pub")
-		if privBytes, err := os.ReadFile(privPath); err == nil {
-			if pubBytes, err := os.ReadFile(pubPath); err == nil {
-				fs := dpr.NewFileSigner(privBytes, pubBytes)
-				pipeline.SetSigner(fs)
-				d.log.Info("configured file-based DPR signer from data dir", zap.String("data_dir", d.cfg.DataDir))
-			} else {
-				d.log.Warn("DPR signer public key not found; continuing without signer", zap.String("pub_path", pubPath), zap.Error(err))
+	if d.lifecycle != nil {
+		pipeline.SetLifecycle(d.lifecycle)
+	}
+	if d.providerReg != nil {
+		pipeline.SetProviderHealth(d.providerReg)
+		if sinks := d.providerReg.AuditSinkClients(); len(sinks) > 0 {
+			clients := make([]core.AuditSinkClient, 0, len(sinks))
+			for _, c := range sinks {
+				clients = append(clients, c)
 			}
-		} else {
-			d.log.Warn("DPR signer private key not found; continuing without signer", zap.String("priv_path", privPath), zap.Error(err))
+			pipeline.SetAuditSinks(clients)
 		}
-	} else if strings.HasPrefix(ds, "localkms://") {
-		// localkms://<keyid>
-		keyID := strings.TrimPrefix(ds, "localkms://")
-		if keyID != "" {
-			if lks, err := dpr.NewLocalKMSSigner(d.cfg.DataDir, keyID); err == nil {
-				pipeline.SetSigner(lks)
-				d.log.Info("configured local-kms DPR signer", zap.String("key_id", keyID))
-			} else {
-				d.log.Warn("configure local-kms signer failed; continuing without signer", zap.Error(err))
-			}
-		} else {
-			d.log.Warn("localkms URI missing key id; continuing without signer", zap.String("dpr_signer", d.cfg.DPRSigner))
+		if cost := d.providerReg.CostEstimator(); cost != nil {
+			pipeline.SetCostEstimator(cost)
 		}
-	} else {
-		d.log.Info("DPR signer configured (non-file); KMS signer support is TODO", zap.String("dpr_signer", d.cfg.DPRSigner))
+	}
+	signer := d.configureDPRSigner()
+	if signer != nil {
+		pipeline.SetSigner(signer)
+		if walFile, ok := d.wal.(*dpr.WAL); ok {
+			walFile.SetArchiveSigner(signer)
+		}
+	}
+	if tid := strings.TrimSpace(d.cfg.StackTenantID); tid != "" {
+		pipeline.SetStackTenantID(tid)
+	}
+	if d.cfg.GovernToolResponses {
+		pipeline.SetGovernToolResponses(true)
+	}
+	if len(d.cfg.BudgetPools) > 0 {
+		pipeline.SetBudgetPools(d.cfg.BudgetPools)
 	}
 	d.elevationEngine = elevationEngine
 	d.revocationMgr = revocationMgr
@@ -984,6 +1038,7 @@ func (d *Daemon) start() error {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", observe.Default.Handler())
 		mux.HandleFunc("/healthz", d.handleHealthz)
+		remote.Register(mux, d.pipeline)
 		d.metricsSrv = &http.Server{Addr: fmt.Sprintf(":%d", d.cfg.MetricsPort), Handler: mux}
 		go func() {
 			if err := d.metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -994,6 +1049,14 @@ func (d *Daemon) start() error {
 	}
 
 	d.bootstrapEBPF()
+
+	if d.lifecycle != nil {
+		if err := d.haltIfColdStartExceeded(); err != nil {
+			return err
+		}
+		d.lifecycle.SetState(StateReady)
+		d.log.Info("daemon lifecycle ready", zap.String("state", string(StateReady)))
+	}
 
 	return nil
 }
@@ -1233,7 +1296,33 @@ func buildIntentClassifier(cfg Config) (core.IntentClassifier, string, time.Dura
 	return classifier, classifierURL, timeout
 }
 
-func buildCredentialRouter(cfg Config) *credential.Router {
+func (d *Daemon) initProviders(ctx context.Context) error {
+	if len(d.cfg.Providers) == 0 {
+		return nil
+	}
+	reg := provider.NewRegistry(strings.TrimSpace(d.cfg.StackDir))
+	for _, spec := range d.cfg.Providers {
+		if err := reg.Register(spec); err != nil {
+			return err
+		}
+	}
+	if err := reg.InitAll(ctx, false); err != nil {
+		return err
+	}
+	reg.StartHealthLoop(ctx, 30*time.Second)
+	d.providerReg = reg
+	d.log.Info("governance providers initialized", zap.Int("count", len(d.cfg.Providers)))
+	return nil
+}
+
+func buildCredentialRouter(cfg Config, reg *provider.Registry) *credential.Router {
+	if reg != nil && len(cfg.Providers) > 0 {
+		return reg.CredentialRouter()
+	}
+	return buildCredentialRouterLegacy(cfg)
+}
+
+func buildCredentialRouterLegacy(cfg Config) *credential.Router {
 	backends := []credential.Broker{
 		&credential.EnvBroker{},
 	}
@@ -1928,6 +2017,10 @@ func (d *Daemon) seedToolInventory(store dpr.StoreBackend) error {
 }
 
 func (d *Daemon) stop() error {
+	if d.providerReg != nil {
+		_ = d.providerReg.Close(context.Background())
+		d.providerReg = nil
+	}
 	if d.policyPollCancel != nil {
 		d.policyPollCancel()
 	}

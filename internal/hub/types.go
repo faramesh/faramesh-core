@@ -58,6 +58,7 @@ type PackSignature struct {
 	Algorithm    string `json:"algorithm"` // "ed25519"
 	KeyID        string `json:"key_id,omitempty"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
+	PublicKeyB64 string `json:"public_key_b64,omitempty"`
 	ValueB64     string `json:"value_b64"`
 }
 

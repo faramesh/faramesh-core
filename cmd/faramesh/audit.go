@@ -306,18 +306,12 @@ func isWALFile(path string) bool {
 }
 
 func verifyWAL(path string, bold, green, red *color.Color) error {
-	wal, err := dpr.OpenWAL(path)
-	if err != nil {
-		return fmt.Errorf("open WAL: %w", err)
-	}
-	defer wal.Close()
-
 	bold.Printf("\nVerifying DPR chain integrity (WAL): %s\n", path)
-	fmt.Println("Mode: full chain validation (genesis + hash + chain links per agent + cascade lineage)")
+	fmt.Println("Mode: full chain validation across active WAL and .bak archives (genesis + hash + chain links per agent + cascade lineage)")
 
 	count := 0
 	var records []*dpr.Record
-	err = wal.ReplayValidated(func(rec *dpr.Record) error {
+	err := dpr.ReplayValidatedWithArchives(path, func(rec *dpr.Record) error {
 		count++
 		records = append(records, rec)
 		return nil
