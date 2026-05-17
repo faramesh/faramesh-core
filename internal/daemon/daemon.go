@@ -41,6 +41,7 @@ import (
 	"github.com/faramesh/faramesh-core/internal/adapter/proxy"
 	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 	"github.com/faramesh/faramesh-core/internal/artifactverify"
+	"github.com/faramesh/faramesh-core/internal/daemon/agentsupervisor"
 	"github.com/faramesh/faramesh-core/internal/cloud"
 	"github.com/faramesh/faramesh-core/internal/core"
 	"github.com/faramesh/faramesh-core/internal/core/agentgov"
@@ -206,6 +207,13 @@ type Config struct {
 	DevMode bool
 	// WALBackend overrides WAL implementation ("memory" in dev).
 	WALBackend string
+
+	// Agent supervision (from runtime { os_tier, supervised_command, ... }).
+	OSTier                  bool
+	StripAmbientCredentials bool
+	AgentEnforceProfile     string
+	SupervisedCommand       string
+	PrimaryAgentID          string
 }
 
 // Daemon is the governance daemon.
@@ -248,6 +256,7 @@ type Daemon struct {
 	fleetPolicyApply     func(context.Context, fleetPolicyReloadEvent) (bool, error)
 	providerReg          *provider.Registry
 	lifecycle            *Lifecycle
+	agentSupervisor      *agentsupervisor.Supervisor
 }
 
 type fleetPolicyReloadEvent struct {
@@ -1064,6 +1073,10 @@ func (d *Daemon) start() error {
 
 	if err := server.Listen(d.cfg.SocketPath); err != nil {
 		return fmt.Errorf("start SDK server: %w", err)
+	}
+
+	if err := d.wireAgentSupervisor(doc); err != nil {
+		return fmt.Errorf("agent supervisor: %w", err)
 	}
 
 	return nil

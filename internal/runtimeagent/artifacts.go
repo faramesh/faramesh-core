@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/faramesh/faramesh-core/internal/core/governance"
+	"github.com/faramesh/faramesh-core/internal/daemon/agentsupervisor"
 )
 
 // AgentLaunchSettings controls generated agent launcher behavior (from governance.fms).
@@ -92,6 +93,9 @@ exec "$FARAMESH_CLI" __agent-exec "$FARAMESH_ENFORCE_PROFILE" "$STACK_DIR" "$FAR
 
 	agentBin := filepath.Join(binDir, "agent")
 	if err := os.WriteFile(agentBin, []byte(launcher), 0o755); err != nil {
+		return err
+	}
+	if err := agentsupervisor.WriteCLIPath(settings.StackDir, cliPath); err != nil {
 		return err
 	}
 	_ = runtime.GOOS

@@ -100,9 +100,13 @@ set +e
 APPLY_OUT="$(cd "$RUN_DIR" && "$BIN" apply 2>&1 | tee "$RUN_DIR/apply.log")"
 set -e
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  echo "$APPLY_OUT" | grep -q "darwin" || echo "$APPLY_OUT" | grep -q "seccomp/Landlock"
+  echo "$APPLY_OUT" | grep -qiE 'darwin|Seatbelt|enforcement|SDK/proxy' || {
+    echo "apply platform notice missing on Darwin"; echo "$APPLY_OUT"; exit 1
+  }
 else
-  echo "$APPLY_OUT" | grep -qi "enforcement" || true
+  echo "$APPLY_OUT" | grep -qiE 'enforcement|seccomp|Landlock' || {
+    echo "apply platform notice missing"; echo "$APPLY_OUT"; exit 1
+  }
 fi
 echo "APPLY_NOTICE_OK"
 
