@@ -2,18 +2,18 @@ package registry
 
 import "testing"
 
-func TestParseImportFramework(t *testing.T) {
-	r, err := ParseImport(`registry.faramesh.dev/frameworks/langgraph@1.0.0`)
+func TestParseImportFrameworkGitHub(t *testing.T) {
+	r, err := ParseImport(`github.com/faramesh/faramesh-registry/frameworks/langgraph@1.0.0`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Kind != KindFramework || r.Name != "langgraph" || r.Version != "1.0.0" {
+	if r.Host != DefaultHost || r.Kind != KindFramework || r.Name != "langgraph" || r.Version != "1.0.0" {
 		t.Fatalf("got %+v", r)
 	}
 }
 
 func TestParseImportPolicy(t *testing.T) {
-	r, err := ParseImport(`registry.faramesh.dev/policies/faramesh/stripe@1.3.0`)
+	r, err := ParseImport(`github.com/faramesh/faramesh-registry/policies/faramesh/stripe@1.0.0`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,8 +22,18 @@ func TestParseImportPolicy(t *testing.T) {
 	}
 }
 
+func TestParseImportLegacyHost(t *testing.T) {
+	r, err := ParseImport(`registry.faramesh.dev/frameworks/langgraph@1.0.0`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Name != "langgraph" {
+		t.Fatalf("got %+v", r)
+	}
+}
+
 func TestParseImportRejectsLatest(t *testing.T) {
-	_, err := ParseImport(`registry.faramesh.dev/frameworks/langgraph@latest`)
+	_, err := ParseImport(`github.com/faramesh/faramesh-registry/frameworks/langgraph@latest`)
 	if err == nil {
 		t.Fatal("expected error")
 	}

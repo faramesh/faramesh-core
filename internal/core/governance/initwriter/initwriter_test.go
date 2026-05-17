@@ -13,7 +13,7 @@ func TestRenderFPLWithTools(t *testing.T) {
 		{Name: "search_docs", Path: "agent.py", Line: 12, Kind: "@tool"},
 	}
 	out := RenderFPL(dir, "langgraph", tools, false, false)
-	if !strings.Contains(out, `import "registry.faramesh.dev/frameworks/langgraph@1.0.0"`) {
+	if !strings.Contains(out, `import "github.com/faramesh/faramesh-registry/frameworks/langgraph@1.0.0"`) {
 		t.Fatalf("missing import: %s", out)
 	}
 	if !strings.Contains(out, "defer search_docs") {

@@ -1,13 +1,11 @@
-// Package registry defines the official Faramesh Registry artifact model and import paths.
-// See docs/internal/FARAMESH_REGISTRY_PLATFORM.md for the full platform design.
+// Package registry defines the Faramesh artifact catalog model and import paths.
+// Artifacts are distributed from https://github.com/faramesh/faramesh-registry
 package registry
 
 import (
 	"fmt"
 	"strings"
 )
-
-const DefaultHost = "registry.faramesh.dev"
 
 // Kind is a mutually exclusive registry artifact type.
 type Kind string
@@ -18,7 +16,7 @@ const (
 	KindFramework Kind = "frameworks"
 )
 
-// Ref is a parsed import "registry.faramesh.dev/<kind>/<name>@<version>".
+// Ref is a parsed import "<host>/<kind>/<name>@<version>".
 type Ref struct {
 	Host    string
 	Kind    Kind
@@ -46,18 +44,25 @@ func ParseImport(ref string) (Ref, error) {
 
 	host := DefaultHost
 	rest := pathPart
-	if strings.Contains(pathPart, "://") {
+	if strings.HasPrefix(pathPart, DefaultHost+"/") {
+		rest = strings.TrimPrefix(pathPart, DefaultHost+"/")
+	} else if strings.Contains(pathPart, "://") {
 		parts := strings.SplitN(pathPart, "://", 2)
 		if len(parts) != 2 {
 			return Ref{}, fmt.Errorf("import %q: invalid URL", ref)
 		}
 		host = parts[0]
 		rest = strings.TrimPrefix(parts[1], "/")
+	} else {
+		segments := strings.Split(pathPart, "/")
+		if len(segments) >= 3 && segments[0] == "github.com" {
+			host = strings.Join(segments[:3], "/")
+			rest = strings.Join(segments[3:], "/")
+		}
 	}
 
 	segments := strings.Split(rest, "/")
-	// Bare host prefix: registry.faramesh.dev/frameworks/langgraph
-	if len(segments) >= 3 && strings.Contains(segments[0], ".") {
+	if len(segments) >= 2 && strings.Contains(segments[0], ".") && segments[0] != "github.com" {
 		host = segments[0]
 		segments = segments[1:]
 	}
