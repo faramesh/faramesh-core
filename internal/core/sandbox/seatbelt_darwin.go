@@ -33,8 +33,6 @@ func WriteSeatbeltProfile(workspacePaths []string, proxyPort int) (path string, 
 	b.WriteString("(allow ipc-posix-shm*)\n")
 	b.WriteString("(allow signal (target self))\n")
 	b.WriteString("(deny signal)\n")
-	b.WriteString("(deny process-dtrace)\n")
-	b.WriteString("(deny nvram*)\n")
 
 	for _, wp := range workspacePaths {
 		wp = strings.TrimSpace(wp)
@@ -51,7 +49,6 @@ func WriteSeatbeltProfile(workspacePaths []string, proxyPort int) (path string, 
 
 	if proxyPort > 0 {
 		fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"localhost:%d\"))\n", proxyPort)
-		fmt.Fprintf(&b, "(allow network-outbound (remote tcp \"127.0.0.1:%d\"))\n", proxyPort)
 		b.WriteString("(deny network-outbound)\n")
 	} else {
 		b.WriteString("(allow network-outbound)\n")
