@@ -32,7 +32,7 @@ func Compile(doc *ast.Document, stackDir string, source []byte, opts CompileOpti
 			Location: doc.SourcePath,
 			What:     "import resolution failed",
 			Why:      err.Error(),
-			Fix:      "Pin imports to registry.faramesh.dev/.../name@version or use faramesh check --offline",
+			Fix:      "Pin imports to github.com/faramesh/faramesh-registry/.../name@version or use faramesh check --offline",
 		})
 		return nil, diags, err
 	}
@@ -42,7 +42,7 @@ func Compile(doc *ast.Document, stackDir string, source []byte, opts CompileOpti
 			Location: doc.SourcePath,
 			What:     "provider import resolution failed",
 			Why:      err.Error(),
-			Fix:      "Pin provider imports to registry.faramesh.dev/providers/.../name@version",
+			Fix:      "Pin provider imports to github.com/faramesh/faramesh-registry/providers/.../name@version",
 		})
 		return nil, diags, err
 	}

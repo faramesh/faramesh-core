@@ -434,12 +434,12 @@ func RenderFPL(stackDir, framework string, tools []DiscoveredTool, offline, unkn
 	agentName = strings.ReplaceAll(agentName, " ", "-")
 	generatedAt := time.Now().UTC().Format(time.RFC3339)
 
-	importLine := fmt.Sprintf(`import "registry.faramesh.dev/frameworks/%s@1.0.0"`, framework)
+	importLine := fmt.Sprintf(`import "github.com/faramesh/faramesh-registry/frameworks/%s@1.0.0"`, framework)
 	if offline {
 		importLine = ""
 	}
 	if unknownFramework {
-		importLine = `# TODO: import "registry.faramesh.dev/frameworks/<framework>@1.0.0"`
+		importLine = `# TODO: import "github.com/faramesh/faramesh-registry/frameworks/<framework>@1.0.0"`
 		framework = "unknown"
 	}
 

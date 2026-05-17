@@ -73,36 +73,5 @@ func (l *LocalCatalog) Search(q, kind, tier string) ([]CatalogRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	q = strings.ToLower(strings.TrimSpace(q))
-	kind = strings.ToLower(strings.TrimSpace(kind))
-	tier = strings.ToLower(strings.TrimSpace(tier))
-	var out []CatalogRow
-	add := func(k string, e catalogEntry) {
-		if kind != "" && kind != k {
-			return
-		}
-		if tier != "" && strings.ToLower(e.TrustTier) != tier {
-			return
-		}
-		if q != "" && !strings.Contains(strings.ToLower(e.Name), q) && !strings.Contains(strings.ToLower(e.Description), q) {
-			return
-		}
-		out = append(out, CatalogRow{
-			Kind: k, Name: e.Name, LatestVersion: e.LatestVersion,
-			Description: e.Description, TrustTier: e.TrustTier, Category: e.Category,
-		})
-	}
-	for _, e := range idx.Providers {
-		add("provider", e)
-	}
-	for _, e := range idx.Policies {
-		add("policy", e)
-	}
-	for _, e := range idx.Frameworks {
-		add("framework", e)
-	}
-	for _, e := range idx.Packs {
-		add("policy", e)
-	}
-	return out, nil
+	return filterCatalogRows(idx, strings.ToLower(strings.TrimSpace(q)), strings.ToLower(strings.TrimSpace(kind)), strings.ToLower(strings.TrimSpace(tier))), nil
 }

@@ -121,7 +121,7 @@ func InstallProviderBinary(ctx context.Context, c *Client, ref Ref, stackDir str
 	} else if pubB64 != "" {
 		_ = ensureRegistryPublicKey(stackDir, pubB64)
 	}
-	if err := launcher.VerifyBinary(binPath, stackDir); err != nil {
+	if err := verifyProviderBinary(binPath, stackDir); err != nil {
 		return "", err
 	}
 	if err := os.Chmod(binPath, 0o755); err != nil {
@@ -169,6 +169,10 @@ func fetchProviderArtifact(ctx context.Context, dl ProviderDownload, dest string
 		return err
 	}
 	return nil
+}
+
+func verifyProviderBinary(binaryPath, stackDir string) error {
+	return launcher.VerifyBinary(binaryPath, stackDir)
 }
 
 func fileSHA256(path string) (string, error) {

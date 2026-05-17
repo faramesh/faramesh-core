@@ -16,7 +16,7 @@ var registryCmd = &cobra.Command{
 	Short: "Browse and inspect the Faramesh artifact catalog",
 	Long: `Search providers, policy packs, and framework profiles.
 
-Uses FARAMESH_REGISTRY_URL (HTTP registry) or FARAMESH_REGISTRY_ROOT (local Git checkout).
+Uses the public GitHub catalog by default, or FARAMESH_REGISTRY_ROOT / FARAMESH_REGISTRY_URL overrides.
 
   faramesh registry list
   faramesh registry search vault
@@ -101,7 +101,7 @@ func printRegistryRows(q, kind, tier string) error {
 func runRegistryInfo(_ *cobra.Command, args []string) error {
 	raw := strings.TrimSpace(args[0])
 	if !strings.Contains(raw, "@") {
-		raw = "registry.faramesh.dev/" + strings.TrimPrefix(raw, "/")
+		raw = registry.DefaultHost + "/" + strings.TrimPrefix(raw, "/")
 	}
 	if !strings.Contains(raw, "registry.") && !strings.Contains(raw, "://") {
 		// allow frameworks/langgraph@1.0.0
@@ -113,7 +113,7 @@ func runRegistryInfo(_ *cobra.Command, args []string) error {
 			} else if strings.HasPrefix(parts[0], "policies/") {
 				kind = "policies"
 			}
-			raw = fmt.Sprintf("registry.faramesh.dev/%s/%s@%s", kind, strings.TrimPrefix(parts[0], "providers/"), parts[1])
+			raw = fmt.Sprintf("%s/%s/%s@%s", registry.DefaultHost, kind, strings.TrimPrefix(parts[0], "providers/"), parts[1])
 		}
 	}
 	ref, err := registry.ParseImport(raw)
@@ -163,7 +163,6 @@ func runRegistryURL(_ *cobra.Command, _ []string) error {
 		fmt.Println(v)
 		return nil
 	}
-	fmt.Println("https://" + registry.DefaultHost)
-	fmt.Fprintln(os.Stderr, "tip: set FARAMESH_REGISTRY_URL or clone faramesh-registry and set FARAMESH_REGISTRY_ROOT")
+	fmt.Println(registry.RegistryURLDescription())
 	return nil
 }

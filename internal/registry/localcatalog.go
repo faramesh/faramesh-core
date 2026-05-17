@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/faramesh/faramesh-core/internal/hub"
-	"github.com/faramesh/faramesh-core/internal/provider/launcher"
 )
 
 // LocalCatalog resolves artifacts from a faramesh-registry Git checkout (catalog/ tree).
@@ -231,7 +230,7 @@ func (l *LocalCatalog) InstallProviderBinary(ctx context.Context, ref Ref, stack
 			_ = ensureRegistryPublicKey(stackDir, pubB64)
 		}
 	}
-	if err := launcher.VerifyBinary(binPath, stackDir); err != nil {
+	if err := verifyProviderBinary(binPath, stackDir); err != nil {
 		return "", err
 	}
 	if err := os.Chmod(binPath, 0o755); err != nil {
