@@ -277,6 +277,40 @@ jobs:
           path: faramesh-${{ matrix.suffix }}${{ matrix.ext || '' }}
           retention-days: 14
 
+  e2e-zero-governed:
+    name: E2E zero-infrastructure governed
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run zero-infrastructure E2E
+        run: bash tests/e2e_zero_governed.sh
+
+  e2e-completion-gate:
+    name: E2E completion_gate
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run completion_gate E2E
+        run: bash tests/e2e_completion_gate.sh
+
   docker:
     name: Docker build
     runs-on: ubuntu-latest

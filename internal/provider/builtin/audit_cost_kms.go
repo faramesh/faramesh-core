@@ -2,10 +2,10 @@ package builtin
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -120,14 +120,12 @@ func (s *kmsServer) Sign(_ context.Context, req *providerv1.SignRequest) (*provi
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sum := sha256.Sum256(req.GetPayload())
-	sig, err := rsa.SignPKCS1v15(rand.Reader, s.key, 0, sum[:])
+	sig, err := rsa.SignPSS(rand.Reader, s.key, crypto.SHA256, sum[:], &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "sign: %v", err)
 	}
-	pubDER, _ := x509.MarshalPKIXPublicKey(&s.key.PublicKey)
-	_ = pubDER
 	return &providerv1.Signature{
-		Algorithm: "RSA-PKCS1v15-SHA256",
+		Algorithm: "RSA-PSS-SHA256",
 		Signature: sig,
 		KeyId:     "dev-kms",
 	}, nil

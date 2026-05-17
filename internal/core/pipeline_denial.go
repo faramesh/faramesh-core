@@ -14,9 +14,17 @@ func (p *Pipeline) enrichStructuredDenial(req CanonicalActionRequest, d *Decisio
 	if d.Effect != EffectDeny && d.Effect != EffectDefer {
 		return
 	}
+	if d.Effect == EffectDefer {
+		d.StructuredDenial = ptrDenial(denial.ForDefer(d.Reason, ruleRefFromDecision(*d), d.DeferToken))
+		return
+	}
 	code := mapReasonToDenialCode(d.ReasonCode)
 	obj := denial.Attach(code, d.Reason, d.RuleID, ruleRefFromDecision(*d), d.DeferToken, 0, d.DeferExpiresAt, nil)
 	d.StructuredDenial = &obj
+}
+
+func ptrDenial(o denial.Object) *denial.Object {
+	return &o
 }
 
 func mapReasonToDenialCode(reasonCode string) string {

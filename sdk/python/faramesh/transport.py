@@ -28,7 +28,10 @@ def detect_transport() -> Transport:
             remote_url=remote,
             token=(os.environ.get("FARAMESH_TOKEN") or "").strip(),
         )
-    sock = (os.environ.get("FARAMESH_SOCKET") or "/tmp/faramesh.sock").strip()
+    default_sock = os.path.join(
+        os.path.expanduser("~"), ".faramesh", "runtime", "faramesh.sock"
+    )
+    sock = (os.environ.get("FARAMESH_SOCKET") or default_sock).strip()
     if os.path.exists(sock):
         return Transport(mode="socket", socket_path=sock)
     base = (os.environ.get("FARAMESH_BASE_URL") or "").strip().rstrip("/")
@@ -93,11 +96,14 @@ def _govern_socket(
         msg = err.get("message", err) if isinstance(err, dict) else err
         raise RuntimeError(f"socket govern: {msg}")
     result = resp.get("result") or {}
-    return {
+    out: Dict[str, Any] = {
         "effect": (result.get("effect") or "").upper(),
         "reason_code": result.get("reason_code", ""),
         "defer_token": result.get("defer_token", ""),
     }
+    if isinstance(result.get("structured_denial"), dict):
+        out["structured_denial"] = result["structured_denial"]
+    return out
 
 
 def _govern_remote(

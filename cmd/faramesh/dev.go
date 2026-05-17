@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	"github.com/faramesh/faramesh-core/internal/core/governance"
 	"github.com/faramesh/faramesh-core/internal/devmode"
@@ -75,10 +74,18 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Println("→ status: faramesh status")
 	fmt.Println("→ approvals: faramesh approvals list")
-	printDevPlatformNote()
+	printEnforcementPlatformNote()
 
 	serveFromCompiled = governance.CompiledPath(stackDir)
 	_ = os.Setenv("FARAMESH_DEV_MODE", "1")
+	_ = os.Setenv("FARAMESH_SOCKET", cfg.SocketPath)
+	if os.Getenv("FARAMESH_SPIFFE_ID") == "" {
+		host, _ := os.Hostname()
+		if host == "" {
+			host = "localhost"
+		}
+		_ = os.Setenv("FARAMESH_SPIFFE_ID", "spiffe://dev.local/workload/"+host)
+	}
 	return runServeWithConfig(cmd, cfg)
 }
 
@@ -94,14 +101,3 @@ func mcpProxyPort(compiled *governance.Compiled) int {
 	return 0
 }
 
-func printDevPlatformNote() {
-	fmt.Println()
-	switch runtime.GOOS {
-	case "linux":
-		return
-	case "windows":
-		fmt.Println("Note: seccomp/Landlock not available on windows. Network proxy enforcement is active. Production deployments on Linux provide full enforcement.")
-	default:
-		fmt.Println("Note: seccomp/Landlock not available on darwin. Production deployments on Linux provide full enforcement.")
-	}
-}

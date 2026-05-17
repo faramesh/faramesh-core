@@ -45,6 +45,10 @@ func NewServer(providerType string, config map[string]string) (providerv1.Provid
 		return &secretsServer{broker: broker, required: []string{"vault_url"}, displayType: typ}, nil
 	case "env":
 		return &secretsServer{broker: &credential.EnvBroker{}, required: nil, displayType: typ}, nil
+	case "dev-vault", "dev_vault":
+		return newDevVaultServer(), nil
+	case "dev-spiffe", "dev_spiffe", "spiffe-dev":
+		return newDevSpiffeServer(), nil
 	case "audit-sink", "audit_sink", "siem":
 		return newAuditSinkServer(), nil
 	case "cost", "cost-estimator":

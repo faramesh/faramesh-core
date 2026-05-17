@@ -30,10 +30,11 @@ func Apply(cfg *daemon.Config, stackDir string) {
 	_ = os.MkdirAll(cfg.DataDir, 0o755)
 	_ = os.MkdirAll(filepath.Dir(cfg.SocketPath), 0o755)
 
-	// Stub providers when stack declares none.
+	// Stub providers when stack declares none (FARAMESH.md §11).
 	if len(cfg.Providers) == 0 {
 		cfg.Providers = []provider.Spec{
-			{Name: "vault", Type: "env", Config: map[string]string{}},
+			{Name: "vault", Type: "dev-vault", Config: map[string]string{}},
+			{Name: "spiffe", Type: "dev-spiffe", Config: map[string]string{}},
 			{Name: "kms", Type: "dev-kms", Config: map[string]string{}},
 		}
 	}

@@ -302,6 +302,22 @@ jobs:
       - name: Run Linux interception harness
         run: FARAMESH_LINUX_INTERCEPT_PROFILE=${{ matrix.profile }} make linux-interception-harness
 
+  e2e-completion-gate:
+    name: E2E completion_gate (release gate)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run completion_gate E2E
+        run: bash tests/e2e_completion_gate.sh
+
   node-autopatch-real-stack:
     name: Node Autopatch Real Stack (socket)
     runs-on: ubuntu-latest

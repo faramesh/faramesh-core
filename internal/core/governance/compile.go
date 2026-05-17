@@ -167,6 +167,7 @@ func daemonSnapshotFromAST(doc *ast.Document, stackDir, policyPath string) (Daem
 		snap.DPRKMSProvider = strings.TrimSpace(rt.DPRKMSProvider)
 		snap.DPRKMSKeyRef = strings.TrimSpace(rt.DPRKMSKeyRef)
 		snap.GovernToolResponses = rt.GovernToolResponses
+		snap.ImmutableConfig = rt.ImmutableConfig
 	}
 	if snap.DPRKMSProvider == "" {
 		snap.DPRKMSProvider = firstKMSProviderName(doc)

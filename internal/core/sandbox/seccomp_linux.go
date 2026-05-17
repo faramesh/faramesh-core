@@ -194,7 +194,8 @@ func defaultAgentSyscalls() []string {
 		"pipe", "select", "sched_yield", "dup", "dup2", "nanosleep",
 		"getpid", "socket", "connect", "accept", "sendto", "recvfrom",
 		"bind", "listen", "getsockname", "getpeername",
-		"clone", "fork", "execve", "exit", "wait4", "kill", "uname",
+		// kill/tkill/tgkill intentionally omitted — agents must not signal the daemon or siblings.
+		"clone", "fork", "execve", "exit", "wait4", "uname",
 		"fcntl", "flock", "fsync", "fdatasync", "getcwd", "chdir",
 		"mkdir", "rmdir", "unlink", "readlink", "chmod",
 		"getuid", "getgid", "geteuid", "getegid", "getppid", "setsid",

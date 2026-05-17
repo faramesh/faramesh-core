@@ -61,6 +61,7 @@ type DaemonSnapshot struct {
 	DPRKMSKeyRef               string `json:"dpr_kms_key_ref,omitempty"`
 	TenantID                   string `json:"tenant_id,omitempty"`
 	GovernToolResponses        bool   `json:"govern_tool_responses,omitempty"`
+	ImmutableConfig            bool   `json:"immutable_config,omitempty"`
 	BudgetPools                []agentgov.BudgetPool `json:"budget_pools,omitempty"`
 }
 
@@ -140,6 +141,9 @@ func (c *Compiled) ToDaemonConfig() daemon.Config {
 	cfg.GovernToolResponses = s.GovernToolResponses
 	cfg.BudgetPools = append([]agentgov.BudgetPool(nil), c.BudgetPools...)
 	cfg.StackDir = strings.TrimSpace(c.StackDir)
+	cfg.ImmutableConfig = s.ImmutableConfig
+	// Compiled stacks are load-once; changes require faramesh apply (privileged).
+	cfg.PolicyHotReload = false
 	return cfg
 }
 

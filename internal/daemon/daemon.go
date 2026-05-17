@@ -195,6 +195,13 @@ type Config struct {
 	// ColdStartDenyWindow bounds INITIALIZING before HALT (zero = disabled).
 	ColdStartDenyWindow time.Duration
 
+	// PolicyHotReload allows SIGHUP to reload policy from PolicyPath. Default false:
+	// policy is load-once from the compiled artifact at apply time.
+	PolicyHotReload bool
+
+	// ImmutableConfig mirrors runtime { immutable_config = true } (config file locked after apply).
+	ImmutableConfig bool
+
 	// DevMode enables in-memory WAL and built-in provider stubs (faramesh dev).
 	DevMode bool
 	// WALBackend overrides WAL implementation ("memory" in dev).
@@ -941,9 +948,6 @@ func (d *Daemon) start() error {
 	if d.delegate != nil {
 		server.SetDelegateService(d.delegate)
 	}
-	if err := server.Listen(d.cfg.SocketPath); err != nil {
-		return fmt.Errorf("start SDK server: %w", err)
-	}
 	d.server = server
 
 	if d.cfg.ProxyPort > 0 {
@@ -1056,6 +1060,10 @@ func (d *Daemon) start() error {
 		}
 		d.lifecycle.SetState(StateReady)
 		d.log.Info("daemon lifecycle ready", zap.String("state", string(StateReady)))
+	}
+
+	if err := server.Listen(d.cfg.SocketPath); err != nil {
+		return fmt.Errorf("start SDK server: %w", err)
 	}
 
 	return nil
