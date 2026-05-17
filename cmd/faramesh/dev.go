@@ -7,6 +7,7 @@ import (
 
 	"github.com/faramesh/faramesh-core/internal/core/governance"
 	"github.com/faramesh/faramesh-core/internal/devmode"
+	"github.com/faramesh/faramesh-core/internal/runtimeagent"
 	"github.com/spf13/cobra"
 )
 
@@ -74,7 +75,15 @@ func runDev(cmd *cobra.Command, _ []string) error {
 	}
 	fmt.Println("→ status: faramesh status")
 	fmt.Println("→ approvals: faramesh approvals list")
-	printEnforcementPlatformNote()
+	compiled.StackDir = stackDir
+	if exe, err := os.Executable(); err == nil {
+		settings := runtimeagent.SettingsFromCompiled(compiled)
+		settings.EnforceProfile = "off"
+		settings.OSTier = false
+		_ = runtimeagent.WriteArtifacts(exe, settings)
+		fmt.Printf("→ start agent: %s\n", runtimeagent.LaunchHint(stackDir))
+	}
+	printEnforcementPlatformNote(compiled)
 
 	serveFromCompiled = governance.CompiledPath(stackDir)
 	_ = os.Setenv("FARAMESH_DEV_MODE", "1")

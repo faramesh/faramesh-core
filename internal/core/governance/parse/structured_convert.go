@@ -99,6 +99,12 @@ func runtimeFromMap(m map[string]any) *ast.Runtime {
 			rt.DPRKMSProvider = s
 		case "dpr_kms_key_ref":
 			rt.DPRKMSKeyRef = s
+		case "os_tier":
+			rt.OSTier = scalarBool(v)
+		case "strip_ambient_credentials":
+			rt.StripAmbientCredentials = scalarBool(v)
+		case "agent_enforce_profile":
+			rt.AgentEnforceProfile = s
 		case "govern_tool_responses":
 			rt.GovernToolResponses = scalarBool(v)
 		default:

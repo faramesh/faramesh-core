@@ -13,6 +13,6 @@ class Faramesh < Formula
   test do
     assert_match "faramesh", shell_output("#{bin}/faramesh --help")
     shell_output("#{bin}/faramesh init --help")
-    shell_output("#{bin}/faramesh run --help")
+    shell_output("#{bin}/faramesh apply --help")
   end
 end

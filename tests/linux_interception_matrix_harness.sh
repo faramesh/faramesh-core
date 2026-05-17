@@ -85,9 +85,11 @@ GO
 
 run_cmd env CGO_ENABLED=0 go build -o "$ENV_DUMP_BIN" "$ENV_DUMP_SRC"
 
-OPENAI_API_KEY="should-never-leak" \
-FARAMESH_SOCKET="/tmp/faramesh-linux-matrix.sock" \
-"$BIN_PATH" run --enforce "$PROFILE" --broker -- "$ENV_DUMP_BIN" >"$ENV_PATH" 2>"$REPORT_PATH" || RUN_STATUS=$?
+export OPENAI_API_KEY="should-never-leak"
+export FARAMESH_STRIP_AMBIENT=1
+export FARAMESH_AUTOLOAD=1
+export FARAMESH_TRUST_LEVEL=application
+"$BIN_PATH" __agent-exec "$PROFILE" "$ROOT_DIR" 18443 -- "$ENV_DUMP_BIN" >"$ENV_PATH" 2>"$REPORT_PATH" || RUN_STATUS=$?
 
 RUN_STATUS="${RUN_STATUS:-0}"
 if [[ "$RUN_STATUS" -ne 0 ]]; then
