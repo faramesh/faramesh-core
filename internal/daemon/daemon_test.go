@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -23,7 +22,6 @@ import (
 	adapterebpf "github.com/faramesh/faramesh-core/internal/adapter/ebpf"
 	"github.com/faramesh/faramesh-core/internal/artifactverify"
 	"github.com/faramesh/faramesh-core/internal/core"
-	"github.com/faramesh/faramesh-core/internal/core/degraded"
 	"github.com/faramesh/faramesh-core/internal/core/dpr"
 	"github.com/faramesh/faramesh-core/internal/core/observe"
 	"github.com/faramesh/faramesh-core/internal/core/policy"
@@ -595,41 +593,6 @@ func TestBootstrapEBPFPassesAdapterConfig(t *testing.T) {
 	}
 }
 
-func TestHandleSignalSIGUSR1TogglesDegradedMode(t *testing.T) {
-	d := &Daemon{
-		log:      zap.NewNop(),
-		degraded: degraded.NewManager(),
-	}
-	if got := d.degraded.Current().String(); got != "FULL" {
-		t.Fatalf("expected FULL mode initially, got %s", got)
-	}
-	if stop := d.handleSignal(syscall.SIGUSR1); stop {
-		t.Fatalf("expected daemon to continue on SIGUSR1")
-	}
-	if got := d.degraded.Current().String(); got != "STATELESS" {
-		t.Fatalf("expected STATELESS after SIGUSR1, got %s", got)
-	}
-}
-
-func TestHandleSignalSIGUSR2TogglesFaultMode(t *testing.T) {
-	d := &Daemon{
-		log:      zap.NewNop(),
-		degraded: degraded.NewManager(),
-	}
-	if stop := d.handleSignal(syscall.SIGUSR2); stop {
-		t.Fatalf("expected daemon to continue on SIGUSR2")
-	}
-	if got := d.degraded.Current().String(); got != "EMERGENCY" {
-		t.Fatalf("expected EMERGENCY after SIGUSR2, got %s", got)
-	}
-	if stop := d.handleSignal(syscall.SIGUSR2); stop {
-		t.Fatalf("expected daemon to continue on SIGUSR2")
-	}
-	if got := d.degraded.Current().String(); got != "FULL" {
-		t.Fatalf("expected FULL after second SIGUSR2, got %s", got)
-	}
-}
-
 type preflightTestStore struct{}
 
 func (s *preflightTestStore) Save(*dpr.Record) error           { return nil }
@@ -754,7 +717,7 @@ func TestHasCredentialSequestrationBackendAllowEnvFallbackFlag(t *testing.T) {
 }
 
 func TestBuildCredentialRouterPrefersExternalDefaultBackend(t *testing.T) {
-	router := buildCredentialRouter(Config{AWSSecretsRegion: "us-east-1"})
+	router := buildCredentialRouterLegacy(Config{AWSSecretsRegion: "us-east-1"})
 	resolved := router.ResolveRoute("stripe/refund")
 	if resolved.Backend != "aws_secrets_manager" {
 		t.Fatalf("expected wildcard route to prefer aws_secrets_manager backend, got %+v", resolved)
@@ -766,7 +729,7 @@ func TestBuildCredentialRouterPrefersExternalDefaultBackend(t *testing.T) {
 
 func TestBuildCredentialRouterInvalidDefaultOverrideFallsBackToEnvRoute(t *testing.T) {
 	t.Setenv("FARAMESH_CREDENTIAL_DEFAULT_BACKEND", "not-real")
-	router := buildCredentialRouter(Config{AWSSecretsRegion: "us-east-1"})
+	router := buildCredentialRouterLegacy(Config{AWSSecretsRegion: "us-east-1"})
 	resolved := router.ResolveRoute("stripe/refund")
 	if resolved.Backend != "env" {
 		t.Fatalf("expected invalid override to fall back wildcard route to env, got %+v", resolved)

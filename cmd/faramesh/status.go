@@ -18,7 +18,6 @@ var statusCmd = &cobra.Command{
 }
 
 func init() {
-	rootCmd.AddCommand(statusCmd)
 }
 
 func runStatus(_ *cobra.Command, _ []string) error {

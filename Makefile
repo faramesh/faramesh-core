@@ -1,5 +1,12 @@
 # Faramesh Core — local developer entrypoints (CI: monorepo `.github/workflows/faramesh-core-release-gate.yml`).
-.PHONY: all build build-release compile clean test test-race vet sbom docker verify-reproducible release install setup setup-status setup-stop benchmark-latency langchain-single langchain-real langchain-real-fpl langgraph-real langgraph-real-fpl burst-rate-harness defer-timeout-resume-harness linux-interception-harness node-autopatch-harness policy-roundtrip-harness corpus-run corpus-matrix corpus-contract corpus-check langchain-wizard govern-wizard packs-verify
+.PHONY: all build build-release compile clean test test-race vet sbom docker verify-reproducible release install setup setup-status setup-stop benchmark-latency langchain-single langchain-real langchain-real-fpl langgraph-real langgraph-real-fpl burst-rate-harness defer-timeout-resume-harness linux-interception-harness node-autopatch-harness policy-roundtrip-harness corpus-run corpus-matrix corpus-contract corpus-check langchain-wizard govern-wizard packs-verify proto-gen
+
+proto-gen:
+	protoc --go_out=. --go_opt=module=github.com/faramesh/faramesh-core \
+		--go-grpc_out=. --go-grpc_opt=module=github.com/faramesh/faramesh-core \
+		-I /opt/homebrew/include \
+		-I proto/provider/v1 \
+		proto/provider/v1/provider.proto
 
 all: vet compile test build
 

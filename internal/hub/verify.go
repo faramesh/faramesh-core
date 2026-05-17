@@ -25,14 +25,26 @@ func VerifyPolicySignature(policy []byte, sig *PackSignature) error {
 	if strings.ToLower(strings.TrimSpace(sig.Algorithm)) != "ed25519" {
 		return fmt.Errorf("unsupported signature algorithm %q (need ed25519)", sig.Algorithm)
 	}
-	if sig.PublicKeyPEM == "" {
-		return fmt.Errorf("missing signature.public_key_pem")
+	pemStr := strings.TrimSpace(sig.PublicKeyPEM)
+	if pemStr == "" && strings.TrimSpace(sig.PublicKeyB64) != "" {
+		raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(sig.PublicKeyB64))
+		if err != nil || len(raw) != ed25519.PublicKeySize {
+			return fmt.Errorf("invalid public_key_b64")
+		}
+		der, err := x509.MarshalPKIXPublicKey(ed25519.PublicKey(raw))
+		if err != nil {
+			return err
+		}
+		pemStr = string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
+	}
+	if pemStr == "" {
+		return fmt.Errorf("missing signature public key (public_key_pem or public_key_b64)")
 	}
 	rawSig, err := base64.StdEncoding.DecodeString(strings.TrimSpace(sig.ValueB64))
 	if err != nil {
 		return fmt.Errorf("decode value_b64: %w", err)
 	}
-	pub, err := parseEd25519PublicKeyPEM(sig.PublicKeyPEM)
+	pub, err := parseEd25519PublicKeyPEM(pemStr)
 	if err != nil {
 		return err
 	}
@@ -60,3 +72,4 @@ func parseEd25519PublicKeyPEM(pemStr string) (ed25519.PublicKey, error) {
 	}
 	return nil, fmt.Errorf("unsupported PEM type %q", block.Type)
 }
+

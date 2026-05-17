@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package faramesh.provider.v1;
+
+option go_package = "github.com/faramesh/faramesh-core/proto/provider/v1;providerv1";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+// ProviderService is the only interface between the Faramesh daemon and a
+// secrets backend, identity system, KMS, audit sink, or cost estimator.
+// Built-in providers implement this in-process; third-party providers run as
+// sidecars and listen on a Unix socket declared in the provider block source field.
+service ProviderService {
+  // Called once at startup (and during faramesh check dry-run validation).
+  rpc Init(InitRequest) returns (ProviderInfo);
+
+  // Called periodically; unhealthy providers put affected agents in deny-all mode.
+  rpc HealthCheck(HealthRequest) returns (HealthStatus);
+
+  // SECRETS capability — issue a short-lived secret for credential brokerage.
+  rpc GetSecret(SecretRequest) returns (Secret);
+
+  // IDENTITY capability — verify workload identity before issuing credentials.
+  rpc VerifyIdentity(Identity) returns (VerificationResult);
+
+  // KMS capability — sign DPR payloads with an external key.
+  rpc Sign(SignRequest) returns (Signature);
+
+  // AUDIT_SINK capability — receive a copy of each DPR as it is written.
+  rpc SinkDPR(DPRRecord) returns (SinkAck);
+
+  // COST capability — estimate monetary cost before execution.
+  rpc CostEstimate(CostRequest) returns (CostEstimateResponse);
+}
+
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_SECRETS = 1;
+  CAPABILITY_IDENTITY = 2;
+  CAPABILITY_KMS = 3;
+  CAPABILITY_AUDIT_SINK = 4;
+  CAPABILITY_COST = 5;
+}
+
+message InitRequest {
+  map<string, string> config = 1;
+  // When true, Init validates configuration without connecting to external systems.
+  bool dry_run = 2;
+}
+
+message ConfigSchemaField {
+  string name = 1;
+  string type = 2;
+  bool required = 3;
+  string description = 4;
+}
+
+message ProviderInfo {
+  repeated Capability capabilities = 1;
+  HealthStatus health = 2;
+  repeated ConfigSchemaField schema = 3;
+  string version = 4;
+}
+
+message HealthRequest {}
+
+message HealthStatus {
+  bool healthy = 1;
+  string detail = 2;
+}
+
+message SecretRequest {
+  string path = 1;
+  map<string, string> opts = 2;
+}
+
+message Secret {
+  bytes value = 1;
+  google.protobuf.Duration ttl = 2;
+  string version = 3;
+}
+
+message Identity {
+  string id = 1;
+  bytes svid = 2;
+}
+
+message VerificationResult {
+  bool valid = 1;
+  string subject = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  string reason = 4;
+}
+
+message SignRequest {
+  bytes payload = 1;
+  string key_ref = 2;
+}
+
+message Signature {
+  bytes signature = 1;
+  string algorithm = 2;
+  string key_id = 3;
+}
+
+message DPRRecord {
+  bytes canonical_json = 1;
+  string record_id = 2;
+  string agent_id = 3;
+}
+
+message SinkAck {
+  bool accepted = 1;
+  string detail = 2;
+}
+
+message CostRequest {
+  string action_type = 1;
+  map<string, string> attributes = 2;
+}
+
+message CostEstimateResponse {
+  double amount = 1;
+  string currency = 2;
+  // 0.0–1.0; providers may return 0 when unknown.
+  double confidence = 3;
+}

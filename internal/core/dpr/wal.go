@@ -25,9 +25,20 @@ import (
 // The pipeline must call Write() before returning the Decision to the adapter.
 // If Write() returns an error, the pipeline returns DENY.
 type WAL struct {
-	mu   sync.Mutex
-	file *os.File
-	path string
+	mu            sync.Mutex
+	file          *os.File
+	path          string
+	archiveSigner Signer
+}
+
+// SetArchiveSigner signs rotated segment manifests when non-nil.
+func (w *WAL) SetArchiveSigner(s Signer) {
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	w.archiveSigner = s
+	w.mu.Unlock()
 }
 
 const (
@@ -126,14 +137,24 @@ func (w *WAL) Replay(fn func(*Record) error) error {
 		return fmt.Errorf("seek WAL start: %w", err)
 	}
 	for {
-		rec, err := readNextRecord(w.file)
+		version, payload, err := readNextFramePayload(w.file)
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			return err
 		}
-		if err := fn(rec); err != nil {
+		if version == walVersionControl {
+			continue
+		}
+		if version != walVersion {
+			return fmt.Errorf("dpr replay: unknown WAL version %d", version)
+		}
+		var rec Record
+		if err := json.Unmarshal(payload, &rec); err != nil {
+			return err
+		}
+		if err := fn(&rec); err != nil {
 			return err
 		}
 	}
@@ -154,18 +175,28 @@ func (w *WAL) ReplayValidated(fn func(*Record) error) error {
 	}
 	lastHashByAgent := make(map[string]string)
 	for idx := 0; ; idx++ {
-		rec, err := readNextRecord(w.file)
+		version, payload, err := readNextFramePayload(w.file)
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
 			return err
 		}
-		if err := validateReplayChainRecord(rec, lastHashByAgent); err != nil {
+		if version == walVersionControl {
+			continue
+		}
+		if version != walVersion {
+			return fmt.Errorf("dpr replay validation: unknown WAL version %d at frame %d", version, idx)
+		}
+		var rec Record
+		if err := json.Unmarshal(payload, &rec); err != nil {
+			return fmt.Errorf("decode WAL record at frame %d: %w", idx, err)
+		}
+		if err := validateReplayChainRecord(&rec, lastHashByAgent); err != nil {
 			return fmt.Errorf("dpr replay validation failed at frame %d record_id=%q agent_id=%q: %w", idx, rec.RecordID, rec.AgentID, err)
 		}
 		lastHashByAgent[rec.AgentID] = rec.RecordHash
-		if err := fn(rec); err != nil {
+		if err := fn(&rec); err != nil {
 			return err
 		}
 	}
@@ -204,13 +235,13 @@ func recoverWALTail(f *os.File) error {
 	var goodOffset int64
 	for {
 		start, _ := f.Seek(0, io.SeekCurrent)
-		_, err := readNextRecord(f)
+		version, _, err := readNextFramePayload(f)
 		if err == io.EOF {
 			goodOffset = start
 			break
 		}
 		if err != nil {
-			if errors.Is(err, errUnknownWALVersion) {
+			if start == 0 && errors.Is(err, errUnknownWALVersion) {
 				return err
 			}
 			// Corrupt/torn frame tail: truncate to last known-good boundary.
@@ -220,6 +251,7 @@ func recoverWALTail(f *os.File) error {
 			goodOffset = start
 			break
 		}
+		_ = version
 		goodOffset, _ = f.Seek(0, io.SeekCurrent)
 	}
 	if _, err := f.Seek(goodOffset, io.SeekStart); err != nil {
@@ -233,36 +265,15 @@ func recoverWALTail(f *os.File) error {
 }
 
 func readNextRecord(r io.Reader) (*Record, error) {
-	var hdr [walHeaderSize]byte
-	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			return nil, io.EOF
-		}
-		return nil, fmt.Errorf("read WAL header: %w", err)
+	version, payload, err := readNextFramePayload(r)
+	if err != nil {
+		return nil, err
 	}
-	magic := binary.LittleEndian.Uint32(hdr[0:4])
-	if magic != walFrameMagic {
-		return nil, fmt.Errorf("invalid WAL frame magic")
-	}
-	version := hdr[4]
-	if version != walVersion {
+	if version == walVersionControl {
 		return nil, errUnknownWALVersion
 	}
-	n := binary.LittleEndian.Uint32(hdr[5:9])
-	wantCRC := binary.LittleEndian.Uint32(hdr[9:13])
-	if n == 0 || n > 8*1024*1024 {
-		return nil, fmt.Errorf("invalid WAL frame size %d", n)
-	}
-	payload := make([]byte, int(n))
-	if _, err := io.ReadFull(r, payload); err != nil {
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
-			return nil, fmt.Errorf("truncated WAL payload")
-		}
-		return nil, fmt.Errorf("read WAL payload: %w", err)
-	}
-	gotCRC := crc32.ChecksumIEEE(payload)
-	if gotCRC != wantCRC {
-		return nil, fmt.Errorf("WAL CRC mismatch")
+	if version != walVersion {
+		return nil, errUnknownWALVersion
 	}
 	var rec Record
 	if err := json.Unmarshal(payload, &rec); err != nil {
@@ -299,7 +310,7 @@ func validateReplayChainRecord(rec *Record, lastHashByAgent map[string]string) e
 }
 
 func (w *WAL) compactLocked() error {
-	records, err := readAllRecords(w.file)
+	records, controls, err := readAllFrames(w.file)
 	if err != nil {
 		return err
 	}
@@ -312,12 +323,20 @@ func (w *WAL) compactLocked() error {
 	}
 
 	archivePath := fmt.Sprintf("%s.%d.bak", w.path, time.Now().UTC().UnixNano())
+	archivedLastHash := make(map[string]string)
+	for _, rec := range records {
+		if rec != nil && rec.RecordHash != "" {
+			archivedLastHash[rec.AgentID] = rec.RecordHash
+		}
+	}
+	recordCount := len(records)
 	if err := w.file.Close(); err != nil {
 		return fmt.Errorf("close WAL before rotation: %w", err)
 	}
 	if err := os.Rename(w.path, archivePath); err != nil {
 		return fmt.Errorf("rotate WAL to %q: %w", archivePath, err)
 	}
+	_ = WriteArchiveManifest(archivePath, w.path, archivedLastHash, recordCount, w.archiveSigner)
 
 	newFile, err := os.OpenFile(w.path, os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -340,6 +359,11 @@ func (w *WAL) compactLocked() error {
 			return fmt.Errorf("rewrite compacted WAL: %w", err)
 		}
 	}
+	for _, frame := range retainLatestControlFrames(controls) {
+		if err := writeRawFrameFile(w.file, walVersionControl, frame); err != nil {
+			return fmt.Errorf("rewrite control frame: %w", err)
+		}
+	}
 	if err := w.file.Sync(); err != nil {
 		return fmt.Errorf("fsync compacted WAL: %w", err)
 	}
@@ -350,21 +374,71 @@ func (w *WAL) compactLocked() error {
 }
 
 func readAllRecords(f *os.File) ([]*Record, error) {
+	records, _, err := readAllFrames(f)
+	return records, err
+}
+
+func readAllFrames(f *os.File) ([]*Record, []*ControlFrame, error) {
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return nil, fmt.Errorf("seek WAL start: %w", err)
+		return nil, nil, fmt.Errorf("seek WAL start: %w", err)
 	}
 	var records []*Record
+	var controls []*ControlFrame
 	for {
-		rec, err := readNextRecord(f)
+		version, payload, err := readNextFramePayload(f)
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		records = append(records, rec)
+		switch version {
+		case walVersionControl:
+			var frame ControlFrame
+			if err := json.Unmarshal(payload, &frame); err != nil {
+				return nil, nil, fmt.Errorf("decode control frame: %w", err)
+			}
+			controls = append(controls, &frame)
+		case walVersion:
+			var rec Record
+			if err := json.Unmarshal(payload, &rec); err != nil {
+				return nil, nil, err
+			}
+			records = append(records, &rec)
+		default:
+			return nil, nil, fmt.Errorf("unknown WAL version %d", version)
+		}
 	}
-	return records, nil
+	return records, controls, nil
+}
+
+func retainLatestControlFrames(frames []*ControlFrame) []*ControlFrame {
+	if len(frames) == 0 {
+		return nil
+	}
+	latest := make(map[string]*ControlFrame)
+	for _, f := range frames {
+		if f == nil {
+			continue
+		}
+		latest[controlFrameKey(f)] = f
+	}
+	out := make([]*ControlFrame, 0, len(latest))
+	for _, f := range latest {
+		out = append(out, f)
+	}
+	return out
+}
+
+func controlFrameKey(f *ControlFrame) string {
+	switch f.FrameKind {
+	case FrameKindBudgetUpdate:
+		return f.FrameKind + "|" + f.AgentID + "|" + f.Scope
+	case FrameKindRateUpdate:
+		return f.FrameKind + "|" + f.AgentID + "|" + f.Tool + "|" + f.Window
+	default:
+		return f.FrameKind + "|" + f.AgentID
+	}
 }
 
 func retainRecords(records []*Record, keepLastN int, maxAge time.Duration, now time.Time) []*Record {

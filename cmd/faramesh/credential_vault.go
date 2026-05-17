@@ -13,7 +13,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -558,30 +557,6 @@ func writeLocalVaultEnv(state vaultStatePaths, addr, token, mount string) error 
 		return fmt.Errorf("write vault env file: %w", err)
 	}
 	return nil
-}
-
-func readPIDState(path string) (int, bool) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return 0, false
-	}
-	pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil || pid <= 0 {
-		return 0, false
-	}
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return pid, false
-	}
-	if runtime.GOOS == "windows" {
-		err = proc.Signal(syscall.Signal(0))
-		if err == nil {
-			return pid, true
-		}
-		return pid, false
-	}
-	err = proc.Signal(syscall.Signal(0))
-	return pid, err == nil
 }
 
 func printJSONReport(v any) error {

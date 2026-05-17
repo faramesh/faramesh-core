@@ -19,11 +19,13 @@ var rootCmd = &cobra.Command{
 	Long: `Faramesh is the governance control surface for AI agent actions.
 
 Start with the default workflow:
-  faramesh wizard first-run
-  faramesh run --broker -- python your_agent.py`,
-	Example: `  faramesh wizard first-run
-  faramesh up --policy policy.yaml
-  faramesh approvals
+  faramesh init
+  faramesh dev
+  faramesh apply`,
+	Example: `  faramesh init
+  faramesh check
+  faramesh apply
+  faramesh approvals list
   faramesh explain <action-id>`,
 	SilenceUsage: true,
 	Version:      version,

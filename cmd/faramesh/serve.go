@@ -192,11 +192,38 @@ func init() {
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
+	warnServeDeprecatedFlags()
+
 	log, err := buildLogger(serveLogLevel)
 	if err != nil {
 		return fmt.Errorf("build logger: %w", err)
 	}
 	defer log.Sync()
+
+	if compiledCfg, ok, loadErr := daemonConfigFromCompiled(log); loadErr != nil {
+		return fmt.Errorf("load compiled stack: %w", loadErr)
+	} else if ok {
+		if serveSyncHorizon {
+			tok, err := cloud.LoadToken()
+			if err != nil {
+				return fmt.Errorf("read Horizon credentials: %w\nRun: faramesh auth login", err)
+			}
+			if tok == nil {
+				return fmt.Errorf("not authenticated with Horizon\nRun: faramesh auth login")
+			}
+			if tok.IsExpired() {
+				return fmt.Errorf("Horizon token expired\nRun: faramesh auth login")
+			}
+			compiledCfg.HorizonToken = tok.Token
+			compiledCfg.HorizonURL = tok.HorizonURL
+			compiledCfg.HorizonOrgID = tok.OrgID
+		}
+		d, err := daemon.New(compiledCfg)
+		if err != nil {
+			return fmt.Errorf("init daemon: %w", err)
+		}
+		return d.Run(context.Background())
+	}
 
 	if spiffeID := resolveSPIFFEID(); spiffeID != "" {
 		_ = os.Setenv("FARAMESH_SPIFFE_ID", spiffeID)
@@ -316,79 +343,9 @@ func runServe(cmd *cobra.Command, args []string) error {
 }
 
 func runServeOnboardPreflight() error {
-	if strings.TrimSpace(servePolicyURL) != "" {
-		fmt.Fprintln(os.Stderr, "strict preflight: skipping local onboard policy compile check for --policy-url source")
-		return nil
-	}
-
-	prevPolicyPath := onboardPolicyPath
-	prevStrict := onboardStrict
-	prevJSON := onboardJSON
-	prevSlack := onboardSlackWebhook
-	prevPagerDuty := onboardPagerDutyRoutingKey
-	prevIDP := onboardIDPProvider
-	prevSPIFFE := onboardSPIFFESocket
-	prevSPIFFEID := onboardSPIFFEID
-	prevVault := onboardVaultAddr
-	prevAWS := onboardAWSRegion
-	prevGCP := onboardGCPProject
-	prevAzure := onboardAzureVaultURL
-	prevInteractive := onboardInteractive
-	prevCredentialProfile := onboardCredentialProfile
-	prevCredentialBackend := onboardCredentialBackend
-	prevAllowEnvFallbackRaw, prevAllowEnvFallbackSet := os.LookupEnv("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK")
-	prevSPIFFEIDRaw, prevSPIFFEIDSet := os.LookupEnv("FARAMESH_SPIFFE_ID")
-	defer func() {
-		onboardPolicyPath = prevPolicyPath
-		onboardStrict = prevStrict
-		onboardJSON = prevJSON
-		onboardSlackWebhook = prevSlack
-		onboardPagerDutyRoutingKey = prevPagerDuty
-		onboardIDPProvider = prevIDP
-		onboardSPIFFESocket = prevSPIFFE
-		onboardSPIFFEID = prevSPIFFEID
-		onboardVaultAddr = prevVault
-		onboardAWSRegion = prevAWS
-		onboardGCPProject = prevGCP
-		onboardAzureVaultURL = prevAzure
-		onboardInteractive = prevInteractive
-		onboardCredentialProfile = prevCredentialProfile
-		onboardCredentialBackend = prevCredentialBackend
-		if prevAllowEnvFallbackSet {
-			_ = os.Setenv("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK", prevAllowEnvFallbackRaw)
-		} else {
-			_ = os.Unsetenv("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK")
-		}
-		if prevSPIFFEIDSet {
-			_ = os.Setenv("FARAMESH_SPIFFE_ID", prevSPIFFEIDRaw)
-		} else {
-			_ = os.Unsetenv("FARAMESH_SPIFFE_ID")
-		}
-	}()
-
-	onboardPolicyPath = strings.TrimSpace(servePolicy)
-	onboardStrict = true
-	onboardJSON = false
-	onboardSlackWebhook = strings.TrimSpace(serveSlack)
-	onboardPagerDutyRoutingKey = strings.TrimSpace(servePagerDutyRoutingKey)
-	onboardIDPProvider = resolveIDPProvider()
-	onboardSPIFFESocket = strings.TrimSpace(serveSPIFFESocketPath)
-	onboardSPIFFEID = resolveSPIFFEID()
-	onboardVaultAddr = resolveVaultAddr()
-	onboardAWSRegion = strings.TrimSpace(serveAWSSecretsRegion)
-	onboardGCPProject = strings.TrimSpace(serveGCPSecretsProject)
-	onboardAzureVaultURL = strings.TrimSpace(serveAzureKeyVaultURL)
-	onboardInteractive = false
-	onboardCredentialProfile = "production"
-	onboardCredentialBackend = "auto"
-	if onboardSPIFFEID != "" {
-		_ = os.Setenv("FARAMESH_SPIFFE_ID", onboardSPIFFEID)
-	}
-	if serveAllowEnvCredFallback {
-		_ = os.Setenv("FARAMESH_CREDENTIAL_ALLOW_ENV_FALLBACK", "true")
-	}
-
-	return runOnboard(nil, nil)
+	// v2 stacks use governance.compiled.json via --from-compiled; full onboard preflight lives in legacy build.
+	_ = onboardPolicyPath
+	return nil
 }
 
 func resolveServeEBPFEnabled() bool {

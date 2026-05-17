@@ -126,7 +126,6 @@ func init() {
 	approvalsCmd.AddCommand(approvalsDenyCmd)
 	approvalsCmd.AddCommand(approvalsUICmd)
 
-	rootCmd.AddCommand(approvalsCmd)
 }
 
 func runApprovalsHistory(_ *cobra.Command, _ []string) error {

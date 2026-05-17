@@ -27,8 +27,13 @@ type Rule struct {
 
 // Document is the top-level AST node for a structured FPL file.
 type Document struct {
-	Agents  []*AgentBlock
-	Systems []*SystemBlock
+	Imports    []ImportDecl
+	Runtime    *RuntimeBlock
+	Providers  []*NamedProviderBlock
+	Identities []*NamedIdentityBlock
+	Trust      *TrustBlock
+	Agents     []*AgentBlock
+	Systems    []*SystemBlock
 	// Flat rules at top level (backward-compatible with v0 FPL).
 	FlatRules []*Rule
 	Topo      []TopoStatement
@@ -48,6 +53,16 @@ type AgentBlock struct {
 	Selectors   []*SelectorBlock
 	Credentials []*CredentialBlock
 	Vars        map[string]string
+
+	RateLimits     []*RateLimitLine
+	Redactions     []*RedactLine
+	Egress         *EgressBlock
+	ModelPolicy    *ModelPolicyBlock
+	Session        *SessionBlock
+	Spawn          *SpawnBlock
+	CompletionGate *CompletionGateBlock
+	Enforcement    *EnforcementBlock
+	Alerts         []*AlertBlock
 }
 
 type SystemBlock struct {
@@ -63,6 +78,7 @@ type BudgetBlock struct {
 	Max      float64
 	Daily    float64
 	MaxCalls int64
+	WarnAt   float64
 	OnExceed string
 }
 
@@ -119,9 +135,14 @@ const (
 	tkNumber
 	tkLBrace
 	tkRBrace
+	tkLParen
+	tkRParen
+	tkEq
 	tkColon
 	tkBang
 	tkDollar
+	tkLBracket
+	tkRBracket
 	tkEOF
 )
 
@@ -155,9 +176,26 @@ func tokenize(src string) ([]token, error) {
 		case ch == '}':
 			tokens = append(tokens, token{tkRBrace, "}", line})
 			i++
+		case ch == '(':
+			tokens = append(tokens, token{tkLParen, "(", line})
+			i++
+		case ch == ')':
+			tokens = append(tokens, token{tkRParen, ")", line})
+			i++
+		case ch == '=':
+			if i+1 < len(src) && src[i+1] == '=' {
+				tokens = append(tokens, token{tkIdent, "==", line})
+				i += 2
+			} else {
+				tokens = append(tokens, token{tkEq, "=", line})
+				i++
+			}
 		case ch == ':':
 			tokens = append(tokens, token{tkColon, ":", line})
 			i++
+		case ch == '!' && i+1 < len(src) && src[i+1] == '=':
+			tokens = append(tokens, token{tkIdent, "!=", line})
+			i += 2
 		case ch == '!' && (i+1 >= len(src) || src[i+1] == ' ' || src[i+1] == '\t' || src[i+1] == '\n' || src[i+1] == '\r'):
 			tokens = append(tokens, token{tkBang, "!", line})
 			i++
@@ -168,8 +206,30 @@ func tokenize(src string) ([]token, error) {
 			}
 			tokens = append(tokens, token{tkIdent, src[i:j], line})
 			i = j
+		case ch == '<':
+			if i+1 < len(src) && src[i+1] == '=' {
+				tokens = append(tokens, token{tkIdent, "<=", line})
+				i += 2
+			} else {
+				tokens = append(tokens, token{tkIdent, "<", line})
+				i++
+			}
+		case ch == '>':
+			if i+1 < len(src) && src[i+1] == '=' {
+				tokens = append(tokens, token{tkIdent, ">=", line})
+				i += 2
+			} else {
+				tokens = append(tokens, token{tkIdent, ">", line})
+				i++
+			}
 		case ch == '$':
 			tokens = append(tokens, token{tkDollar, "$", line})
+			i++
+		case ch == '[':
+			tokens = append(tokens, token{tkLBracket, "[", line})
+			i++
+		case ch == ']':
+			tokens = append(tokens, token{tkRBracket, "]", line})
 			i++
 		case ch == '"' || ch == '\'':
 			quote := ch
@@ -213,7 +273,6 @@ func tokenize(src string) ([]token, error) {
 func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 func isIdentStart(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' ||
-		c == '>' || c == '<' || c == '=' || c == '(' || c == ')' ||
 		c == '[' || c == ']' || c == ',' || c == '/' || c == '*' || c == '+' || c == '&' || c == '|'
 }
 func isIdentCont(c byte) bool {
@@ -301,6 +360,41 @@ func (p *parser) parseDocument() (*Document, error) {
 		}
 
 		switch t.val {
+		case "import":
+			imp, err := p.parseImportDecl()
+			if err != nil {
+				return nil, err
+			}
+			doc.Imports = append(doc.Imports, imp)
+
+		case "runtime":
+			rb, err := p.parseRuntimeBlock()
+			if err != nil {
+				return nil, err
+			}
+			doc.Runtime = rb
+
+		case "provider":
+			pb, err := p.parseNamedProviderBlock()
+			if err != nil {
+				return nil, err
+			}
+			doc.Providers = append(doc.Providers, pb)
+
+		case "identity":
+			ib, err := p.parseNamedIdentityBlock()
+			if err != nil {
+				return nil, err
+			}
+			doc.Identities = append(doc.Identities, ib)
+
+		case "trust":
+			tb, err := p.parseTrustBlock()
+			if err != nil {
+				return nil, err
+			}
+			doc.Trust = tb
+
 		case "agent":
 			ab, err := p.parseAgentBlock()
 			if err != nil {
@@ -467,7 +561,7 @@ func (p *parser) consumeFlatRuleClauseValue() (string, error) {
 	if p.peek().kind == tkColon {
 		p.next()
 	}
-	return p.stringOrIdent()
+	return p.consumeUntilKeyword()
 }
 
 func parseFlatRuleKeyValue(raw string) (string, string, error) {
@@ -505,23 +599,55 @@ func (p *parser) consumeUntilKeyword() (string, error) {
 		}
 		p.next()
 		val := t.val
-		if t.kind == tkString {
+		switch t.kind {
+		case tkString:
 			val = `"` + val + `"`
-		} else if t.kind == tkColon {
+		case tkColon:
 			val = ":"
-		} else if t.kind == tkDollar {
+		case tkDollar:
 			val = "$"
-		} else if t.kind == tkBang {
+		case tkBang:
 			val = "!"
+		case tkLParen:
+			val = "("
+		case tkRParen:
+			val = ")"
+		case tkEq:
+			val = "="
 		}
 		parts = append(parts, val)
 	}
-	return strings.Join(parts, " "), nil
+	return formatExprParts(parts), nil
+}
+
+func formatExprParts(parts []string) string {
+	var b strings.Builder
+	for i, part := range parts {
+		if i == 0 {
+			b.WriteString(part)
+			continue
+		}
+		prev := parts[i-1]
+		switch {
+		case part == "(":
+			b.WriteString(part)
+		case part == ")" || part == ",":
+			b.WriteString(part)
+		case part == "=" && prev == "=":
+			continue
+		case prev == "(":
+			b.WriteString(part)
+		default:
+			b.WriteByte(' ')
+			b.WriteString(part)
+		}
+	}
+	return b.String()
 }
 
 func isFlatRuleClauseKeyword(v string) bool {
 	switch v {
-	case "notify", "reason", "host", "port", "method", "path", "query", "header", "headers":
+	case "when", "notify", "reason", "host", "port", "method", "path", "query", "header", "headers":
 		return true
 	default:
 		return false
@@ -530,7 +656,8 @@ func isFlatRuleClauseKeyword(v string) bool {
 
 func isTopLevelKeyword(s string) bool {
 	switch s {
-	case "agent", "system", "permit", "allow", "approve", "deny", "deny!", "block", "reject", "defer", "manifest":
+	case "import", "runtime", "provider", "identity", "trust",
+		"agent", "system", "permit", "allow", "approve", "deny", "deny!", "block", "reject", "defer", "manifest":
 		return true
 	}
 	return false
@@ -672,6 +799,69 @@ func (p *parser) parseAgentBlock() (*AgentBlock, error) {
 			}
 			ab.Credentials = append(ab.Credentials, cred)
 
+		case "rate_limit":
+			rl, err := p.parseRateLimitLine()
+			if err != nil {
+				return nil, err
+			}
+			ab.RateLimits = append(ab.RateLimits, rl)
+
+		case "redact":
+			rd, err := p.parseRedactLine()
+			if err != nil {
+				return nil, err
+			}
+			ab.Redactions = append(ab.Redactions, rd)
+
+		case "egress":
+			eg, err := p.parseEgressBlock()
+			if err != nil {
+				return nil, err
+			}
+			ab.Egress = eg
+
+		case "model_policy":
+			mp, err := p.parseModelPolicyBlock()
+			if err != nil {
+				return nil, err
+			}
+			ab.ModelPolicy = mp
+
+		case "session":
+			sb, err := p.parseSessionBlock()
+			if err != nil {
+				return nil, err
+			}
+			ab.Session = sb
+
+		case "spawn":
+			sp, err := p.parseSpawnBlock()
+			if err != nil {
+				return nil, err
+			}
+			ab.Spawn = sp
+
+		case "completion_gate":
+			cg, err := p.parseCompletionGateBlock()
+			if err != nil {
+				return nil, err
+			}
+			ab.CompletionGate = cg
+
+		case "enforcement":
+			enf, err := p.parseEnforcementBlock()
+			if err != nil {
+				return nil, err
+			}
+			ab.Enforcement = enf
+
+		case "alert":
+			al, err := p.parseAlertBlock()
+			if err != nil {
+				return nil, err
+			}
+			ab.Alerts = append(ab.Alerts, al)
+
 		case "permit", "allow", "approve", "deny", "block", "reject", "defer", "deny!":
 			rule, err := p.parseFlatRule()
 			if err != nil {
@@ -800,6 +990,16 @@ func (p *parser) parseBudgetBlock() (*BudgetBlock, error) {
 				return nil, err
 			}
 			bb.OnExceed = v
+
+		case "warn_at":
+			p.next()
+			p.skipOptionalEquals()
+			t := p.next()
+			v, err := strconv.ParseFloat(t.val, 64)
+			if err != nil {
+				return nil, fmt.Errorf("line %d: warn_at: %w", t.line, err)
+			}
+			bb.WarnAt = v
 
 		default:
 			return nil, fmt.Errorf("line %d: unexpected keyword %q in budget block", p.peek().line, kw)

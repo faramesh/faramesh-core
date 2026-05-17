@@ -3,9 +3,10 @@
 // It targets a small versioned HTTP JSON API so any compatible registry (self-hosted,
 // future Faramesh Hub, or tests) can be used without proprietary server code in this repo.
 //
-// A **public** browse/publish website (Terraform Registry–style for packs) is **not** implemented
-// here and is **not** the same product as the gated SaaS console in Faramesh-cloud-platform/;
-// expect that UX to live in its **own** repository while this package remains the HTTP client.
+// The **official registry web app** (Terraform Registry–style browse for providers, policy packs,
+// and framework profiles) is specified in docs/internal/FARAMESH_REGISTRY_PLATFORM.md and
+// implemented in a **private** repository. This package is the HTTP client used by the CLI.
+// It is **not** the Faramesh cloud platform console (Faramesh-cloud-platform/).
 //
 // # Registry API v1 (compatibility contract)
 //

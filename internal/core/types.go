@@ -3,8 +3,10 @@
 package core
 
 import (
+	"strings"
 	"time"
 
+	"github.com/faramesh/faramesh-core/internal/core/denial"
 	"github.com/faramesh/faramesh-core/internal/core/principal"
 )
 
@@ -31,7 +33,31 @@ const (
 )
 
 // CARVersion is the current Canonical Action Request specification version.
-const CARVersion = "car/1.0"
+const CARVersion = "car/2.0"
+
+// ActionType classifies the canonical action (FARAMESH.md §7).
+type ActionType string
+
+const (
+	ActionTypeToolCall           ActionType = "tool_call"
+	ActionTypeAgentDelegation    ActionType = "agent_delegation"
+	ActionTypeModelCall          ActionType = "model_call"
+	ActionTypeSessionSpawn       ActionType = "session_spawn"
+	ActionTypeInboundDelegation  ActionType = "inbound_delegation"
+	ActionTypeCompletionEvent    ActionType = "completion_event"
+	ActionTypeToolResponse       ActionType = "tool_response"
+)
+
+// NormalizeActionType returns the canonical action type, defaulting to tool_call.
+func NormalizeActionType(t ActionType) ActionType {
+	switch ActionType(strings.TrimSpace(string(t))) {
+	case ActionTypeAgentDelegation, ActionTypeModelCall, ActionTypeSessionSpawn,
+		ActionTypeInboundDelegation, ActionTypeCompletionEvent, ActionTypeToolResponse:
+		return ActionType(strings.TrimSpace(string(t)))
+	default:
+		return ActionTypeToolCall
+	}
+}
 
 // CanonicalActionRequest is the normalized representation of a tool call
 // delivered by any adapter. All fields are set before the pipeline runs.
@@ -49,6 +75,12 @@ type CanonicalActionRequest struct {
 
 	// ToolID identifies the tool being called, e.g. "stripe/refund".
 	ToolID string `json:"tool_id"`
+
+	// ActionType classifies the request (default tool_call).
+	ActionType ActionType `json:"action_type,omitempty"`
+
+	// ReasoningSummary is optional agent reasoning before this call (max 2048 chars).
+	ReasoningSummary string `json:"reasoning_summary,omitempty"`
 
 	// Args are the raw arguments to the tool call.
 	Args map[string]any `json:"args"`
@@ -145,6 +177,9 @@ type Decision struct {
 
 	// Reason is a human-readable explanation.
 	Reason string `json:"reason"`
+
+	// StructuredDenial is the adapter-facing denial object (FARAMESH.md §12.2).
+	StructuredDenial *denial.Object `json:"structured_denial,omitempty"`
 
 	// DenialToken is an opaque token for operator lookup when Effect == DENY.
 	// No policy structure is exposed to the agent — oracle attack prevention.
