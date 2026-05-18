@@ -96,19 +96,6 @@ jobs:
           path: .tmp/
           if-no-files-found: ignore
 
-  visibility-server-tests:
-    name: Visibility Server Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install visibility-server dependencies
-        run: python3 -m pip install --disable-pip-version-check -r visibility-server/requirements.txt
-      - name: Run visibility server tests
-        run: python3 -m unittest discover -s visibility-server/tests -v
-
   lint:
     name: Lint
     runs-on: ubuntu-latest

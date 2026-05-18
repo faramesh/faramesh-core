@@ -12,13 +12,12 @@ Formula
 LICENSE
 Makefile
 README.md
+README-LOGO.png
+Readme-image.png
 SECURITY.md
 cmd
-demo-repo.png
-deploy
-docs
 examples
-faramesh
+faramesh-core-logo.svg
 go.mod
 go.sum
 install.sh
@@ -26,9 +25,7 @@ internal
 npm
 packs
 policies
-readme-logo.svg
-reports
+proto
 scripts
 sdk
 tests
-visibility-server
