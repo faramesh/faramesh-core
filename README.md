@@ -1,40 +1,48 @@
 # Faramesh Core
 
-[Faramesh](https://faramesh.dev) governs AI agent tool calls **before** they execute. Declare your stack in `governance.fms`, then use the CLI to compile policy and run enforcement.
+# Faramesh
 
-**Documentation:** https://docs.faramesh.dev
+Website: https://faramesh.dev
+Documentation: https://docs.faramesh.dev
+Quickstart: https://docs.faramesh.dev/quickstart/
+CLI reference: https://docs.faramesh.dev/cli/
+Policy language (FPL): https://docs.faramesh.dev/fpl/
+Stack reference: https://docs.faramesh.dev/stack/
 
-## Install
+![Faramesh Docs cover](https://docs.faramesh.dev/docs-cover.png)
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh | bash
-```
+Faramesh sits between an agent and its tools and decides every tool call against a policy you write. The daemon returns permit, defer, or deny decisions before the tool runs and records tamper-evident evidence for every decision.
 
-Or:
+The key capabilities of Faramesh are:
 
-```bash
-npx @faramesh/cli@latest
-```
+- Interception tiers so every call reaches the daemon: SDK shim, MCP proxy, HTTP proxy, and A2A proxy.
+- Deterministic enforcement: steps 1 through 8 are pure functions over policy and the action payload, with no LLM in the decision path.
+- Identity bound decisions using SPIFFE SVIDs, OIDC, or cloud workload identity.
+- Credential brokering that mints short-lived scoped credentials at the call site so agents never hold long-lived secrets.
+- Auditing with Decision Provenance Records, a hash-chained WAL, and optional KMS signing plus audit sinks for SIEM.
 
-## Quick start
+## Governance as code
 
-```bash
-faramesh init
-faramesh check
-faramesh plan
-faramesh apply
-```
+Faramesh policy lives in a single stack file written in FPL (YAML and JSON map to the same AST). The CLI compiles that policy into a deterministic AST that the daemon enforces, and changes are applied atomically.
 
-Use `faramesh dev` when you want stub providers and in-memory state while wiring your agent locally.
+## Getting Started and Documentation
 
-- [Quickstart](https://docs.faramesh.dev/quickstart/)
-- [CLI](https://docs.faramesh.dev/cli/)
-- [Stack model](https://docs.faramesh.dev/stack/)
+- Why Faramesh: https://docs.faramesh.dev/introduction/
+- How Faramesh works: https://docs.faramesh.dev/concepts/how-it-works/
+- Interception: https://docs.faramesh.dev/concepts/interception/
+- Enforcement: https://docs.faramesh.dev/concepts/enforcement/
+- Identity: https://docs.faramesh.dev/concepts/identity/
+- Credentials: https://docs.faramesh.dev/concepts/credentials/
+- Auditing: https://docs.faramesh.dev/concepts/auditing/
+- Quickstart: https://docs.faramesh.dev/quickstart/
+- Write your first policy: https://docs.faramesh.dev/guides/your-first-policy/
+- Providers: https://docs.faramesh.dev/providers/
+- CLI reference: https://docs.faramesh.dev/cli/
 
-## Contributing
+## Developing Faramesh
 
-Build and test instructions: [CONTRIBUTING.md](CONTRIBUTING.md).
+- Contributing guide: https://docs.faramesh.dev/guides/contributing/
 
 ## License
 
-See [LICENSE](LICENSE).
+See [faramesh-core/LICENSE](LICENSE).
