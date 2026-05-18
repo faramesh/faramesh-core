@@ -40,6 +40,10 @@ Faramesh policy lives in a single stack file written in FPL (YAML and JSON map t
 
 - Contributing guide: https://docs.faramesh.dev/guides/contributing/
 
+## Repository History Note
+
+If your clone predates the May 18, 2026 history rewrite, fetch the rewritten remote state or reclone before continuing work. The tracked root `faramesh` binary was removed from git history and local clones need to resync to drop the old blob.
+
 ## License
 
 See [faramesh-core/LICENSE](LICENSE).
