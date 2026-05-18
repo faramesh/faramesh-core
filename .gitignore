@@ -1,5 +1,8 @@
 /bin/
 /faramesh
+/deploy/
+/docs/
+/visibility-server/
 *.test
 coverage.out
 .tmp/

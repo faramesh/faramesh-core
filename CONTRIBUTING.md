@@ -17,12 +17,12 @@ faramesh-core/
 │   └── adapter/           # Framework auto-patchers
 ├── examples/              # FPL policy examples
 ├── npm/                   # npm package (npx @faramesh/cli)
-├── docs/                  # Documentation
 ├── tests/                 # Integration and end-to-end tests
-├── deploy/                # Deployment manifests (Docker, Helm, systemd)
 ├── Formula/               # Homebrew formula
 └── Makefile               # Build, test, release targets
 ```
+
+The published repo intentionally omits `deploy/`, `docs/`, and `visibility-server/`; keep local copies outside version control if you need them.
 
 ---
 

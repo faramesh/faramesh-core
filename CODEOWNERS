@@ -27,8 +27,6 @@
 /go.mod @faramesh/core-team
 /go.sum @faramesh/core-team
 
-# Documentation
-/docs/ @faramesh/docs-team
 /README.md @faramesh/core-team
 
 # Examples and policies

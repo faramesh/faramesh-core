@@ -42,6 +42,6 @@ faramesh setup flow
 
 - [Documentation](https://faramesh.dev/docs)
 - [GitHub](https://github.com/faramesh/faramesh-core)
-- [Docs Index](../docs/README.md)
+- [Documentation](https://docs.faramesh.dev/)
 - [FPL Language Repository](https://github.com/faramesh/fpl-lang)
 - [FPL Getting Started](https://github.com/faramesh/fpl-lang/blob/main/docs/GETTING_STARTED.md)
