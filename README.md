@@ -1,15 +1,12 @@
-# Faramesh Core
-
 # Faramesh
 
-Website: https://faramesh.dev
-Documentation: https://docs.faramesh.dev
-Quickstart: https://docs.faramesh.dev/quickstart/
-CLI reference: https://docs.faramesh.dev/cli/
-Policy language (FPL): https://docs.faramesh.dev/fpl/
-Stack reference: https://docs.faramesh.dev/stack/
+- Website: https://faramesh.dev
+- Documentation: https://docs.faramesh.dev
+- Quickstart: https://docs.faramesh.dev/quickstart/
+- Policy language (FPL): https://docs.faramesh.dev/fpl/
+- Stack reference: https://docs.faramesh.dev/stack/
 
-![Faramesh Docs cover](https://docs.faramesh.dev/docs-cover.png)
+![Faramesh Docs cover](Readme-image.png)
 
 Faramesh sits between an agent and its tools and decides every tool call against a policy you write. The daemon returns permit, defer, or deny decisions before the tool runs and records tamper-evident evidence for every decision.
 
