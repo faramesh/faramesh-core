@@ -6,7 +6,7 @@
 - Policy language (FPL): https://docs.faramesh.dev/fpl/
 - Stack reference: https://docs.faramesh.dev/stack/
 
-<img src="../README-LOGO.png" alt="Faramesh logo" width="720" />
+<img src="README-LOGO.png" alt="Faramesh logo" width="720" />
 
 Faramesh sits between an agent and its tools and decides every tool call against a policy you write. The daemon returns permit, defer, or deny decisions before the tool runs and records tamper-evident evidence for every decision.
 
