@@ -18,7 +18,7 @@ rm -f "$LOSSLESS_FPL"
 cp "$ROOT_DIR/../fpl-lang/conformance/valid/basic-agent.fpl" "$LOSSLESS_FPL"
 
 echo "Parsing lossless FPL with reference parser"
-(cd "$ROOT_DIR/../fpl-lang/reference/go" && go run ./cmd/fplparse "$LOSSLESS_FPL") >/dev/null
+go run ./cmd/fplparse "$LOSSLESS_FPL" >/dev/null
 
 echo "+ Skipping decompile/test steps (policy CLI removed). Parsing validated."
 
