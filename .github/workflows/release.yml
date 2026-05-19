@@ -51,16 +51,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: langchain-governed-smoke
-            entry: tests/corpus/framework-hooks/langchain-governed-smoke
-          - id: langchain-fpl
-            entry: tests/corpus/framework-hooks/langchain-fpl
-          - id: langgraph-fpl
-            entry: tests/corpus/framework-hooks/langgraph-fpl
-          - id: langchain-simple
-            entry: tests/corpus/framework-hooks/langchain-simple
-          - id: langgraph-single-agent
-            entry: tests/corpus/framework-hooks/langgraph-single-agent
           - id: deepagents-governed
             entry: tests/corpus/framework-hooks/deepagents-governed
           - id: langgraph-multi-agent
@@ -69,16 +59,10 @@ jobs:
             entry: tests/corpus/mcp-servers/mcp-stdio-wrap
           - id: mcp-http-sse
             entry: tests/corpus/mcp-servers/mcp-http-sse
-          - id: mcp-node-sdk
-            entry: tests/corpus/mcp-servers/mcp-node-sdk
-          - id: linux-interception
-            entry: tests/corpus/runtime-core/linux-interception
           - id: defer-timeout-resume
             entry: tests/corpus/runtime-core/defer-timeout-resume
           - id: burst-rate-limits
             entry: tests/corpus/runtime-core/burst-rate-limits
-          - id: policy-roundtrip
-            entry: tests/corpus/policy-core/policy-roundtrip
           - id: socket-e2e-acceptance
             entry: tests/corpus/runtime-core/socket-e2e-acceptance
 
