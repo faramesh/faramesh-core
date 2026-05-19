@@ -60,6 +60,10 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: sdk/node/package-lock.json
+      - name: Clone fpl-lang
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/faramesh/fpl-lang.git ../fpl-lang
       - name: Install Vault CLI
         run: |
           set -euo pipefail
@@ -177,6 +181,10 @@ jobs:
             -o faramesh ./cmd/faramesh
       - name: Verify version
         run: ./faramesh --version
+      - name: Clone fpl-lang
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/faramesh/fpl-lang.git ../fpl-lang
       - name: Validate FPL examples (parse-only)
         run: |
           for f in examples/*.fpl; do

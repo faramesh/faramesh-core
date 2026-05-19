@@ -201,6 +201,11 @@ jobs:
           cache: "npm"
           cache-dependency-path: sdk/node/package-lock.json
 
+      - name: Clone fpl-lang
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/faramesh/fpl-lang.git ../fpl-lang
+
       - name: Corpus check
         run: make corpus-check
 
