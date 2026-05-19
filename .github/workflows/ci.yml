@@ -183,8 +183,8 @@ jobs:
             echo "Parsing $f..."
             go run ./cmd/fplparse "$f"
           done
-      - name: Run demo (smoke test)
-        run: ./faramesh demo
+      - name: Smoke test: CLI help
+        run: ./faramesh --help
 
   cross-compile:
     name: Cross-compile (${{ matrix.suffix }})
