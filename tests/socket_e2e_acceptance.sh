@@ -109,17 +109,8 @@ YAML
 
 go build -o "$BIN_PATH" ./cmd/faramesh
 
-# If the CLI no longer exposes 'onboard', skip the onboarding preflight checks.
-if ! "$BIN_PATH" --help 2>/dev/null | rg -q "\bonboard\b"; then
-  echo "Skipping onboarding preflight checks: 'onboard' subcommand not present in $BIN_PATH"
-else
-  # Validate strict onboarding fail-closed behavior before daemon startup.
-  expect_cmd_fail "Policy requires brokered credentials" env FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" onboard --strict=true --policy "$CREDENTIAL_POLICY_PATH" --interactive=false --spiffe-socket "$SPIFFE_SOCKET_PATH" --credential-profile production --credential-backend auto
-  run_cmd env FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" onboard --strict=true --policy "$CREDENTIAL_POLICY_PATH" --interactive=false --spiffe-socket "$SPIFFE_SOCKET_PATH" --credential-profile production --credential-backend local-vault
-
-  expect_cmd_fail "configured but not ready" env FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" onboard --strict=true --policy "$PRINCIPAL_POLICY_PATH" --idp-provider okta --interactive=false --spiffe-socket "$SPIFFE_SOCKET_PATH"
-  run_cmd env FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" onboard --strict=true --policy "$PRINCIPAL_POLICY_PATH" --idp-provider default --interactive=false --spiffe-socket "$SPIFFE_SOCKET_PATH"
-fi
+# Note: onboard CLI subcommand has been removed
+echo "Skipping removed CLI: 'onboard' subcommand not present in current faramesh"
 
 run_cmd "$BIN_PATH" verify manifest-generate --base-dir "$ROOT_DIR" --output "$INTEGRITY_MANIFEST_PATH" "$POLICY_PATH"
 "$BIN_PATH" verify buildinfo --emit >"$BUILDINFO_EXPECTED_PATH"
@@ -139,95 +130,19 @@ DAEMON_PID=$!
 wait_for_daemon
 
 run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" status
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" status
 
-# If the CLI no longer exposes 'session', skip CLI-driven session/model/identity checks.
-if ! "$BIN_PATH" --help 2>/dev/null | rg -q "\bsession\b"; then
-  echo "Skipping CLI-driven session/model/identity checks: 'session' subcommand not present in $BIN_PATH"
-  echo "socket-only E2E acceptance completed (partial)"
-  exit 0
-fi
+# Core socket JSON-RPC govern validation
+# Deprecated CLI subcommands (session, model, identity, credential, provenance, incident, compensate) have been removed
+echo "Validating core socket JSON-RPC govern protocol"
 
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" session open "$AGENT_ID" --budget 25 --ttl 30m
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" session list --agent "$AGENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" session budget "$AGENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" session budget "$AGENT_ID" --set 10
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" session purpose declare "$AGENT_ID" support
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" session purpose list "$AGENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" session inspect "$AGENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" session reset "$AGENT_ID" --counter all
-
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" model register e2e-model --fingerprint abc123 --provider openai --version 2026-03
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" model list
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" model verify --agent "$AGENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" model consistency --agent "$AGENT_ID" --window 24h
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" model alert "$AGENT_ID"
-
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" provenance sign --agent "$AGENT_ID" --model gpt-4o --framework langgraph --tools read,write --key k1
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" provenance list
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" provenance verify "$AGENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" provenance inspect "$AGENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" provenance diff "$AGENT_ID"
-
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity verify --spiffe "spiffe://example.org/agent/$AGENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity trust --domain example.org --bundle bundle.pem
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity attest --workload payments-worker
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity federation add --idp https://idp.example --client-id cid --scope openid
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity federation list
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity whoami
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity trust-level
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity federation revoke --idp https://idp.example
-
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential register "$CREDENTIAL_NAME" --key sk_live_x --scope payments --max-scope payments:write
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential list
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential inspect "$CREDENTIAL_NAME"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential rotate "$CREDENTIAL_NAME" --key sk_live_new
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential health
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential map
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential audit "$CREDENTIAL_NAME" --window 24h
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" credential revoke "$CREDENTIAL_NAME"
-
-INCIDENT_OUTPUT="$("$BIN_PATH" --daemon-socket "$SOCKET_PATH" incident declare --agent "$AGENT_ID" --severity high --reason risk)"
-echo "$INCIDENT_OUTPUT"
-INCIDENT_ID="$(INCIDENT_OUTPUT="$INCIDENT_OUTPUT" python3 - <<'PY'
-import json
-import os
-import re
-
-text = os.environ.get("INCIDENT_OUTPUT", "")
-match = re.search(r"\{[\s\S]*\}", text)
-if not match:
-    raise SystemExit(1)
-payload = json.loads(match.group(0))
-print(payload.get("id", ""))
-PY
-)"
-if [[ -z "$INCIDENT_ID" ]]; then
-  echo "failed to extract incident id from output"
-  exit 1
-fi
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" incident list
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" incident inspect "$INCIDENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" incident evidence "$INCIDENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" incident playbook "$INCIDENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" incident isolate "$AGENT_ID"
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" incident resolve "$INCIDENT_ID"
-
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" compensate apply cmp-1
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" compensate status cmp-1
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" compensate inspect cmp-1
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" compensate retry cmp-1 --from-step rollback
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" compensate list
-
-python3 - "$SOCKET_PATH" <<'PY'
+python3 - "$SOCKET_PATH" <<'PYTHON_VALIDATE'
 import json
 import socket
 import sys
 
 socket_path = sys.argv[1]
 
-
-def send(payload):
+def send_json_rpc(payload):
     conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     conn.settimeout(5.0)
     conn.connect(socket_path)
@@ -240,12 +155,30 @@ def send(payload):
         data += chunk
     conn.close()
     if not data:
-        raise RuntimeError("empty response from daemon")
+        raise RuntimeError("empty response from daemon socket")
     return json.loads(data.decode("utf-8").strip())
 
-node_style = {
+# Test Python-style govern call
+python_style = {
     "jsonrpc": "2.0",
     "id": 1,
+    "method": "govern",
+    "params": {
+        "agent_id": "auto-patched",
+        "tool_id": "http/get",
+        "args": {"url": "https://example.org"},
+    },
+}
+resp = send_json_rpc(python_style)
+if resp.get("jsonrpc") != "2.0" or "result" not in resp:
+    raise RuntimeError(f"invalid python-style response: {resp}")
+if not str(resp["result"].get("effect", "")).strip():
+    raise RuntimeError(f"missing effect in python-style response: {resp}")
+
+# Test Node.js-style govern call
+node_style = {
+    "jsonrpc": "2.0",
+    "id": 2,
     "method": "govern",
     "params": {
         "agent_id": "auto-patched",
@@ -254,32 +187,15 @@ node_style = {
         "args": {"url": "https://example.com"},
     },
 }
-node_resp = send(node_style)
-if node_resp.get("jsonrpc") != "2.0" or "result" not in node_resp:
-    raise RuntimeError(f"invalid node-style response: {node_resp}")
-if not str(node_resp["result"].get("effect", "")).strip():
-    raise RuntimeError(f"missing effect in node-style response: {node_resp}")
+resp2 = send_json_rpc(node_style)
+if resp2.get("jsonrpc") != "2.0" or "result" not in resp2:
+    raise RuntimeError(f"invalid node-style response: {resp2}")
+if not str(resp2["result"].get("effect", "")).strip():
+    raise RuntimeError(f"missing effect in node-style response: {resp2}")
 
-python_style = {
-    "jsonrpc": "2.0",
-    "id": 2,
-    "method": "govern",
-    "params": {
-        "agent_id": "auto-patched",
-        "tool_id": "http/get",
-        "args": {"url": "https://example.org"},
-    },
-}
-python_resp = send(python_style)
-if python_resp.get("jsonrpc") != "2.0" or "result" not in python_resp:
-    raise RuntimeError(f"invalid python-style response: {python_resp}")
-if not str(python_resp["result"].get("effect", "")).strip():
-    raise RuntimeError(f"missing effect in python-style response: {python_resp}")
+print("socket JSON-RPC govern protocol validation passed")
+PYTHON_VALIDATE
 
-print("json-rpc govern compatibility checks passed")
-PY
-
-run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" session close "$AGENT_ID"
 run_cmd "$BIN_PATH" --daemon-socket "$SOCKET_PATH" status
 
-echo "socket-only E2E acceptance completed"
+echo "socket-only E2E acceptance completed (core socket JSON-RPC govern validation)"

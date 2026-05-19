@@ -136,6 +136,8 @@ FARAMESH_AGENT_ID="$AGENT_ID" \
 FARAMESH_AUTOLOAD=1 \
   "$PYTHON_BIN" "$AGENT_SCRIPT_PATH" >"$AGENT_OUTPUT_PATH" 2>&1
 
+# Note: identity verify command has been removed from CLI
+
 python3 - "$AGENT_OUTPUT_PATH" <<'PY'
 import json
 import sys

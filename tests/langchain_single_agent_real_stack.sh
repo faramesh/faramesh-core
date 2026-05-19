@@ -154,9 +154,6 @@ FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" serve \
 DAEMON_PID=$!
 wait_for_daemon
 
-# Identity management signal via CLI surfaces.
-"$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity verify --spiffe "spiffe://example.org/agent/$AGENT_ID" >/dev/null
-
 FARAMESH_SOCKET="$SOCKET_PATH" \
 FARAMESH_AGENT_ID="$AGENT_ID" \
 FARAMESH_AUTOLOAD=1 \
