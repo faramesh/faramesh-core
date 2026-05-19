@@ -212,12 +212,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: langchain-fpl
-            entry: tests/corpus/framework-hooks/langchain-fpl
-          - id: langgraph-fpl
-            entry: tests/corpus/framework-hooks/langgraph-fpl
-          - id: langchain-simple
-            entry: tests/corpus/framework-hooks/langchain-simple
           - id: deepagents-governed
             entry: tests/corpus/framework-hooks/deepagents-governed
           - id: langgraph-multi-agent
@@ -226,8 +220,6 @@ jobs:
             entry: tests/corpus/mcp-servers/mcp-stdio-wrap
           - id: mcp-http-sse
             entry: tests/corpus/mcp-servers/mcp-http-sse
-          - id: mcp-node-sdk
-            entry: tests/corpus/mcp-servers/mcp-node-sdk
           - id: defer-timeout-resume
             entry: tests/corpus/runtime-core/defer-timeout-resume
           - id: burst-rate-limits

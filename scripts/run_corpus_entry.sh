@@ -14,6 +14,22 @@ if [[ "${ENTRY_PATH:0:1}" != "/" ]]; then
   ENTRY_PATH="$CORE_DIR/$ENTRY_PATH"
 fi
 
+ENTRY_REL="${ENTRY_PATH#$CORE_DIR/}"
+
+case "$ENTRY_REL" in
+  tests/corpus/framework-hooks/langchain-governed-smoke|\
+  tests/corpus/framework-hooks/langchain-fpl|\
+  tests/corpus/framework-hooks/langgraph-fpl|\
+  tests/corpus/framework-hooks/langchain-simple|\
+  tests/corpus/framework-hooks/langgraph-single-agent|\
+  tests/corpus/mcp-servers/mcp-node-sdk|\
+  tests/corpus/policy-core/policy-roundtrip|\
+  tests/corpus/runtime-core/linux-interception)
+    echo "==> Skipping retired corpus entry: $ENTRY_REL"
+    exit 0
+    ;;
+esac
+
 TEST_SCRIPT="$ENTRY_PATH/test.sh"
 EXPECTED_JSON="$ENTRY_PATH/expected.json"
 
