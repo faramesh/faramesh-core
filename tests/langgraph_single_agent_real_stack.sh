@@ -152,7 +152,7 @@ FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" serve \
 DAEMON_PID=$!
 wait_for_daemon
 
-"$BIN_PATH" --daemon-socket "$SOCKET_PATH" identity verify --spiffe "spiffe://example.org/agent/$AGENT_ID" >/dev/null
+# Identity management CLI removed; skip verify step.
 
 FARAMESH_SOCKET="$SOCKET_PATH" \
 FARAMESH_AGENT_ID="$AGENT_ID" \
