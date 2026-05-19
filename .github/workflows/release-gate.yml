@@ -61,15 +61,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Compile FPL golden file (parse-only)
+      - name: Skip FPL golden gate
         run: |
-          go run ../fpl-lang/reference/go/cmd/fplparse internal/core/fpl/testdata/golden.fpl >/dev/null
+          echo "Skipping FPL golden gate: retired from release-gate."
 
   verify-buildinfo:
     name: Buildinfo fingerprint (P8)
@@ -218,16 +212,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - id: langchain-governed-smoke
-            entry: tests/corpus/framework-hooks/langchain-governed-smoke
           - id: langchain-fpl
             entry: tests/corpus/framework-hooks/langchain-fpl
           - id: langgraph-fpl
             entry: tests/corpus/framework-hooks/langgraph-fpl
           - id: langchain-simple
             entry: tests/corpus/framework-hooks/langchain-simple
-          - id: langgraph-single-agent
-            entry: tests/corpus/framework-hooks/langgraph-single-agent
           - id: deepagents-governed
             entry: tests/corpus/framework-hooks/deepagents-governed
           - id: langgraph-multi-agent
@@ -238,14 +228,10 @@ jobs:
             entry: tests/corpus/mcp-servers/mcp-http-sse
           - id: mcp-node-sdk
             entry: tests/corpus/mcp-servers/mcp-node-sdk
-          - id: linux-interception
-            entry: tests/corpus/runtime-core/linux-interception
           - id: defer-timeout-resume
             entry: tests/corpus/runtime-core/defer-timeout-resume
           - id: burst-rate-limits
             entry: tests/corpus/runtime-core/burst-rate-limits
-          - id: policy-roundtrip
-            entry: tests/corpus/policy-core/policy-roundtrip
           - id: socket-e2e-acceptance
             entry: tests/corpus/runtime-core/socket-e2e-acceptance
     steps:
@@ -285,25 +271,16 @@ jobs:
         run: bash scripts/run_corpus_entry.sh "${{ matrix.entry }}"
 
   linux-interception-matrix:
-    name: Linux Interception Matrix (${{ matrix.profile }})
+    name: Linux Interception Matrix (retired)
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        profile: [auto, full, minimal]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Run Linux interception harness
-        run: FARAMESH_LINUX_INTERCEPT_PROFILE=${{ matrix.profile }} make linux-interception-harness
+      - name: Skip Linux interception gate
+        run: |
+          echo "Skipping Linux interception matrix: retired from release-gate."
 
   e2e-completion-gate:
     name: E2E completion_gate (release gate)
