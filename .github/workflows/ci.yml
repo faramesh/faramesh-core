@@ -63,7 +63,12 @@ jobs:
       - name: Clone fpl-lang
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/faramesh/fpl-lang.git ./fpl-lang
+            if [ ! -d ./fpl-lang ]; then
+              git clone --depth 1 https://github.com/faramesh/fpl-lang.git ./fpl-lang
+            fi
+            if [ ! -d ../fpl-lang ]; then
+              git clone --depth 1 https://github.com/faramesh/fpl-lang.git ../fpl-lang
+            fi
       - name: Install Vault CLI
         run: |
           set -euo pipefail
