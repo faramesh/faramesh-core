@@ -15,6 +15,10 @@ func (p *parser) parseImportDecl() (ImportDecl, error) {
 	if err != nil {
 		return ImportDecl{}, fmt.Errorf("line %d: import: expected registry reference string", line)
 	}
+	// Validate: version specifiers like @latest are not permitted (must use pinned versions)
+	if strings.Contains(ref, "@latest") {
+		return ImportDecl{}, fmt.Errorf("line %d: import: version specifier @latest not permitted; use pinned version (e.g. @1.0.0)", line)
+	}
 	imp := ImportDecl{Ref: ref, Line: line}
 	if p.peek().kind == tkIdent && p.peek().val == "as" {
 		p.next()
