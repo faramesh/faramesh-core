@@ -1,6 +1,6 @@
-# Linux `faramesh run` interception matrix
+# Linux governed interception matrix
 
-Wraps `tests/linux_interception_matrix_harness.sh`: builds `cmd/faramesh`, runs `faramesh run` under profile matrix, and asserts the enforcement report contains expected layers (seccomp, Landlock, broker, etc.).
+Wraps `tests/linux_interception_matrix_harness.sh`: builds `cmd/faramesh`, runs the harness directly under the governed daemon environment, and asserts the enforcement report contains expected layers (seccomp, Landlock, broker, etc.).
 
 - **Linux:** full checks (CI `ubuntu-latest` runs this via `corpus-harness`).
 - **macOS / Windows:** harness exits **0** immediately (“skipped”); use CI or a Linux box for real signal.

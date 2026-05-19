@@ -252,11 +252,11 @@ DAEMON_PID=$!
 
 wait_for_daemon
 
-echo "+ $BIN_PATH --daemon-socket $SOCKET_PATH run --enforce minimal -- node $NODE_SCRIPT_PATH"
+echo "+ FARAMESH_SOCKET=$SOCKET_PATH FARAMESH_AGENT_ID=$AGENT_ID FARAMESH_NODE_AUTOPATCH_PATH=$ROOT_DIR/sdk/node/dist/autopatch.js node $NODE_SCRIPT_PATH"
 FARAMESH_SOCKET="$SOCKET_PATH" \
 FARAMESH_AGENT_ID="$AGENT_ID" \
 FARAMESH_NODE_AUTOPATCH_PATH="$ROOT_DIR/sdk/node/dist/autopatch.js" \
-"$BIN_PATH" --daemon-socket "$SOCKET_PATH" run --enforce minimal -- node "$NODE_SCRIPT_PATH" >"$NODE_OUTPUT_PATH" 2>"$NODE_RUN_STDERR_PATH"
+node "$NODE_SCRIPT_PATH" >"$NODE_OUTPUT_PATH" 2>"$NODE_RUN_STDERR_PATH"
 
 TOKENS="$(python3 - "$NODE_OUTPUT_PATH" <<'PY'
 import json

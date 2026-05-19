@@ -2,8 +2,9 @@
 """
 Minimal LangGraph multi-agent delegation interception probe.
 
-This runs under `faramesh run` and exercises the LangGraph ToolNode execution
-path with multi-agent delegation-shaped tool calls.
+This runs directly under the governed daemon environment and exercises the
+LangGraph ToolNode execution path with multi-agent delegation-shaped tool
+calls.
 
 What it proves:
 - LangGraph execute-layer interception is active.

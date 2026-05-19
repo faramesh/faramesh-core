@@ -32,6 +32,7 @@ var commandTierByName = map[string]commandTier{
 	"bundle":     commandTierOperator,
 	"registry":   commandTierCore,
 	"auth":       commandTierCore,
+	"verify":     commandTierCore,
 	"completion": commandTierCore,
 	"help":       commandTierCore,
 	"serve":      commandTierInternal,
@@ -62,6 +63,7 @@ func init() {
 		bundleCmd,
 		registryCmd,
 		authCmd,
+		verifyCmd,
 		serveCmd,
 	} {
 		rootCmd.AddCommand(c)

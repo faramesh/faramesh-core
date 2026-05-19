@@ -2,12 +2,9 @@
 """
 Minimal LangGraph ToolNode interception probe.
 
-This script runs under `faramesh run` and explicitly installs the
-LangGraph ToolNode adapter hooks so execute-layer interception is exercised.
-
-Run it under:
-
-    faramesh run -- python tests/langgraph_single_agent_dropin.py
+This script runs directly under the governed daemon environment and explicitly
+installs the LangGraph ToolNode adapter hooks so execute-layer interception is
+exercised.
 
 What it proves:
 - Runtime interception works for LangGraph ToolNode dispatch.

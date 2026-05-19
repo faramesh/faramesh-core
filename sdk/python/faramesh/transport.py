@@ -85,11 +85,14 @@ def _govern_socket(
         },
     }
     body = (json.dumps(payload) + "\n").encode("utf-8")
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+    conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
         conn.settimeout(30.0)
         conn.connect(socket_path)
         conn.sendall(body)
         data = conn.recv(65536)
+    finally:
+        conn.close()
     resp = json.loads(data.decode("utf-8"))
     if resp.get("error"):
         err = resp["error"]

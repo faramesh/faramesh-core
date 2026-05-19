@@ -310,8 +310,8 @@ Examples:
 		}
 		fmt.Printf("start daemon with broker backend:\n")
 		fmt.Printf("  faramesh serve --vault-addr %s --vault-token <token> --vault-mount %s --policy <policy> ...\n", addr, mount)
-		fmt.Printf("then run agent with ambient key stripping:\n")
-		fmt.Printf("  faramesh run --broker --agent-id <id> -- python your_agent.py\n")
+		fmt.Printf("then run agent directly under the daemon environment:\n")
+		fmt.Printf("  FARAMESH_SOCKET=<socket> FARAMESH_AGENT_ID=<id> FARAMESH_AUTOLOAD=1 python your_agent.py\n")
 		return nil
 	},
 }
