@@ -80,15 +80,6 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: sdk/node/package-lock.json
-      - name: Ensure fpl-lang is available
-        run: |
-          set -euo pipefail
-          if [ ! -d ./fpl-lang ]; then
-            git clone --depth 1 https://github.com/faramesh/fpl-lang.git ./fpl-lang
-          fi
-          if [ ! -d ../fpl-lang ]; then
-            git clone --depth 1 https://github.com/faramesh/fpl-lang.git ../fpl-lang
-          fi
       - name: Install Vault CLI
         run: |
           set -euo pipefail
