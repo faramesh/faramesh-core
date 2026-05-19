@@ -192,9 +192,10 @@ jobs:
           git clone --depth 1 https://github.com/faramesh/fpl-lang.git ../fpl-lang
       - name: Validate FPL examples (parse-only)
         run: |
-          for f in examples/*.fpl; do
+          cd ../fpl-lang/reference/go
+          for f in "$GITHUB_WORKSPACE"/examples/*.fpl; do
             echo "Parsing $f..."
-            go run ./fpl-lang/reference/go/cmd/fplparse "$f"
+            go run ./cmd/fplparse "$f"
           done
       - name: Run demo (smoke test)
         run: ./faramesh demo
