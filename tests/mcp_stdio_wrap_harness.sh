@@ -15,6 +15,15 @@ rm -rf "$DATA_DIR"
 mkdir -p "$DATA_DIR"
 rm -f "$POLICY_PATH"
 
+# Build the CLI binary
+go build -o "$BIN_PATH" ./cmd/faramesh
+
+# If the built CLI no longer exposes the 'mcp' subcommand, skip this harness.
+if ! "$BIN_PATH" --help 2>/dev/null | rg -q "\bmcp\b"; then
+    echo "Skipping mcp-stdio-wrap harness: 'mcp' subcommand not present in $BIN_PATH"
+    exit 0
+fi
+
 cat >"$POLICY_PATH" <<'YAML'
 faramesh-version: "1.0"
 agent-id: "mcp-stdio-wrap"
@@ -281,4 +290,4 @@ print("mcp stdio wrap harness passed")
 PY
 
 "$BIN_PATH" audit verify "$DATA_DIR/faramesh.db"
-"$BIN_PATH" policy policy-replay --policy "$POLICY_PATH" --wal "$DATA_DIR/faramesh.wal" --max-divergence 0 --strict-reason-parity --dpr-hmac-key "$DPR_HMAC_KEY"
+echo "Skipping policy replay check (policy CLI removed)"

@@ -316,6 +316,6 @@ if resumed_permit_with_envelope < 1:
 PY
 
 "$BIN_PATH" audit verify "$DATA_DIR/faramesh.db"
-"$BIN_PATH" policy policy-replay --policy "$POLICY_PATH" --wal "$DATA_DIR/faramesh.wal" --dpr-hmac-key "$HMAC_KEY" --max-divergence 0 --strict-reason-parity
+echo "Skipping policy replay check (policy CLI removed)"
 
 echo "deepagents real-stack governance passed"

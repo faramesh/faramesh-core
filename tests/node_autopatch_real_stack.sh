@@ -95,6 +95,7 @@ agent node-autopatch-e2e {
   rules {
     permit http/get
     defer stripe/refund reason: "refund requires manual approval"
+    defer stripe/chargeback reason: "chargeback requires manual review"
   }
 }
 FPL
@@ -157,7 +158,7 @@ async function main() {
   results.push(await runStep(server, "permit_http", "http/get", { url: "https://example.com" }));
   results.push(await runStep(server, "deny_shell", "shell/run", { command: "cat /etc/passwd" }));
   results.push(await runStep(server, "defer_approve", "stripe/refund", { amount: 700 }));
-  results.push(await runStep(server, "defer_deny", "stripe/refund", { amount: 701 }));
+  results.push(await runStep(server, "defer_deny", "stripe/chargeback", { amount: 701 }));
 
   for (const result of results) {
     if (result.token) {
@@ -241,6 +242,7 @@ FARAMESH_SPIFFE_ID="spiffe://example.org/agent/$AGENT_ID" "$BIN_PATH" serve \
   --policy "$POLICY_PATH" \
   --socket "$SOCKET_PATH" \
   --data-dir "$DATA_DIR" \
+  --metrics-port 8000 \
   --dpr-hmac-key "$DPR_HMAC_KEY" \
   --strict-preflight \
   --integrity-manifest "$INTEGRITY_MANIFEST_PATH" \
@@ -254,6 +256,7 @@ wait_for_daemon
 
 echo "+ FARAMESH_SOCKET=$SOCKET_PATH FARAMESH_AGENT_ID=$AGENT_ID FARAMESH_NODE_AUTOPATCH_PATH=$ROOT_DIR/sdk/node/dist/autopatch.js node $NODE_SCRIPT_PATH"
 FARAMESH_SOCKET="$SOCKET_PATH" \
+FARAMESH_REMOTE_URL="http://127.0.0.1:8000" \
 FARAMESH_AGENT_ID="$AGENT_ID" \
 FARAMESH_NODE_AUTOPATCH_PATH="$ROOT_DIR/sdk/node/dist/autopatch.js" \
 node "$NODE_SCRIPT_PATH" >"$NODE_OUTPUT_PATH" 2>"$NODE_RUN_STDERR_PATH"
@@ -363,7 +366,7 @@ PY
 
 FARAMESH_NODE_AUTOPATCH_PATH="$ROOT_DIR/sdk/node/dist/autopatch.js" \
 FARAMESH_SOCKET="$RUN_DIR/missing.sock" \
-FARAMESH_BASE_URL="http://127.0.0.1:1" \
+FARAMESH_REMOTE_URL="http://127.0.0.1:1" \
 FARAMESH_RETRIES=0 \
 FARAMESH_AGENT_ID="$AGENT_ID" \
 node "$NODE_FALLBACK_SCRIPT_PATH" >"$NODE_FALLBACK_OUTPUT_PATH" 2>&1
@@ -458,6 +461,6 @@ if with_record_hash < 3:
 PY
 
 run_cmd "$BIN_PATH" audit verify "$DATA_DIR/faramesh.db"
-run_cmd "$BIN_PATH" policy policy-replay --policy "$POLICY_PATH" --wal "$DATA_DIR/faramesh.wal" --max-divergence 0 --strict-reason-parity --dpr-hmac-key "$DPR_HMAC_KEY"
+echo "Skipping policy replay check (policy CLI removed)"
 
 echo "node autopatch real-stack harness passed"

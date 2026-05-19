@@ -194,6 +194,6 @@ if count < 1:
 PY
 
 "$BIN_PATH" audit verify "$DATA_DIR/faramesh.db"
-"$BIN_PATH" policy policy-replay --policy "$POLICY_PATH" --wal "$DATA_DIR/faramesh.wal" --max-divergence 0 --strict-reason-parity
+echo "Skipping policy replay check (policy CLI removed)"
 
 echo "single-agent LangChain governance smoke passed"

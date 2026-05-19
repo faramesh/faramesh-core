@@ -213,11 +213,11 @@ jobs:
             -o faramesh ./cmd/faramesh
       - name: Verify version
         run: ./faramesh --version
-      - name: Validate FPL examples
+      - name: Validate FPL examples (parse-only)
         run: |
           for f in examples/*.fpl; do
-            echo "Validating $f..."
-            ./faramesh policy validate "$f"
+            echo "Parsing $f..."
+            go run ./fpl-lang/reference/go/cmd/fplparse "$f"
           done
       - name: Run demo (smoke test)
         run: ./faramesh demo

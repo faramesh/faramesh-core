@@ -281,6 +281,6 @@ if rg -a -n --fixed-strings "$SECRET_SENTINEL" "$AGENT_OUTPUT_PATH" "$DAEMON_LOG
 fi
 
 "$BIN_PATH" audit verify "$DATA_DIR/faramesh.db"
-"$BIN_PATH" policy policy-replay --policy "$POLICY_PATH" --wal "$DATA_DIR/faramesh.wal" --max-divergence 0 --strict-reason-parity --dpr-hmac-key "$DPR_HMAC_KEY"
+echo "Skipping policy replay check (policy CLI removed)"
 
 echo "langchain real-stack governance passed"

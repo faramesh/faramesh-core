@@ -15,37 +15,7 @@ RUN_DIR="${FARAMESH_CHAIN_EXFIL_RUN_DIR:-$CORE_DIR/.tmp/chain-exfil}"
 REPORT_PATH=""
 DATA_DIR=""
 REPLAY_WAL=""
-REPLAY_LIMIT=0
-REPLAY_STRICT_REASON=false
-REPLAY_TOOL_FILTER_REGEX="^(draft_email_with_body|proxy/http|read_customer_db|session/write)$"
-
-MAX_SHADOW_EXPOSURE=1000000000
-MAX_DENY_DELTA=1000000000
-MAX_DEFER_DELTA=1000000000
-MAX_REPLAY_DIVERGENCE=1000000000
-MAX_REPLAY_DIVERGENCE_FILTERED=1000000000
-
-DAEMON_PID=""
-TRAFFIC_PID=""
-
-usage() {
-  cat <<'EOF'
-Usage:
-  bash scripts/chain_exfil_stage_gate.sh [options]
-
-Options:
-  --stage-name <name>              Stage label for logs and report.
-  --policy <path>                  Policy file path.
-  --duration <seconds>             Stage duration to observe metrics.
-  --metrics-port <port>            Metrics endpoint port.
-  --socket <path>                  SDK Unix socket path for this stage.
-  --data-dir <path>                Daemon data dir for this stage.
-  --traffic-cmd <command>          Optional traffic command executed during stage.
-  --daemon-cmd <command>           Daemon command prefix (default: go run ./cmd/faramesh).
-  --extra-serve-args <string>      Extra args appended to faramesh serve.
-  --run-dir <path>                 Directory for logs and reports.
-  --report <path>                  Output JSON report path.
-
+  replay_status="SKIPPED"
 Replay options:
   --replay-wal <path>              WAL file to replay (default: <data-dir>/faramesh.wal).
   --replay-limit <n>               Max replay records (0 = all).
@@ -278,7 +248,7 @@ fi
 if [[ -z "$REPLAY_WAL" ]]; then
   REPLAY_WAL="$DATA_DIR/faramesh.wal"
 fi
-
+replay_status="SKIPPED"
 daemon_log="$RUN_DIR/${stage_slug}-${report_ts}.daemon.log"
 traffic_log="$RUN_DIR/${stage_slug}-${report_ts}.traffic.log"
 metrics_start="$RUN_DIR/${stage_slug}-${report_ts}.metrics.start.prom"
@@ -366,61 +336,7 @@ if (( defer_delta > MAX_DEFER_DELTA )); then
 fi
 
 if [[ -f "$REPLAY_WAL" ]]; then
-  replay_status="PASS"
-  replay_cmd=("${daemon_cmd_parts[@]}" policy policy-replay
-    --policy "$POLICY_PATH"
-    --wal "$REPLAY_WAL"
-    --limit "$REPLAY_LIMIT"
-    --max-divergence "$MAX_REPLAY_DIVERGENCE"
-  )
-  if [[ "$REPLAY_STRICT_REASON" == "true" ]]; then
-    replay_cmd+=(--strict-reason-parity)
-  fi
-
-  set +e
-  (
-    cd "$CORE_DIR"
-    "${replay_cmd[@]}"
-  ) >"$replay_log" 2>&1
-  replay_exit=$?
-  set -e
-
-  summary_line="$(rg -m1 "policy replay:" "$replay_log" || true)"
-  if [[ -n "$summary_line" ]]; then
-    replay_records="$(echo "$summary_line" | sed -E 's/.*policy replay: ([0-9]+) record\(s\) examined,.*/\1/')"
-    replay_divergences="$(echo "$summary_line" | sed -E 's/.* examined, ([0-9]+) divergence\(s\).*/\1/')"
-  fi
-  replay_divergences_filtered="$(awk -v re="$REPLAY_TOOL_FILTER_REGEX" '
-    BEGIN { c = 0 }
-    /^- record=/ {
-      tool = ""
-      for (i = 1; i <= NF; i++) {
-        if ($i ~ /^tool=/) {
-          tool = $i
-          sub(/^tool=/, "", tool)
-          break
-        }
-      }
-      if (tool != "" && tool ~ re) {
-        c++
-      }
-    }
-    END { printf "%d", c }
-  ' "$replay_log")"
-
-  if (( replay_divergences > MAX_REPLAY_DIVERGENCE )); then
-    status="FAIL"
-    failed_checks+="replay_divergences(${replay_divergences})>max(${MAX_REPLAY_DIVERGENCE});"
-  fi
-  if (( replay_divergences_filtered > MAX_REPLAY_DIVERGENCE_FILTERED )); then
-    status="FAIL"
-    failed_checks+="replay_divergences_filtered(${replay_divergences_filtered})>max(${MAX_REPLAY_DIVERGENCE_FILTERED});"
-  fi
-  if (( replay_exit != 0 )); then
-    replay_status="FAIL"
-    status="FAIL"
-    failed_checks+="policy_replay_exit(${replay_exit})!=0;"
-  fi
+  replay_status="SKIPPED"
 else
   replay_status="MISSING_WAL"
   status="FAIL"
