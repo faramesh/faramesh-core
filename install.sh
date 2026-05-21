@@ -37,7 +37,78 @@ die() {
 VERSION="latest"
 INSTALL_DIR=""
 INTERACTIVE=true
+UPDATE_MODE=false
 
+append_search_dir() {
+    local dir="$1"
+    [ -n "$dir" ] || return 0
+    SEARCH_DIRS+=("$dir")
+}
+
+discover_faramesh_paths() {
+    {
+        if command -v type >/dev/null 2>&1; then
+            type -aP faramesh 2>/dev/null || true
+        fi
+
+        local -a SEARCH_DIRS=()
+        local -a path_parts=()
+        local dir
+
+        IFS=':' read -r -a path_parts <<< "${PATH:-}"
+        SEARCH_DIRS+=("${path_parts[@]}")
+        SEARCH_DIRS+=(
+            "${HOME}/.local/bin"
+            "/usr/local/bin"
+            "/usr/local/sbin"
+            "/opt/homebrew/bin"
+            "/opt/homebrew/sbin"
+            "/usr/local/opt"
+            "/opt/homebrew/opt"
+            "${HOME}/go/bin"
+            "${HOME}/.cargo/bin"
+            "/opt/local/bin"
+            "/opt/local/sbin"
+            "${HOME}/bin"
+        )
+
+        if command -v brew >/dev/null 2>&1; then
+            local brew_prefix
+            brew_prefix="$(brew --prefix 2>/dev/null || true)"
+            append_search_dir "${brew_prefix}/bin"
+            append_search_dir "${brew_prefix}/sbin"
+        fi
+
+        if command -v go >/dev/null 2>&1; then
+            local gopath
+            gopath="$(go env GOPATH 2>/dev/null || true)"
+            append_search_dir "${gopath}/bin"
+        fi
+
+        if command -v npm >/dev/null 2>&1; then
+            local npm_prefix
+            npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+            append_search_dir "${npm_prefix}/bin"
+        fi
+
+        for dir in "${SEARCH_DIRS[@]}"; do
+            [ -d "${dir}" ] || continue
+            find "${dir}" -maxdepth 2 \( -type f -o -type l \) \( -name faramesh -o -name faramesh.exe \) 2>/dev/null || true
+        done
+    } | awk '!seen[$0]++' | sed '/^$/d'
+}
+
+discover_install_dir() {
+    local existing_path
+    while IFS= read -r existing_path; do
+        if [ -n "${existing_path}" ]; then
+            dirname "${existing_path}"
+            return 0
+        fi
+    done < <(discover_faramesh_paths)
+
+    return 1
+}
 # ─── Parse flags ────────────────────────────────────────────────────────────────
 
 while [ $# -gt 0 ]; do
@@ -46,6 +117,8 @@ while [ $# -gt 0 ]; do
             VERSION="$2"; shift 2 ;;
         --version=*)
             VERSION="${1#*=}"; shift ;;
+        --update)
+            UPDATE_MODE=true; shift ;;
         --install-dir)
             INSTALL_DIR="$2"; shift 2 ;;
         --install-dir=*)
@@ -60,14 +133,16 @@ Usage: install.sh [OPTIONS]
 
 Options:
   --version <ver>       Install a specific version (default: latest)
+    --update              Update the current install in place (keeps data)
   --install-dir <path>  Custom install directory
   --no-interactive      Skip interactive prompts (CI-friendly)
   -h, --help            Show this help
 
 Examples:
-  curl -fsSL https://faramesh.dev/install.sh | bash
-  curl -fsSL https://faramesh.dev/install.sh | bash -s -- --version 0.5.0
-  curl -fsSL https://faramesh.dev/install.sh | bash -s -- --no-interactive
+    curl -fsSL https://install.faramesh.dev/install.sh | bash
+    curl -fsSL https://install.faramesh.dev/install.sh | bash -s -- --version 0.5.0
+    curl -fsSL https://install.faramesh.dev/install.sh | bash -s -- --update
+    curl -fsSL https://install.faramesh.dev/install.sh | bash -s -- --no-interactive
 EOF
             exit 0 ;;
         *)
@@ -236,8 +311,33 @@ chmod +x "${TMPDIR}/${ASSET_FILE}"
 
 step "Installing"
 
+if [ "${UPDATE_MODE}" = true ]; then
+    info "Update mode keeps caches, artifacts, logs, and runtime data in place; only the binary is replaced."
+fi
+
+existing_paths="$(discover_faramesh_paths)"
+if [ -n "${existing_paths}" ]; then
+    info "Searching for existing faramesh installs in PATH and common bin directories"
+    printf '%s\n' "${existing_paths}" | while IFS= read -r found_path; do
+        [ -n "${found_path}" ] || continue
+        version_line="$("${found_path}" --version 2>/dev/null || true)"
+        if [ -n "${version_line}" ]; then
+            info "Found existing binary: ${found_path} (${version_line})"
+        else
+            info "Found existing binary: ${found_path}"
+        fi
+    done
+fi
+
 resolve_install_dir() {
     if [ -n "${INSTALL_DIR}" ]; then
+        return
+    fi
+
+    local discovered_dir=""
+    if discovered_dir="$(discover_install_dir)"; then
+        INSTALL_DIR="${discovered_dir}"
+        info "Detected existing faramesh install in ${INSTALL_DIR}; updating in place"
         return
     fi
 
@@ -286,10 +386,10 @@ success "faramesh ${INSTALLED_VERSION} installed successfully"
 if [ "${INTERACTIVE}" = true ] && [ -t 0 ]; then
     step "Getting started"
 
-    printf "${BOLD}Launch the guided first-run wizard now?${RESET} [Y/n] "
-    read -r WIZARD_ANSWER </dev/tty
-    WIZARD_ANSWER="${WIZARD_ANSWER:-Y}"
-    if [[ "${WIZARD_ANSWER}" =~ ^[Yy]$ ]]; then
+    printf "${BOLD}Run the default first command now?${RESET} [Y/n] "
+    read -r START_ANSWER </dev/tty
+    START_ANSWER="${START_ANSWER:-Y}"
+    if [[ "${START_ANSWER}" =~ ^[Yy]$ ]]; then
         printf "\n"
         "${INSTALL_DIR}/${INSTALL_BINARY_NAME}" init || warn "First command exited with non-zero status."
         printf "\n"
@@ -308,6 +408,9 @@ printf "     ${CYAN}4) faramesh approvals${RESET}\n"
 printf "     ${CYAN}5) faramesh explain <action-id>${RESET}\n"
 printf "     ${CYAN}6) faramesh audit tail${RESET}\n"
 printf "     ${CYAN}7) faramesh destroy${RESET}\n"
+printf "     ${CYAN}8) bash scripts/faramesh_setup.sh update${RESET}\n"
+printf "     ${CYAN}9) bash scripts/faramesh_setup.sh uninstall --binary-only${RESET}\n"
+printf "    ${CYAN}10) bash scripts/faramesh_setup.sh uninstall --purge${RESET}\n"
 printf "\n"
 printf "  ${BOLD}Source checkout lifecycle:${RESET}\n"
 printf "     ${CYAN}bash scripts/faramesh_setup.sh flow${RESET}\n"

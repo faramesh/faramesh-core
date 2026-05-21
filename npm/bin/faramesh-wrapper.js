@@ -11,7 +11,7 @@ const binPath = path.join(__dirname, `faramesh${ext}`);
 
 if (!fs.existsSync(binPath)) {
   console.error("faramesh binary not found. Reinstall with: npm install -g @faramesh/cli");
-  console.error("Or install directly: curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh | bash");
+  console.error("Or install directly: curl -fsSL https://install.faramesh.dev/install.sh | bash");
   process.exit(1);
 }
 

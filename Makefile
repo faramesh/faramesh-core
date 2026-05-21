@@ -80,9 +80,21 @@ install: build-release
 	install -m 755 bin/faramesh /usr/local/bin/faramesh
 	@echo "✔ Installed $$(faramesh --version 2>&1 || echo 'faramesh')"
 
-# Canonical local setup entrypoint (flow by default).
+# Canonical local setup entrypoint.
 setup:
 	bash scripts/faramesh_setup.sh
+
+# Update the installed binary in place without touching runtime data.
+update:
+	bash scripts/faramesh_setup.sh update
+
+# Remove only binaries and local installer state.
+uninstall:
+	bash scripts/faramesh_setup.sh uninstall --binary-only --yes
+
+# Purge binaries, runtime data, and stack-local state.
+purge:
+	bash scripts/faramesh_setup.sh uninstall --purge --yes
 
 # Show setup-managed runtime status.
 setup-status:

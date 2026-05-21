@@ -38,6 +38,34 @@ normalize_bool_for_cobra() {
   esac
 }
 
+discover_faramesh_paths() {
+  {
+    type -aP faramesh 2>/dev/null || true
+
+    local -a search_dirs=(
+      "${HOME}/.local/bin"
+      "/usr/local/bin"
+      "/usr/local/sbin"
+      "/opt/homebrew/bin"
+      "/opt/homebrew/sbin"
+      "${HOME}/go/bin"
+      "${HOME}/.cargo/bin"
+      "/opt/local/bin"
+      "/opt/local/sbin"
+    )
+    local -a path_parts=()
+    local dir
+
+    IFS=':' read -r -a path_parts <<< "${PATH}"
+    search_dirs+=("${path_parts[@]}")
+
+    for dir in "${search_dirs[@]}"; do
+      [[ -d "$dir" ]] || continue
+      find "$dir" -maxdepth 2 \( -type f -o -type l \) \( -name faramesh -o -name faramesh.exe \) 2>/dev/null || true
+    done
+  } | awk '!seen[$0]++' | sed '/^$/d'
+}
+
 has_flag_prefix() {
   local prefix="$1"
   shift || true
@@ -83,14 +111,17 @@ resolve_faramesh_bin() {
   fi
 
   local candidate=""
-  if type -P faramesh >/dev/null 2>&1; then
-    candidate="$(type -P faramesh)"
-  elif command -v faramesh >/dev/null 2>&1; then
-    candidate="$(command -v faramesh)"
-  fi
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    if [[ -x "$candidate" ]] && binary_supports_subcommand "$candidate" "$required_subcommand"; then
+      echo "$candidate"
+      return 0
+    fi
+  done < <(discover_faramesh_paths)
 
-  if [[ -n "$candidate" ]] && [[ -x "$candidate" ]]; then
-    if binary_supports_subcommand "$candidate" "$required_subcommand"; then
+  if command -v faramesh >/dev/null 2>&1; then
+    candidate="$(command -v faramesh)"
+    if [[ -n "$candidate" ]] && [[ -x "$candidate" ]] && binary_supports_subcommand "$candidate" "$required_subcommand"; then
       echo "$candidate"
       return 0
     fi
@@ -136,9 +167,10 @@ Usage:
 
 Commands:
   flow           One guided flow: install + optional cloud pair + discover/attach/coverage/gaps/suggest + run
-  start|wizard   Start governance wizard
-  status         Show wizard runtime status
-  stop           Stop wizard runtime
+  start          Start governance flow
+  status         Show flow runtime status
+  stop           Stop flow runtime
+  update         Update the installed binary in place
   onboard        Run onboarding preflight with strict defaults
   offboard       Run automatic code offboarding (dry-run by default)
   uninstall      Detach Faramesh from project(s), stop runtime, remove local installs
@@ -152,9 +184,12 @@ Examples:
   bash scripts/faramesh_setup.sh start --framework langchain --agent-cmd "python app.py"
   bash scripts/faramesh_setup.sh status
   bash scripts/faramesh_setup.sh stop
+  bash scripts/faramesh_setup.sh update
   bash scripts/faramesh_setup.sh onboard --policy policies/default.fpl --credential-profile production
   bash scripts/faramesh_setup.sh offboard --path /path/to/agent --apply
   bash scripts/faramesh_setup.sh uninstall --path /path/to/agent --yes
+  bash scripts/faramesh_setup.sh uninstall --binary-only --yes
+  bash scripts/faramesh_setup.sh uninstall --purge --yes
   bash scripts/faramesh_setup.sh install --no-interactive
 
 Recommended flow for existing agent stacks (LangChain, LangGraph, DeepAgents, MCP):
@@ -198,6 +233,8 @@ Options:
   --backup-ext <ext>          Backup extension for offboard rewrites (default: .faramesh.bak)
   --remove-generated <yes|no> Remove generated faramesh/policy files (default: yes)
   --skip-offboard             Do not run project detachment
+  --binary-only               Remove only binaries from PATH and local installer state
+  --purge                     Remove runtime data, caches, and stack-local .faramesh state
   --yes, -y                   Skip confirmation prompt
   -h, --help                  Show this help
 
@@ -205,7 +242,61 @@ Examples:
   bash scripts/faramesh_setup.sh uninstall --path ./my-agent
   bash scripts/faramesh_setup.sh uninstall --path ./agent-a --path ./agent-b --yes
   bash scripts/faramesh_setup.sh uninstall --skip-offboard --yes
+  bash scripts/faramesh_setup.sh uninstall --binary-only --yes
+  bash scripts/faramesh_setup.sh uninstall --purge --yes
 EOF
+}
+
+discover_faramesh_paths() {
+  {
+    if command -v type >/dev/null 2>&1; then
+      type -aP faramesh 2>/dev/null || true
+    fi
+
+    local -a search_dirs=()
+    local -a path_parts=()
+    local dir
+
+    IFS=':' read -r -a path_parts <<< "${PATH:-}"
+    search_dirs+=("${path_parts[@]}")
+    search_dirs+=(
+      "${HOME}/.local/bin"
+      "/usr/local/bin"
+      "/usr/local/sbin"
+      "/opt/homebrew/bin"
+      "/opt/homebrew/sbin"
+      "/usr/local/opt"
+      "/opt/homebrew/opt"
+      "${HOME}/go/bin"
+      "${HOME}/.cargo/bin"
+      "/opt/local/bin"
+      "/opt/local/sbin"
+      "${HOME}/bin"
+    )
+
+    if command -v brew >/dev/null 2>&1; then
+      local brew_prefix
+      brew_prefix="$(brew --prefix 2>/dev/null || true)"
+      [ -n "$brew_prefix" ] && search_dirs+=("$brew_prefix/bin" "$brew_prefix/sbin")
+    fi
+
+    if command -v go >/dev/null 2>&1; then
+      local gopath
+      gopath="$(go env GOPATH 2>/dev/null || true)"
+      [ -n "$gopath" ] && search_dirs+=("$gopath/bin")
+    fi
+
+    if command -v npm >/dev/null 2>&1; then
+      local npm_prefix
+      npm_prefix="$(npm config get prefix 2>/dev/null || true)"
+      [ -n "$npm_prefix" ] && search_dirs+=("$npm_prefix/bin")
+    fi
+
+    for dir in "${search_dirs[@]}"; do
+      [ -d "$dir" ] || continue
+      find "$dir" -maxdepth 2 \( -type f -o -type l \) \( -name faramesh -o -name faramesh.exe \) 2>/dev/null || true
+    done
+  } | awk '!seen[$0]++' | sed '/^$/d'
 }
 
 remove_binary_if_present() {
@@ -359,9 +450,9 @@ run_flow() {
   if [[ "$do_install" == "yes" ]]; then
     echo "[flow] installing faramesh via install.sh"
     if [[ "$assume_yes" -eq 1 ]]; then
-      bash "$CORE_DIR/install.sh" --no-interactive
+      bash "$CORE_DIR/install.sh" --update --no-interactive
     else
-      bash "$CORE_DIR/install.sh"
+      bash "$CORE_DIR/install.sh" --update
     fi
   fi
 
@@ -445,6 +536,8 @@ run_uninstall() {
   local skip_offboard="no"
   local remove_generated="yes"
   local backup_ext=".faramesh.bak"
+  local binary_only="no"
+  local purge_all="no"
   local -a project_paths=()
 
   while [[ $# -gt 0 ]]; do
@@ -464,6 +557,14 @@ run_uninstall() {
       --skip-offboard)
         skip_offboard="yes"
         ;;
+      --binary-only)
+        binary_only="yes"
+        skip_offboard="yes"
+        remove_generated="no"
+        ;;
+      --purge)
+        purge_all="yes"
+        ;;
       --yes|-y)
         assume_yes=1
         ;;
@@ -480,6 +581,11 @@ run_uninstall() {
     shift
   done
 
+  if [[ "$binary_only" == "yes" ]] && [[ "$purge_all" == "yes" ]]; then
+    echo "choose either --binary-only or --purge, not both" >&2
+    exit 1
+  fi
+
   remove_generated="$(normalize_yes_no "$remove_generated")"
   if [[ -z "$remove_generated" ]]; then
     echo "invalid --remove-generated value (expected yes|no)" >&2
@@ -492,8 +598,12 @@ run_uninstall() {
 
   if [[ "$assume_yes" -eq 0 ]]; then
     echo "this will:"
-    echo "  1) stop wizard-managed Faramesh runtime"
-    if [[ "$skip_offboard" == "no" ]] && [[ ${#project_paths[@]} -gt 0 ]]; then
+    echo "  1) stop runtime-managed Faramesh processes"
+    if [[ "$binary_only" == "yes" ]]; then
+      echo "  2) remove only installed binaries and local installer state"
+    elif [[ "$purge_all" == "yes" ]]; then
+      echo "  2) remove installed binaries, generated stack state, and runtime caches"
+    elif [[ "$skip_offboard" == "no" ]] && [[ ${#project_paths[@]} -gt 0 ]]; then
       echo "  2) apply offboard rewrites for provided project path(s)"
     fi
     echo "  3) remove setup-local runtime state"
@@ -501,7 +611,7 @@ run_uninstall() {
     confirm_or_exit "continue uninstall"
   fi
 
-  if [[ "$skip_offboard" == "no" ]] && [[ ${#project_paths[@]} -gt 0 ]]; then
+  if [[ "$binary_only" == "no" ]] && [[ "$skip_offboard" == "no" ]] && [[ ${#project_paths[@]} -gt 0 ]]; then
     local bin
     bin="$(resolve_faramesh_bin offboard)"
     local path
@@ -523,30 +633,41 @@ run_uninstall() {
   rm -rf "${FARAMESH_WIZARD_DIR:-$CORE_DIR/.tmp/faramesh-wizard}"
   rm -f "$LOCAL_BUILD_BIN"
 
-  remove_binary_if_present "/usr/local/bin/faramesh" || true
-  remove_binary_if_present "/opt/homebrew/bin/faramesh" || true
-  remove_binary_if_present "$HOME/.local/bin/faramesh" || true
+  local discovered_bin=""
+  local removed_any=0
+  while IFS= read -r discovered_bin; do
+    [[ -n "$discovered_bin" ]] || continue
+    if remove_binary_if_present "$discovered_bin"; then
+      removed_any=1
+    fi
+  done < <(discover_faramesh_paths)
 
-  local detected_bin=""
-  if type -P faramesh >/dev/null 2>&1; then
-    detected_bin="$(type -P faramesh)"
-  elif command -v faramesh >/dev/null 2>&1; then
-    detected_bin="$(command -v faramesh)"
+  if [[ "$purge_all" == "yes" ]]; then
+    local -a purge_paths=(
+      "$HOME/.faramesh"
+      "$CORE_DIR/.tmp/faramesh-setup"
+      "$CORE_DIR/.tmp/faramesh-wizard"
+    )
+    local project_path
+    for project_path in "${project_paths[@]}"; do
+      [ -n "$project_path" ] || continue
+      purge_paths+=(
+        "$project_path/.faramesh"
+        "$project_path/.faramesh-wal"
+        "$project_path/.faramesh-data"
+      )
+    done
+
+    local purge_path
+    for purge_path in "${purge_paths[@]}"; do
+      [ -e "$purge_path" ] || continue
+      rm -rf "$purge_path"
+      echo "purged: $purge_path"
+    done
   fi
 
-  if [[ -n "$detected_bin" ]] && [[ -x "$detected_bin" ]]; then
-    case "$detected_bin" in
-      /opt/homebrew/*|/usr/local/Cellar/*)
-        echo "homebrew-managed faramesh detected at $detected_bin"
-        echo "remove the Homebrew binary from PATH or rerun uninstall after clearing it"
-        ;;
-      *)
-        if [[ "$detected_bin" != "/usr/local/bin/faramesh" && "$detected_bin" != "$HOME/.local/bin/faramesh" ]]; then
-          echo "additional faramesh binary still on PATH: $detected_bin"
-          echo "remove it manually if you want full uninstall"
-        fi
-        ;;
-    esac
+  if [[ "$removed_any" -eq 0 ]]; then
+    echo "no additional faramesh binaries found on PATH or in common bin directories"
   fi
 
   echo "uninstall flow complete"
@@ -562,7 +683,7 @@ case "$1" in
     shift
     run_flow "$@"
     ;;
-  start|wizard)
+  start)
     shift
     exec bash "$WIZARD_SCRIPT" "$@"
     ;;
@@ -570,6 +691,10 @@ case "$1" in
     cmd="$1"
     shift
     exec bash "$WIZARD_SCRIPT" "$cmd" "$@"
+    ;;
+  update)
+    shift
+    exec bash "$CORE_DIR/install.sh" --update "$@"
     ;;
   onboard)
     shift
