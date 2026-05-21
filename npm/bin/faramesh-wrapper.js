@@ -10,8 +10,8 @@ const ext = os.platform() === "win32" ? ".exe" : "";
 const binPath = path.join(__dirname, `faramesh${ext}`);
 
 if (!fs.existsSync(binPath)) {
-  console.error("faramesh binary not found. Run: npx @faramesh/cli@latest setup flow");
-  console.error("Or install directly: curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh | bash && faramesh setup flow");
+  console.error("faramesh binary not found. Reinstall with: npm install -g @faramesh/cli");
+  console.error("Or install directly: curl -fsSL https://raw.githubusercontent.com/faramesh/faramesh-core/main/install.sh | bash");
   process.exit(1);
 }
 

@@ -291,7 +291,7 @@ if [ "${INTERACTIVE}" = true ] && [ -t 0 ]; then
     WIZARD_ANSWER="${WIZARD_ANSWER:-Y}"
     if [[ "${WIZARD_ANSWER}" =~ ^[Yy]$ ]]; then
         printf "\n"
-        "${INSTALL_DIR}/${INSTALL_BINARY_NAME}" wizard first-run || warn "Wizard exited with non-zero status."
+        "${INSTALL_DIR}/${INSTALL_BINARY_NAME}" init || warn "First command exited with non-zero status."
         printf "\n"
     fi
 fi
@@ -301,15 +301,16 @@ fi
 step "Next steps"
 
 printf "  ${BOLD}Faramesh 2.0 quick path:${RESET}\n"
-printf "     ${CYAN}1) faramesh wizard first-run${RESET}\n"
-printf "     ${CYAN}2) faramesh run --broker -- python your_agent.py${RESET}\n"
-printf "     ${CYAN}3) faramesh approvals${RESET}\n"
-printf "     ${CYAN}4) faramesh explain <action-id>${RESET}\n"
-printf "     ${CYAN}5) faramesh audit tail${RESET}\n"
-printf "     ${CYAN}6) faramesh down${RESET}\n"
+printf "     ${CYAN}1) faramesh init${RESET}\n"
+printf "     ${CYAN}2) faramesh dev${RESET}\n"
+printf "     ${CYAN}3) faramesh apply${RESET}\n"
+printf "     ${CYAN}4) faramesh approvals${RESET}\n"
+printf "     ${CYAN}5) faramesh explain <action-id>${RESET}\n"
+printf "     ${CYAN}6) faramesh audit tail${RESET}\n"
+printf "     ${CYAN}7) faramesh destroy${RESET}\n"
 printf "\n"
 printf "  ${BOLD}Source checkout lifecycle:${RESET}\n"
-printf "     ${CYAN}faramesh setup flow${RESET}\n"
+printf "     ${CYAN}bash scripts/faramesh_setup.sh flow${RESET}\n"
 printf "\n"
 printf "  ${DIM}Documentation:${RESET}  ${BLUE}https://docs.faramesh.dev${RESET}\n"
 printf "  ${DIM}GitHub:${RESET}         ${BLUE}https://github.com/${REPO}${RESET}\n"

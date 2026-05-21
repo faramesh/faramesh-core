@@ -142,7 +142,7 @@ func runExplainRun(_ *cobra.Command, args []string) error {
 func wrapExplainResolutionError(err error) error {
 	msg := strings.ToLower(strings.TrimSpace(err.Error()))
 	if strings.Contains(msg, "request visibility api") || strings.Contains(msg, "connection refused") {
-		return fmt.Errorf("explain context is unavailable because the visibility service is not reachable. Start runtime with faramesh up --policy <policy> (or set --visibility-url)")
+		return fmt.Errorf("explain context is unavailable because the visibility service is not reachable. Start runtime with faramesh apply (or set --visibility-url)")
 	}
 	if strings.Contains(msg, "no matching visibility actions") {
 		return fmt.Errorf("no matching governed action was found for the selector. Try a different action/approval/agent/run ID")

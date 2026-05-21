@@ -80,7 +80,7 @@ install: build-release
 	install -m 755 bin/faramesh /usr/local/bin/faramesh
 	@echo "✔ Installed $$(faramesh --version 2>&1 || echo 'faramesh')"
 
-# Canonical local setup entrypoint (wizard by default).
+# Canonical local setup entrypoint (flow by default).
 setup:
 	bash scripts/faramesh_setup.sh
 

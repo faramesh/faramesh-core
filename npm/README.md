@@ -7,8 +7,10 @@ and policy-as-code enforcement before execution.
 
 ## Install
 
+Run one command without installing globally:
+
 ```bash
-npx @faramesh/cli@latest setup flow
+npx @faramesh/cli@latest init
 ```
 
 Or install globally:
@@ -35,7 +37,7 @@ Faramesh sits between your AI agent and the tools it calls. Every tool call is c
 ## Quick start
 
 ```bash
-faramesh setup flow
+faramesh init
 ```
 
 ## Learn more

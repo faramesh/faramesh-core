@@ -139,7 +139,7 @@ func runAuditTail(cmd *cobra.Command, args []string) error {
 
 	conn, err := net.DialTimeout("unix", socketPath, 3*time.Second)
 	if err != nil {
-		return fmt.Errorf("connect to runtime at %s: %w\n\nIs the runtime running? Try: faramesh up (or faramesh up --policy <path>)", socketPath, err)
+		return fmt.Errorf("connect to runtime at %s: %w\n\nIs the runtime running? Try: faramesh apply", socketPath, err)
 	}
 	defer conn.Close()
 

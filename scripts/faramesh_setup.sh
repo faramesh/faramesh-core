@@ -524,6 +524,7 @@ run_uninstall() {
   rm -f "$LOCAL_BUILD_BIN"
 
   remove_binary_if_present "/usr/local/bin/faramesh" || true
+  remove_binary_if_present "/opt/homebrew/bin/faramesh" || true
   remove_binary_if_present "$HOME/.local/bin/faramesh" || true
 
   local detected_bin=""
@@ -537,7 +538,7 @@ run_uninstall() {
     case "$detected_bin" in
       /opt/homebrew/*|/usr/local/Cellar/*)
         echo "homebrew-managed faramesh detected at $detected_bin"
-        echo "run: brew uninstall faramesh/tap/faramesh"
+        echo "remove the Homebrew binary from PATH or rerun uninstall after clearing it"
         ;;
       *)
         if [[ "$detected_bin" != "/usr/local/bin/faramesh" && "$detected_bin" != "$HOME/.local/bin/faramesh" ]]; then

@@ -227,7 +227,7 @@ var credentialStatusCmd = &cobra.Command{
 			"connectivity_error": connectivityErr,
 			"next_steps": []string{
 				"faramesh credential enable --policy <policy> --import-env",
-				"faramesh up --policy <policy>",
+				"faramesh apply",
 				"faramesh dev  # then connect your agent to the Unix socket",
 			},
 		}
@@ -700,7 +700,7 @@ func applyCredentialProfileRuntime(policyPath string, restart bool) error {
 
 	if running && !restart {
 		printWarningLine("runtime is already running; restart was skipped")
-		printNextStepLine("restart when convenient: faramesh down && faramesh up")
+		printNextStepLine("restart when convenient: faramesh destroy && faramesh apply")
 		return nil
 	}
 

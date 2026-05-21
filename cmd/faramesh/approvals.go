@@ -762,7 +762,7 @@ func normalizeApprovalValue(value any) any {
 func wrapApprovalsConnectivityError(err error) error {
 	msg := strings.TrimSpace(err.Error())
 	if strings.Contains(strings.ToLower(msg), "cannot reach daemon socket") || strings.Contains(strings.ToLower(msg), "connect:") {
-		return fmt.Errorf("approvals runtime is not reachable. Start runtime with faramesh up --policy <policy> and retry")
+		return fmt.Errorf("approvals runtime is not reachable. Start runtime with faramesh apply and retry")
 	}
 	return err
 }
