@@ -1,8 +1,12 @@
 <div align="center">
 
-# Faramesh
+<img src="README-LOGO.png" alt="Faramesh" width="480" />
 
-Pre-execution governance for AI agents.
+Governance-as-Code for AI agents.
+
+Open source control plane for policy, interception, identity, credentials, and tamper-evident audit.
+
+One stack file. Deterministic decisions. Safer deployments.
 
 <p>
 	<span style="display:inline-block;background:rgba(15,23,42,0.06);color:#0f172a;font-weight:700;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;padding:0.4rem 0.7rem;border-radius:999px;margin:0 0.25rem 0.5rem">Policy as code</span>
@@ -24,8 +28,6 @@ Pre-execution governance for AI agents.
 - Quickstart: https://docs.faramesh.dev/quickstart/
 - Policy language (FPL): https://docs.faramesh.dev/fpl/
 - Stack reference: https://docs.faramesh.dev/stack/
-
-<img src="README-LOGO.png" alt="Faramesh logo" width="720" />
 
 Faramesh sits between an agent and its tools and decides every tool call against a policy you write. The daemon returns permit, defer, or deny decisions before the tool runs and records tamper-evident evidence for every decision.
 
