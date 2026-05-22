@@ -9,6 +9,12 @@ Open source control plane for policy, interception, identity, credentials, and t
 One stack file. Deterministic decisions. Safer deployments.
 
 <p>
+	<img alt="Policy as code" src="https://img.shields.io/badge/Policy%20as%20code-0f172a?style=flat-square&labelColor=0f172a" />
+	<img alt="Deterministic enforcement" src="https://img.shields.io/badge/Deterministic%20enforcement-4A154B?style=flat-square&labelColor=4A154B" />
+	<img alt="Tamper-evident audit" src="https://img.shields.io/badge/Tamper--evident%20audit-0f766e?style=flat-square&labelColor=0f766e" />
+</p>
+
+<p>
 	<a href="https://farameshlabs.slack.com/ssb/redirect" style="display:inline-block;background:linear-gradient(135deg,#4A154B,#611f69);color:#fff;text-decoration:none;font-weight:700;padding:0.8rem 1.2rem;border-radius:999px;box-shadow:0 12px 28px rgba(97,31,105,0.24);border:1px solid rgba(255,255,255,0.08);margin-right:0.5rem">Join our developer community on Slack</a>
 	<a href="https://docs.faramesh.dev/quickstart/" style="display:inline-block;background:#0f172a;color:#fff;text-decoration:none;font-weight:700;padding:0.8rem 1.2rem;border-radius:999px;box-shadow:0 12px 28px rgba(15,23,42,0.18);border:1px solid rgba(255,255,255,0.06)">Read the quickstart</a>
 </p>
