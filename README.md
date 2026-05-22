@@ -45,7 +45,7 @@ The key capabilities of Faramesh are:
 
 ## Governance as code
 
-Faramesh policy lives in a single stack file written in FPL (YAML and JSON map to the same AST). The CLI compiles that policy into a deterministic AST that the daemon enforces, and changes are applied atomically.
+Faramesh policy lives in a single stack file written in FPL, the Faramesh Policy Language. YAML and JSON map to the same AST. The CLI compiles that policy into a deterministic AST that the daemon enforces, and changes are applied atomically.
 
 ## Getting Started and Documentation
 
