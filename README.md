@@ -9,9 +9,9 @@ Open source control plane for policy, interception, identity, credentials, and t
 One stack file. Deterministic decisions. Safer deployments.
 
 <p>
-	<img alt="Policy as code" src="https://img.shields.io/badge/Policy%20as%20code-0f172a?style=flat-square&labelColor=0f172a" />
-	<img alt="Deterministic enforcement" src="https://img.shields.io/badge/Deterministic%20enforcement-4A154B?style=flat-square&labelColor=4A154B" />
-	<img alt="Tamper-evident audit" src="https://img.shields.io/badge/Tamper--evident%20audit-0f766e?style=flat-square&labelColor=0f766e" />
+	<a href="LICENSE"><img alt="License: MPL-2.0" src="https://img.shields.io/badge/License-MPL--2.0-0f172a?style=flat-square&logo=mozilla" /></a>
+	<a href="https://docs.faramesh.dev/"><img alt="Docs" src="https://img.shields.io/badge/Docs-Faramesh%20Docs-0f766e?style=flat-square" /></a>
+	<img alt="Latest release" src="https://img.shields.io/github/v/release/faramesh/faramesh-core?include_prereleases&sort=semver&style=flat-square&label=Release" />
 </p>
 
 <p>
