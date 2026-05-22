@@ -267,7 +267,8 @@ jobs:
 
           **macOS / Linux — Homebrew:**
           ```bash
-          brew install faramesh/tap/faramesh
+          brew tap faramesh/tap
+          brew install faramesh
           ```
 
           **macOS / Linux — install script:**
@@ -378,6 +379,11 @@ jobs:
             homepage "https://faramesh.dev"
             version "${VERSION}"
             license "MPL-2.0"
+
+            livecheck do
+              url :url
+              strategy :github_latest
+            end
 
             on_macos do
               on_arm do
