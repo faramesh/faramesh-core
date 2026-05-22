@@ -375,7 +375,7 @@ jobs:
 
           cat > homebrew-tap/Formula/faramesh.rb << FORMULA
           class Faramesh < Formula
-            desc "Unified governance plane for AI agents — pre-execution authorization, policy-as-code, tamper-evident audit trail"
+            desc "Governance plane for AI agents"
             homepage "https://faramesh.dev"
             version "${VERSION}"
             license "MPL-2.0"
