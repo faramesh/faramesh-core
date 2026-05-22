@@ -1,4 +1,17 @@
+<div align="center">
+
+<img src="0522.gif" alt="Faramesh demo gif" width="960" />
+
 # Faramesh
+
+Pre-execution governance for AI agents.
+
+<p>
+	<a href="https://farameshlabs.slack.com/ssb/redirect" style="display:inline-block;background:linear-gradient(135deg,#4A154B,#611f69);color:#fff;text-decoration:none;font-weight:700;padding:0.8rem 1.2rem;border-radius:999px;box-shadow:0 12px 28px rgba(97,31,105,0.24);border:1px solid rgba(255,255,255,0.08);margin-right:0.5rem">Join our developer community on Slack</a>
+	<a href="https://docs.faramesh.dev/quickstart/" style="display:inline-block;background:#0f172a;color:#fff;text-decoration:none;font-weight:700;padding:0.8rem 1.2rem;border-radius:999px;box-shadow:0 12px 28px rgba(15,23,42,0.18);border:1px solid rgba(255,255,255,0.06)">Read the quickstart</a>
+</p>
+
+</div>
 
 - Website: https://faramesh.dev
 - Documentation: https://docs.faramesh.dev
