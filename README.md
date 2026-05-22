@@ -9,12 +9,6 @@ Open source control plane for policy, interception, identity, credentials, and t
 One stack file. Deterministic decisions. Safer deployments.
 
 <p>
-	<span style="display:inline-block;background:rgba(15,23,42,0.06);color:#0f172a;font-weight:700;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;padding:0.4rem 0.7rem;border-radius:999px;margin:0 0.25rem 0.5rem">Policy as code</span>
-	<span style="display:inline-block;background:rgba(74,21,75,0.10);color:#4A154B;font-weight:700;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;padding:0.4rem 0.7rem;border-radius:999px;margin:0 0.25rem 0.5rem">Deterministic enforcement</span>
-	<span style="display:inline-block;background:rgba(13,148,136,0.10);color:#0f766e;font-weight:700;font-size:0.72rem;letter-spacing:0.08em;text-transform:uppercase;padding:0.4rem 0.7rem;border-radius:999px;margin:0 0.25rem 0.5rem">Tamper-evident audit</span>
-</p>
-
-<p>
 	<a href="https://farameshlabs.slack.com/ssb/redirect" style="display:inline-block;background:linear-gradient(135deg,#4A154B,#611f69);color:#fff;text-decoration:none;font-weight:700;padding:0.8rem 1.2rem;border-radius:999px;box-shadow:0 12px 28px rgba(97,31,105,0.24);border:1px solid rgba(255,255,255,0.08);margin-right:0.5rem">Join our developer community on Slack</a>
 	<a href="https://docs.faramesh.dev/quickstart/" style="display:inline-block;background:#0f172a;color:#fff;text-decoration:none;font-weight:700;padding:0.8rem 1.2rem;border-radius:999px;box-shadow:0 12px 28px rgba(15,23,42,0.18);border:1px solid rgba(255,255,255,0.06)">Read the quickstart</a>
 </p>
