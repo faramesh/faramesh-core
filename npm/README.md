@@ -1,16 +1,19 @@
-# faramesh
+# Faramesh CLI
 
-AI agent execution control. Policy-driven governance for every tool call.
-
-Faramesh helps teams implement deterministic AI governance for AI agents, MCP tool-calling,
-and policy-as-code enforcement before execution.
+Install the Faramesh command-line tool from npm and run it through `npx`, `npm exec`, or a global install.
 
 ## Install
 
-Run one command without installing globally:
+Use `npx` without installing anything globally:
 
 ```bash
 npx @faramesh/cli@latest init
+```
+
+Or with `npm exec`:
+
+```bash
+npm exec --yes @faramesh/cli@latest -- init
 ```
 
 Or install globally:
@@ -19,31 +22,24 @@ Or install globally:
 npm install -g @faramesh/cli
 ```
 
-## What it does
+## Commands
 
-Faramesh sits between your AI agent and the tools it calls. Every tool call is checked against your policy before it runs.
-
-- **Permit** — the rule said yes, the action runs
-- **Deny** — blocked, nothing runs, the agent is told why
-- **Defer** — held for a human to approve or deny
-
-## Common use cases
-
-- AI agent governance for production tool-calling systems
-- AI execution control for MCP servers and agentic workflows
-- Policy-as-code guardrails for payments, infrastructure, and data operations
-- Audit and compliance evidence for governed agent actions
-
-## Quick start
+The package exposes the full Faramesh CLI. Start with `init`, then use `--help` to explore the rest of the command surface.
 
 ```bash
-faramesh init
+faramesh --help
 ```
+
+## What it does
+
+Faramesh sits between your AI agent and the tools it calls. Every tool call is checked against policy before it runs.
+
+- Permit means the action runs.
+- Deny means nothing runs and the agent gets a reason.
+- Defer means a human can review the decision before execution.
 
 ## Learn more
 
-- [Documentation](https://faramesh.dev/docs)
-- [GitHub](https://github.com/faramesh/faramesh-core)
 - [Documentation](https://docs.faramesh.dev/)
-- [FPL Language Repository](https://github.com/faramesh/fpl-lang)
-- [FPL Getting Started](https://github.com/faramesh/fpl-lang/blob/main/docs/GETTING_STARTED.md)
+- [GitHub](https://github.com/faramesh/faramesh-core)
+- [FPL language docs](https://docs.faramesh.dev/fpl/)

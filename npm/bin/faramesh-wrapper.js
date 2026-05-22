@@ -11,6 +11,8 @@ const binPath = path.join(__dirname, `faramesh${ext}`);
 
 if (!fs.existsSync(binPath)) {
   console.error("faramesh binary not found. Reinstall with: npm install -g @faramesh/cli");
+  console.error("Or run without installing globally: npx @faramesh/cli@latest init");
+  console.error("Or use npm exec: npm exec --yes @faramesh/cli@latest -- init");
   console.error("Or install directly: curl -fsSL https://install.faramesh.dev/install.sh | bash");
   process.exit(1);
 }

@@ -73,6 +73,7 @@ async function main() {
   } catch (err) {
     console.error(`Failed to download faramesh binary: ${err.message}`);
     console.error("You can install manually: curl -fsSL https://install.faramesh.dev/install.sh | bash");
+    console.error("Or use npm without a global install: npx @faramesh/cli@latest init");
     process.exit(1);
   }
 }
