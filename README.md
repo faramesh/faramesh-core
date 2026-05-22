@@ -21,6 +21,8 @@ One stack file. Deterministic decisions. Safer deployments.
 
 <img src="0522.gif" alt="Faramesh demo gif" width="780" />
 
+<hr style="border:0;border-top:1px solid rgba(15,23,42,0.12);max-width:920px;margin:1.5rem auto 2rem" />
+
 </div>
 
 - Website: https://faramesh.dev
@@ -38,6 +40,8 @@ The key capabilities of Faramesh are:
 - Identity bound decisions using SPIFFE SVIDs, OIDC, or cloud workload identity.
 - Credential brokering that mints short-lived scoped credentials at the call site so agents never hold long-lived secrets.
 - Auditing with Decision Provenance Records, a hash-chained WAL, and optional KMS signing plus audit sinks for SIEM.
+- Stack-level policy changes that compile atomically, so teams can review and roll out governance as a single unit.
+- Decision visibility for humans and systems, including defer flows, structured denials, and exportable evidence for reviews and audits.
 
 ## Governance as code
 
