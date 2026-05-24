@@ -5,7 +5,7 @@ on:
     branches:
       - main
     tags:
-      - 'v*.*.*'
+      - 'v0.*.*'
 
 permissions:
   contents: write
@@ -22,7 +22,7 @@ jobs:
       - name: Confirm release workflow is healthy on main
         run: |
           echo "Release workflow syntax and conditions are valid."
-          echo "Tag pushes (v*.*.*) run the full release pipeline."
+          echo "Tag pushes (v0.*.*) run the full release pipeline."
 
   corpus-matrix:
     name: Corpus Coverage Matrix
