@@ -2,73 +2,103 @@
 
 <img src="README-LOGO.png" alt="Faramesh" width="480" />
 
-Governance-as-Code for AI agents.
+**Every agent tool call is a policy decision.**
 
-Open source control plane for policy, interception, identity, credentials, and tamper-evident audit.
-
-One stack file. Deterministic decisions. Safer deployments.
+Declare permissions in `governance.fms`. A local daemon permits, defers, or denies each tool call before it runs. Decisions are hash-chained in a WAL. No SDK lock-in. No cloud required.
 
 <p>
-	<a href="LICENSE"><img alt="License: MPL-2.0" src="https://img.shields.io/badge/License-MPL--2.0-0f172a?style=flat-square&logo=mozilla" /></a>
-	<a href="https://docs.faramesh.dev/"><img alt="Docs" src="https://img.shields.io/badge/Docs-Faramesh%20Docs-0f766e?style=flat-square" /></a>
-	<img alt="Latest release" src="https://img.shields.io/github/v/release/faramesh/faramesh-core?include_prereleases&sort=semver&style=flat-square&label=Release" />
+  <a href="LICENSE"><img alt="License: MPL-2.0" src="https://img.shields.io/badge/License-MPL--2.0-0f172a?style=flat-square&logo=mozilla" /></a>
+  <a href="https://github.com/faramesh/faramesh-core/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/faramesh/faramesh-core?style=flat-square" /></a>
+  <a href="https://github.com/faramesh/faramesh-core/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/faramesh/faramesh-core?include_prereleases&sort=semver&style=flat-square&label=Release" /></a>
+  <a href="https://github.com/faramesh/faramesh-core/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/faramesh/faramesh-core/ci.yml?style=flat-square&label=CI" /></a>
+  <a href="https://docs.faramesh.dev/"><img alt="Docs" src="https://img.shields.io/badge/Docs-faramesh.dev-0f766e?style=flat-square" /></a>
 </p>
 
 <p>
-	<a href="https://farameshlabs.slack.com/ssb/redirect" style="display:inline-block;background:linear-gradient(135deg,#4A154B,#611f69);color:#fff;text-decoration:none;font-weight:700;padding:0.8rem 1.2rem;border-radius:999px;box-shadow:0 12px 28px rgba(97,31,105,0.24);border:1px solid rgba(255,255,255,0.08);margin-right:0.5rem">Join our developer community on Slack</a>
-	<a href="https://docs.faramesh.dev/quickstart/" style="display:inline-block;background:#0f172a;color:#fff;text-decoration:none;font-weight:700;padding:0.8rem 1.2rem;border-radius:999px;box-shadow:0 12px 28px rgba(15,23,42,0.18);border:1px solid rgba(255,255,255,0.06)">Read the quickstart</a>
+  <a href="https://farameshlabs.slack.com/ssb/redirect"><img alt="Slack" src="https://img.shields.io/badge/Slack-Join%20our%20developer%20community-4A154B?style=for-the-badge&logo=slack" /></a>
+  <a href="https://docs.faramesh.dev/quickstart/"><img alt="Quickstart" src="https://img.shields.io/badge/Quickstart-Read%20the%20docs-0f172a?style=for-the-badge" /></a>
 </p>
 
-<img src="0522.gif" alt="Faramesh demo gif" width="780" />
-
-<hr style="border:0;border-top:1px solid rgba(15,23,42,0.12);max-width:920px;margin:1.5rem auto 2rem" />
+<img src="0522.gif" alt="Faramesh decisions streaming in real time" width="780" />
 
 </div>
 
-- Website: https://faramesh.dev
-- Documentation: https://docs.faramesh.dev
-- Quickstart: https://docs.faramesh.dev/quickstart/
-- Policy language (FPL): https://docs.faramesh.dev/fpl/
-- Stack reference: https://docs.faramesh.dev/stack/
+---
 
-Faramesh sits between an agent and its tools and decides every tool call against a policy you write. The daemon returns permit, defer, or deny decisions before the tool runs and records tamper-evident evidence for every decision.
+## Install
 
-The key capabilities of Faramesh are:
+```bash
+curl -fsSL https://install.faramesh.dev/install.sh | bash
+faramesh version
+```
 
-- Interception tiers so every call reaches the daemon: SDK shim, MCP proxy, HTTP proxy, and A2A proxy.
-- Deterministic enforcement: steps 1 through 8 are pure functions over policy and the action payload, with no LLM in the decision path.
-- Identity bound decisions using SPIFFE SVIDs, OIDC, or cloud workload identity.
-- Credential brokering that mints short-lived scoped credentials at the call site so agents never hold long-lived secrets.
-- Auditing with Decision Provenance Records, a hash-chained WAL, and optional KMS signing plus audit sinks for SIEM.
-- Stack-level policy changes that compile atomically, so teams can review and roll out governance as a single unit.
-- Decision visibility for humans and systems, including defer flows, structured denials, and exportable evidence for reviews and audits.
+Also Homebrew, npx, Go install, or build from git. [All install paths →](https://docs.faramesh.dev/quickstart#install-the-cli)
 
-## Governance as code
+## Works with the agent stack you already have
 
-Faramesh policy lives in a single stack file written in FPL, the Faramesh Policy Language. YAML and JSON map to the same AST. The CLI compiles that policy into a deterministic AST that the daemon enforces, and changes are applied atomically.
+LangGraph · LangChain · CrewAI · OpenAI Agents · Claude Agents SDK · Claude Code · Cursor · MCP · AutoGen · AG2 · LlamaIndex · Pydantic AI · Bedrock · Semantic Kernel
 
-## Getting Started and Documentation
+13 frameworks today. SDK shim, MCP proxy, HTTP proxy, or A2A. Pick the tier that matches the agent. [Framework guides →](https://docs.faramesh.dev/frameworks/)
 
-- Why Faramesh: https://docs.faramesh.dev/introduction/
-- How Faramesh works: https://docs.faramesh.dev/concepts/how-it-works/
-- Interception: https://docs.faramesh.dev/concepts/interception/
-- Enforcement: https://docs.faramesh.dev/concepts/enforcement/
-- Identity: https://docs.faramesh.dev/concepts/identity/
-- Credentials: https://docs.faramesh.dev/concepts/credentials/
-- Auditing: https://docs.faramesh.dev/concepts/auditing/
-- Quickstart: https://docs.faramesh.dev/quickstart/
-- Write your first policy: https://docs.faramesh.dev/guides/your-first-policy/
-- Providers: https://docs.faramesh.dev/providers/
-- CLI reference: https://docs.faramesh.dev/cli/
+## What you get
 
-## Developing Faramesh
+- **Deterministic decisions.** Pure functions over policy and the action payload. No LLM in the decision path.
+- **Non-bypassable enforcement.** Local daemon. Every tool call goes through it. No SDK to forget to wrap.
+- **Identity-bound.** SPIFFE SVIDs, OIDC, or cloud workload identity. Credentials brokered at the call site.
+- **Tamper-evident audit.** Decision Provenance Records, hash-chained WAL, optional KMS signing.
 
-- Contributing guide: https://docs.faramesh.dev/guides/contributing/
+## A policy
 
-## Repository History Note
+```
+agent "support-bot" {
+  default deny
 
-If your clone predates the May 18, 2026 history rewrite, fetch the rewritten remote state or reclone before continuing work. The tracked root `faramesh` binary was removed from git history and local clones need to resync to drop the old blob.
+  rules {
+    permit crm/customers/read
+    permit crm/tickets/create
+    permit email/send             if domain == "@yourcompany.com"
+    defer  email/send             if domain != "@yourcompany.com"
+    defer  billing/cancel_subscription
+    deny   billing/delete_account
+  }
+
+  rate_limit "email/send": 50 per hour
+
+  budget daily {
+    max       $20
+    on_exceed defer
+  }
+}
+```
+
+External emails go to a human. Cancellations require a click. Deletion is impossible without editing the policy. Daily spend ceiling. Every decision lands in a verifiable log.
+
+[More policy patterns →](https://docs.faramesh.dev/use-cases/) · [FPL reference →](https://docs.faramesh.dev/fpl/)
+
+## How Faramesh compares
+
+Faramesh is the local enforcement daemon for tool-call decisions. It's narrower than full-stack agent platforms (Microsoft AGT) and operates outside the model output evaluation layer (Galileo Agent Control). [Detailed comparison →](https://docs.faramesh.dev/compare/alternatives/)
+
+## Documentation
+
+**Start here** · [Why Faramesh](https://docs.faramesh.dev/introduction/) · [Quickstart](https://docs.faramesh.dev/quickstart/) · [Write your first policy](https://docs.faramesh.dev/guides/your-first-policy/)
+
+**Concepts** · [How it works](https://docs.faramesh.dev/concepts/how-it-works/) · [Interception](https://docs.faramesh.dev/concepts/interception/) · [Enforcement](https://docs.faramesh.dev/concepts/enforcement/) · [Auditing](https://docs.faramesh.dev/concepts/auditing/)
+
+**Reference** · [FPL](https://docs.faramesh.dev/fpl/) · [Stack file](https://docs.faramesh.dev/stack/) · [CLI](https://docs.faramesh.dev/cli/) · [Python SDK](https://docs.faramesh.dev/sdks/python/) · [TypeScript SDK](https://docs.faramesh.dev/sdks/typescript/)
+
+## Community
+
+[Slack](https://farameshlabs.slack.com/ssb/redirect) for daily conversation. [GitHub Discussions](https://github.com/faramesh/faramesh-core/discussions) for design proposals. [Contributing guide](https://docs.faramesh.dev/guides/contributing/) for the policy pack registry and framework adapters.
+
+## Star this repo if you ship AI agents to production
+
+It helps other engineers find Faramesh.
 
 ## License
 
-See [faramesh-core/LICENSE](LICENSE).
+[MPL-2.0](LICENSE).
+
+## Built by
+
+Amjad Fatmi and Brian Hall at [Faramesh Labs](https://faramesh.dev).
