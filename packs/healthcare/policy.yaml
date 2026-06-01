@@ -1,0 +1,241 @@
+agents:
+  healthcare:
+    default: deny
+    model: gpt-4o
+    framework: langgraph
+    rules:
+      # === PATIENT IDENTIFICATION & VERIFICATION ===
+      - effect: permit
+        tool: "patient/search"
+        when: "mrn_verified == true"
+        reason: "MRN-verified patient search permitted"
+
+      - effect: permit
+        tool: "patient/validate"
+        when: "true"
+        reason: "patient validation permitted"
+
+      # === PATIENT DATA READ ACCESS ===
+      - effect: permit
+        tool: "patient/read"
+        when: "purpose == 'clinical_support' && encrypted_transport == true"
+        reason: "patient read approved for clinical support via encrypted channel"
+
+      - effect: permit
+        tool: "patient/read"
+        when: "purpose == 'care_coordination' && clinician_verified == true"
+        reason: "patient read for verified care coordination"
+
+      - effect: deny
+        tool: "patient/read"
+        when: "clinician_verified == false"
+        reason: "patient data access requires clinician verification"
+
+      - effect: deny
+        tool: "patient/read"
+        when: "hourly_call_count > 50"
+        reason: "patient read rate limit exceeded (>50/hour) - potential exfiltration"
+
+      # === PATIENT DATA WRITE & DELETE ===
+      - effect: defer
+        tool: "patient/write"
+        when: "true"
+        reason: "patient data modification requires clinician approval and audit logging"
+
+      - effect: defer
+        tool: "patient/delete"
+        when: "true"
+        reason: "patient record deletion requires compliance and legal review"
+
+      # === PATIENT EMERGENCY ACCESS ===
+      - effect: permit
+        tool: "patient/emergency_access"
+        when: "emergency_declared == true && clinician_id_verified == true"
+        notify: "compliance"
+        reason: "break-glass emergency access approved with compliance notification"
+
+      # === MEDICAL RECORDS ACCESS ===
+      - effect: permit
+        tool: "medical_records/list"
+        when: "access_control_verified == true && purpose == 'treatment'"
+        reason: "medical records listing permitted for treatment"
+
+      - effect: permit
+        tool: "medical_records/read"
+        when: "purpose == 'treatment' && clinician_verified == true"
+        reason: "clinician-verified medical records access"
+
+      - effect: deny
+        tool: "medical_records/read"
+        when: "clinician_verified == false"
+        reason: "medical records require clinician verification"
+
+      # === MENTAL HEALTH RECORDS (Enhanced Sensitivity) ===
+      - effect: defer
+        tool: "mental_health_records/read"
+        when: "true"
+        notify: "compliance"
+        reason: "mental health record access requires compliance review for enhanced privacy"
+
+      # === PRESCRIPTION MANAGEMENT ===
+      - effect: permit
+        tool: "prescription/view"
+        when: "true"
+        reason: "read-only prescription access permitted"
+
+      - effect: defer
+        tool: "prescription/create"
+        when: "formulary_match == true && cost <= 100"
+        reason: "formulary-matched prescription requires clinician confirmation"
+
+      - effect: defer
+        tool: "prescription/create"
+        when: "formulary_match == false"
+        notify: "pharmacy"
+        reason: "non-formulary prescription requires pharmacy review"
+
+      - effect: deny
+        tool: "prescription/create"
+        when: "drug_scheduled == true && dea_authorized == false"
+        reason: "scheduled substances require DEA authorization"
+
+      - effect: deny
+        tool: "prescription/modify"
+        when: "patient_allergy_conflict == true"
+        reason: "prescription conflicts with known allergies - denied for patient safety"
+
+      - effect: defer
+        tool: "prescription/refill"
+        when: "refill_count > 10"
+        reason: "excessive refills require clinician review"
+
+      - effect: deny
+        tool: "prescription/create"
+        when: "daily_count > 100"
+        reason: "prescription creation rate limit exceeded (>100/day)"
+
+      # === MEDICATION MANAGEMENT ===
+      - effect: permit
+        tool: "medication/check_interactions"
+        when: "true"
+        reason: "medication interaction checking always permitted"
+
+      - effect: defer
+        tool: "medication/recommend"
+        when: "interaction_severity == 'high'"
+        notify: "pharmacist"
+        reason: "high-severity drug interaction requires pharmacist review"
+
+      - effect: permit
+        tool: "medication/recommend"
+        when: "interaction_severity == 'low' && cost_threshold_met == true"
+        reason: "low-severity interactions auto-approved within cost bounds"
+
+      # === APPOINTMENT SCHEDULING ===
+      - effect: permit
+        tool: "appointment/list"
+        when: "true"
+        reason: "appointment listing permitted for care coordination"
+
+      - effect: permit
+        tool: "appointment/view"
+        when: "true"
+        reason: "appointment details viewing permitted"
+
+      - effect: defer
+        tool: "appointment/create"
+        when: "true"
+        reason: "appointment creation requires availability verification"
+
+      - effect: defer
+        tool: "appointment/cancel"
+        when: "advance_notice < 24"
+        notify: "clinic"
+        reason: "late cancellation requires clinic notification"
+
+      # === LAB ORDERS & RESULTS ===
+      - effect: permit
+        tool: "lab_results/list"
+        when: "age_restricted == true"
+        reason: "age-appropriate lab result listing"
+
+      - effect: permit
+        tool: "lab_results/read"
+        when: "result_status == 'final' && clinician_verified == true"
+        reason: "final lab results for verified clinician"
+
+      - effect: deny
+        tool: "lab_results/read"
+        when: "result_status == 'preliminary' && ordering_provider_verified == false"
+        reason: "preliminary results visible only to ordering provider"
+
+      - effect: permit
+        tool: "lab_order/create"
+        when: "cost <= 500"
+        reason: "routine lab orders under $500 auto-approved"
+
+      - effect: defer
+        tool: "lab_order/create"
+        when: "cost > 500 && cost <= 2000"
+        reason: "specialty labs $500-$2000 require approval"
+
+      - effect: deny
+        tool: "lab_order/create"
+        when: "cost > 2000"
+        reason: "high-cost labs $2000+ require manual review (not agent-approved)"
+
+      - effect: deny
+        tool: "lab_order/create"
+        when: "daily_cost_total > 10000"
+        reason: "daily lab ordering cost limit exceeded ($10,000)"
+
+      - effect: deny
+        tool: "lab_order/create"
+        when: "daily_count > 50"
+        reason: "lab order creation rate limit exceeded (>50/day)"
+
+      # === INSURANCE & BILLING ===
+      - effect: permit
+        tool: "insurance/verify"
+        when: "purpose == 'coverage_check'"
+        reason: "coverage verification permitted for treatment planning"
+
+      - effect: defer
+        tool: "insurance/authorize"
+        when: "cost > 1000"
+        notify: "billing"
+        reason: "high-cost procedure authorization requires billing review"
+
+      - effect: deny
+        tool: "insurance/claims"
+        when: "pii_exposure_risk == true"
+        reason: "claims operation blocked due to PII exposure risk"
+
+      # === AUDIT & COMPLIANCE ===
+      - effect: permit
+        tool: "audit/log"
+        when: "true"
+        reason: "all healthcare operations require audit logging"
+
+      - effect: permit
+        tool: "compliance/event"
+        when: "true"
+        reason: "compliance event tracking required for HIPAA requirements"
+
+      - effect: permit
+        tool: "patient/access_log_view"
+        when: "self_access == true"
+        reason: "patients can view their own access logs (HIPAA right to access)"
+
+      # === ABSOLUTE DENIALS ===
+      - effect: deny
+        deny_unconditional: "shell/*"
+        reason: "shell execution strictly forbidden in healthcare"
+
+      - effect: deny
+        deny_unconditional: "database/execute"
+        reason: "raw database access strictly forbidden - use governed healthcare tools only"
+
+      - effect: deny
+        deny_unconditional: "patient/export_bulk"
+        reason: "bulk patient data export strictly forbidden for data protection"

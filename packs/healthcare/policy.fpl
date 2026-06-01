@@ -1,7 +1,216 @@
+# Faramesh Policy Language — Comprehensive Healthcare Governance
+# This policy governs healthcare AI agents with HIPAA-aligned access controls,
+# patient data protection, and multi-tier approval workflows.
+
 agent healthcare {
   default deny
+  
+  # Healthcare framework and model specifications
+  framework "langgraph"
+  model "gpt-4o"
 
+  # Operational budget controls for healthcare workflows
+  budget session {
+    max_calls 1000
+    daily $5000
+    on_exceed deny
+  }
+
+  budget monthly {
+    max $50000
+    on_exceed deny
+  }
+
+  # Credential requirements: Healthcare operations require brokered secrets
+  credential ehr_access {
+    scope patient_read patient_write medical_records appointments prescriptions lab_results
+    backend vault
+    max_scope "patient:pii_protected"
+  }
+
+  credential insurance_broker {
+    scope insurance/verify insurance/claims insurance/authorize
+    backend vault
+    max_scope "billing:protected"
+  }
+
+  credential audit_logger {
+    scope audit/log compliance/event
+    backend vault
+    max_scope "hipaa:required"
+  }
+
+  # Phase 1: Patient Identification & Verification (no PII exposure yet)
+  phase intake {
+    permit patient/search when verified_mrn_only
+    permit patient/validate
+    permit idp/probe
+  }
+
+  # Phase 2: Safe Data Retrieval (PII-protected tier)
+  phase retrieval {
+    permit patient/read when purpose("diagnostic_support")
+    permit medical_records/list when access_control_verified
+    permit appointment/list
+    permit lab_results/read when age_restricted
+  }
+
+  # Phase 3: Medical Decision Support (defer-gated for complex cases)
+  phase decision_support {
+    defer prescription/create reason: "prescription requires clinician approval"
+    defer prescription/modify reason: "prescription modification requires clinician approval"
+    permit prescription/view
+    defer medication/recommend reason: "drug interaction check + clinician review"
+    permit lab_order/create when cost <= 500
+    defer lab_order/create when cost > 500 reason: "high-cost labs require approval"
+  }
+
+  # Phase 4: Notification & Escalation (audit-tracked)
+  phase notification {
+    permit notification/patient_update
+    permit notification/clinician_alert
+    permit audit/log
+  }
+
+  # Core Rules with HIPAA-aligned governance
   rules {
-    defer patient/* reason: "patient tools require approval"
+    # === ABSOLUTE DENIALS (never permit under any condition) ===
+    deny! shell/* reason: "shell execution forbidden in healthcare"
+    deny! database/execute reason: "raw database access forbidden"
+    deny! patient/export_bulk reason: "bulk data export forbidden"
+    
+    # === PATIENT DATA ACCESS ===
+    # Read operations: require purpose declaration and encryption verification
+    permit patient/read when purpose("clinical_support") && encrypted_transport
+      reason: "patient read approved for clinical support over encrypted channel"
+    
+    permit patient/read when purpose("care_coordination") && clinician_verified
+      reason: "patient read for care coordination with verified clinician"
+    
+    deny patient/read
+      when history_tool_count("patient/read") > 100
+      reason: "excessive patient read operations detected - potential data exfiltration"
+    
+    # Defer patient updates for audit trail compliance
+    defer patient/write reason: "patient data modification requires clinician approval + audit logging"
+    defer patient/delete reason: "patient record deletion requires compliance review"
+
+    # === MEDICAL RECORDS & SENSITIVE DATA ===
+    permit medical_records/list when access_control_verified && purpose("treatment")
+    
+    permit medical_records/read when purpose("treatment") && clinician_verified
+      reason: "clinician-verified medical records access"
+    
+    deny medical_records/read
+      when not clinician_verified
+      reason: "medical records require clinician verification"
+    
+    # Mental health records require additional oversight
+    defer mental_health_records/read
+      notify: "compliance"
+      reason: "mental health record access requires compliance review"
+
+    # === PRESCRIPTION MANAGEMENT ===
+    # Low-value prescriptions can auto-approve; high-risk or high-cost defer
+    permit prescription/view reason: "read-only prescription access permitted"
+    
+    defer prescription/create when formulary_match && cost <= 100
+      reason: "formulary-matched prescription within threshold requires clinician confirmation"
+    
+    defer prescription/create when not formulary_match
+      notify: "pharmacy"
+      reason: "non-formulary prescription requires pharmacy review"
+    
+    deny prescription/create when drug_scheduled && not_authorized
+      reason: "scheduled substances require DEA authorization"
+    
+    deny prescription/modify when patient_allergy_conflict
+      reason: "prescription conflicts with known allergies - denied"
+    
+    defer prescription/refill when refill_count > 10
+      reason: "excessive refills require clinician review"
+
+    # === MEDICATION & INTERACTION CHECKS ===
+    permit medication/check_interactions reason: "medication interaction check is always permitted"
+    
+    defer medication/recommend when interaction_severity("high")
+      notify: "pharmacist"
+      reason: "high-severity drug interaction requires pharmacist review"
+    
+    permit medication/recommend when interaction_severity("low") && cost_threshold_met
+      reason: "low-severity interactions auto-approved within cost bounds"
+
+    # === APPOINTMENT & SCHEDULING ===
+    permit appointment/list reason: "appointment listing permitted for care coordination"
+    
+    permit appointment/view reason: "appointment details viewing permitted"
+    
+    defer appointment/create reason: "appointment creation requires availability verification"
+    
+    defer appointment/cancel when advance_notice < 24h
+      notify: "clinic"
+      reason: "late cancellation requires clinic notification"
+
+    # === LAB ORDERS & RESULTS ===
+    permit lab_results/list when age_restricted reason: "age-appropriate lab result listing"
+    
+    permit lab_results/read when result_status("final") && clinician_verified
+      reason: "final lab results for verified clinician"
+    
+    deny lab_results/read when result_status("preliminary") && not_ordering_provider
+      reason: "preliminary results visible only to ordering provider"
+    
+    permit lab_order/create when cost <= 500
+      reason: "routine lab orders under $500 auto-approved"
+    
+    defer lab_order/create when cost > 500 && cost <= 2000
+      reason: "specialty labs $500-$2000 require approval"
+    
+    deny lab_order/create when cost > 2000
+      reason: "high-cost labs $2000+ require manual review (not agent-approved)"
+
+    # === INSURANCE & BILLING (protected tier) ===
+    permit insurance/verify when purpose("coverage_check")
+      reason: "coverage verification for treatment planning"
+    
+    defer insurance/authorize when cost > 1000
+      notify: "billing"
+      reason: "high-cost procedure authorization requires billing review"
+    
+    deny insurance/claims when pii_exposure_risk
+      reason: "claim operation blocked due to PII exposure risk"
+
+    # === AUDIT & COMPLIANCE LOGGING ===
+    permit audit/log reason: "all healthcare operations require audit logging"
+    
+    permit compliance/event reason: "compliance event tracking for HIPAA requirements"
+    
+    permit patient/access_log_view when self_access
+      reason: "patients can view their own access logs (HIPAA right to access)"
+
+    # === EMERGENCY OVERRIDE (break-glass scenario) ===
+    permit patient/emergency_access when emergency_declared && clinician_id_verified
+      notify: "compliance"
+      reason: "emergency access override - requires immediate compliance review"
+
+    # === RATE LIMITING & ABUSE PREVENTION ===
+    deny patient/read
+      when hourly_rate_limit("patient/read") > 50
+      reason: "patient read rate limit exceeded (>50/hour)"
+    
+    deny prescription/create
+      when daily_rate_limit("prescription/create") > 100
+      reason: "prescription creation rate limit exceeded (>100/day)"
+    
+    deny lab_order/create
+      when daily_rate_limit("lab_order/create") > 50
+      reason: "lab order creation rate limit exceeded (>50/day)"
+
+    # === COST CONTROLS ===
+    deny lab_order/create when daily_cost_total > 10000
+      reason: "daily lab ordering cost limit exceeded ($10,000)"
+    
+    deny prescription/create when monthly_cost_total > 25000
+      reason: "monthly prescription cost limit exceeded ($25,000)"
   }
 }
