@@ -4,7 +4,7 @@
 
 **Every agent tool call is a policy decision.**
 
-Declare permissions in `governance.fms`. A local daemon permits, defers, or denies each tool call before it runs. Decisions are hash-chained in a WAL. No SDK lock-in. No cloud required.
+Faramesh is an open-source runtime governance and enforcement layer for AI agents. You declare permissions in `governance.fms`, and a local daemon permits, defers, or denies each tool call before it runs. Decisions are hash-chained in a WAL. No SDK lock-in. No cloud required.
 
 <p>
   <a href="LICENSE"><img alt="License: MPL-2.0" src="https://img.shields.io/badge/License-MPL--2.0-0f172a?style=flat-square&logo=mozilla" /></a>
