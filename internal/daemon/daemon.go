@@ -41,8 +41,6 @@ import (
 	"github.com/faramesh/faramesh-core/internal/adapter/proxy"
 	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
 	"github.com/faramesh/faramesh-core/internal/artifactverify"
-	"github.com/faramesh/faramesh-core/internal/daemon/agentsupervisor"
-	"github.com/faramesh/faramesh-core/internal/cloud"
 	"github.com/faramesh/faramesh-core/internal/core"
 	"github.com/faramesh/faramesh-core/internal/core/agentgov"
 	"github.com/faramesh/faramesh-core/internal/core/callbacks"
@@ -63,6 +61,7 @@ import (
 	"github.com/faramesh/faramesh-core/internal/core/standing"
 	"github.com/faramesh/faramesh-core/internal/core/toolinventory"
 	"github.com/faramesh/faramesh-core/internal/core/webhook"
+	"github.com/faramesh/faramesh-core/internal/daemon/agentsupervisor"
 	"github.com/faramesh/faramesh-core/internal/provider"
 	"github.com/faramesh/faramesh-core/internal/remote"
 	"github.com/faramesh/faramesh-core/internal/reprobuild"
@@ -70,12 +69,6 @@ import (
 )
 
 var ebpfNew = ebpf.New
-
-const (
-	fleetRegistryKey            = "faramesh:fleet:instances"
-	fleetPolicyReloadChannel    = "faramesh:fleet:policy-reload"
-	fleetPolicyReloadActionName = "policy_reload"
-)
 
 // Config configures the daemon.
 type Config struct {
@@ -86,12 +79,6 @@ type Config struct {
 	SocketPath         string
 	SlackWebhook       string
 	Log                *zap.Logger
-
-	// Horizon sync (optional). If HorizonToken is set, DPR records are
-	// streamed to the Horizon API in real time.
-	HorizonToken string
-	HorizonURL   string
-	HorizonOrgID string
 
 	ProxyPort                   int
 	ProxyConnect                bool // HTTP CONNECT only (governed as proxy/connect)
@@ -136,24 +123,24 @@ type Config struct {
 	CanonicalizationAlgorithm   string
 	// DPRSigner configures which signing backend to use for DPR records.
 	// Supported values: "" (default = on-disk keypair), "file", "localkms://key", or provider-kms via DPRKMSProvider.
-	DPRSigner                   string
+	DPRSigner string
 	// DPRKMSProvider names a provider block with KMS capability (production signing; key never in daemon).
-	DPRKMSProvider              string
-	DPRKMSKeyRef                string
+	DPRKMSProvider string
+	DPRKMSKeyRef   string
 	// StackTenantID scopes WAL/data paths for multi-tenant stacks (Phase 12).
-	StackTenantID               string
+	StackTenantID string
 	// GovernToolResponses enables governance of tool_response action types.
-	GovernToolResponses         bool
+	GovernToolResponses bool
 	// BudgetPools are shared USD ceilings across agent sets (Phase 12).
-	BudgetPools                 []agentgov.BudgetPool
+	BudgetPools []agentgov.BudgetPool
 	// StackDir is the governance stack root (provider binary verification, .faramesh state).
-	StackDir                    string
-	TLSCertFile                 string
-	TLSKeyFile                  string
-	ClientCAFile                string
-	TLSAuto                     bool
-	PagerDutyRoutingKey         string
-	PolicyAdminToken            string
+	StackDir            string
+	TLSCertFile         string
+	TLSKeyFile          string
+	ClientCAFile        string
+	TLSAuto             bool
+	PagerDutyRoutingKey string
+	PolicyAdminToken    string
 	// StandingAdminToken authenticates standing_grant_* SDK messages. If empty,
 	// serve resolves it from FARAMESH_STANDING_ADMIN_TOKEN or falls back to PolicyAdminToken.
 	StandingAdminToken    string
@@ -218,56 +205,41 @@ type Config struct {
 
 // Daemon is the governance daemon.
 type Daemon struct {
-	cfg                  Config
-	engine               *policy.AtomicEngine
-	policyLoader         *policy.PolicyLoader
-	lastPolicyHash       string
-	policySourceType     string
-	policySourceID       string
-	policyPollCancel     context.CancelFunc
-	reloadMu             sync.Mutex
-	server               *sdk.Server
-	pipeline             *core.Pipeline
-	wal                  dpr.Writer
-	store                dpr.StoreBackend
-	dprQueue             jobs.DPRQueue
-	toolInventory        *toolinventory.Store
-	syncer               *cloud.Syncer
-	proxy                *proxy.Server
-	grpc                 *gatewaydaemon.Server
-	grpcLis              net.Listener
-	mcpGateway           *mcp.HTTPGateway
-	metricsSrv           *http.Server
-	sessBackend          session.Backend
-	deferBackend         deferbackends.Backend
-	fleetRedis           *redis.Client
-	fleetInstanceID      string
-	fleetPolicySubCancel context.CancelFunc
-	dailyCostStore       session.DailyCostStore
-	webhooks             *webhook.Sender
-	degraded             *degraded.Manager
-	elevationEngine      *principal.ElevationEngine
-	revocationMgr        *principal.RevocationManager
-	workloadProvider     principal.WorkloadProvider
-	ebpfAdapter          ebpf.Lifecycle
-	delegate             *delegate.Service
-	delegateStore        *delegate.SQLiteStore
-	log                  *zap.Logger
-	fleetPolicyApply     func(context.Context, fleetPolicyReloadEvent) (bool, error)
-	providerReg          *provider.Registry
-	lifecycle            *Lifecycle
-	agentSupervisor      *agentsupervisor.Supervisor
-}
-
-type fleetPolicyReloadEvent struct {
-	Action        string `json:"action"`
-	InstanceID    string `json:"instance_id"`
-	SourceType    string `json:"source_type"`
-	SourceID      string `json:"source_id,omitempty"`
-	PolicyVersion string `json:"policy_version,omitempty"`
-	PolicyHash    string `json:"policy_hash,omitempty"`
-	PolicyYAML    string `json:"policy_yaml,omitempty"`
-	Timestamp     string `json:"timestamp"`
+	cfg              Config
+	engine           *policy.AtomicEngine
+	policyLoader     *policy.PolicyLoader
+	lastPolicyHash   string
+	policySourceType string
+	policySourceID   string
+	policyPollCancel context.CancelFunc
+	reloadMu         sync.Mutex
+	server           *sdk.Server
+	pipeline         *core.Pipeline
+	wal              dpr.Writer
+	store            dpr.StoreBackend
+	dprQueue         jobs.DPRQueue
+	toolInventory    *toolinventory.Store
+	proxy            *proxy.Server
+	grpc             *gatewaydaemon.Server
+	grpcLis          net.Listener
+	mcpGateway       *mcp.HTTPGateway
+	metricsSrv       *http.Server
+	sessBackend      session.Backend
+	deferBackend     deferbackends.Backend
+	redisClient      *redis.Client
+	dailyCostStore   session.DailyCostStore
+	webhooks         *webhook.Sender
+	degraded         *degraded.Manager
+	elevationEngine  *principal.ElevationEngine
+	revocationMgr    *principal.RevocationManager
+	workloadProvider principal.WorkloadProvider
+	ebpfAdapter      ebpf.Lifecycle
+	delegate         *delegate.Service
+	delegateStore    *delegate.SQLiteStore
+	log              *zap.Logger
+	providerReg      *provider.Registry
+	lifecycle        *Lifecycle
+	agentSupervisor  *agentsupervisor.Supervisor
 }
 
 // New creates a Daemon from a Config. Call Run() to start it.
@@ -384,11 +356,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 		zap.String("data_dir", d.cfg.DataDir),
 	)
 
-	// Start Horizon syncer in background if configured.
-	if d.syncer != nil {
-		go d.syncer.Run()
-	}
-
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, daemonNotifySignals()...)
 	for {
@@ -449,16 +416,15 @@ func (d *Daemon) handleSignal(sig os.Signal) bool {
 // reloadPolicy re-reads the policy file and hot-swaps the AtomicEngine.
 // If compilation fails the running engine is untouched.
 func (d *Daemon) reloadPolicy() error {
-	_, _, err := d.reloadPolicyIfChangedInternal(true)
+	_, err := d.reloadPolicyIfChangedInternal()
 	return err
 }
 
 func (d *Daemon) reloadPolicyIfChanged() (bool, error) {
-	changed, _, err := d.reloadPolicyIfChangedInternal(true)
-	return changed, err
+	return d.reloadPolicyIfChangedInternal()
 }
 
-func (d *Daemon) reloadPolicyIfChangedInternal(publish bool) (bool, *fleetPolicyReloadEvent, error) {
+func (d *Daemon) reloadPolicyIfChangedInternal() (bool, error) {
 	d.reloadMu.Lock()
 	defer d.reloadMu.Unlock()
 
@@ -468,10 +434,10 @@ func (d *Daemon) reloadPolicyIfChangedInternal(publish bool) (bool, *fleetPolicy
 		}
 		src, err := d.policyLoader.FromURL(context.Background(), d.cfg.PolicyURL)
 		if err != nil {
-			return false, nil, fmt.Errorf("load policy from URL: %w", err)
+			return false, fmt.Errorf("load policy from URL: %w", err)
 		}
 		if src.Hash == d.lastPolicyHash {
-			return false, nil, nil
+			return false, nil
 		}
 		if errs := policy.Validate(src.Doc); len(errs) > 0 {
 			for _, e := range errs {
@@ -480,11 +446,11 @@ func (d *Daemon) reloadPolicyIfChangedInternal(publish bool) (bool, *fleetPolicy
 		}
 		if d.pipeline != nil {
 			if err := d.pipeline.ApplyPolicyBundle(src.Doc, src.Engine); err != nil {
-				return false, nil, fmt.Errorf("apply policy bundle: %w", err)
+				return false, fmt.Errorf("apply policy bundle: %w", err)
 			}
 		} else {
 			if err := d.engine.HotReload(src.Doc, src.Version); err != nil {
-				return false, nil, fmt.Errorf("compile policy: %w", err)
+				return false, fmt.Errorf("compile policy: %w", err)
 			}
 		}
 		d.policyLoader.Activate(src)
@@ -497,24 +463,12 @@ func (d *Daemon) reloadPolicyIfChangedInternal(publish bool) (bool, *fleetPolicy
 			zap.String("source_type", string(policy.SourceURL)),
 			zap.String("source_id", d.cfg.PolicyURL),
 		)
-		event := &fleetPolicyReloadEvent{
-			Action:        fleetPolicyReloadActionName,
-			InstanceID:    d.fleetInstanceID,
-			SourceType:    string(policy.SourceURL),
-			SourceID:      d.cfg.PolicyURL,
-			PolicyVersion: src.Version,
-			PolicyHash:    src.Hash,
-			Timestamp:     time.Now().UTC().Format(time.RFC3339),
-		}
-		if publish {
-			d.publishFleetPolicyReloadEvent(context.Background(), *event)
-		}
-		return true, event, nil
+		return true, nil
 	}
 
 	doc, version, err := policy.LoadFile(d.cfg.PolicyPath)
 	if err != nil {
-		return false, nil, fmt.Errorf("load policy: %w", err)
+		return false, fmt.Errorf("load policy: %w", err)
 	}
 	if errs := policy.Validate(doc); len(errs) > 0 {
 		for _, e := range errs {
@@ -523,11 +477,11 @@ func (d *Daemon) reloadPolicyIfChangedInternal(publish bool) (bool, *fleetPolicy
 	}
 	newEngine, err := policy.NewEngine(doc, version)
 	if err != nil {
-		return false, nil, fmt.Errorf("compile policy: %w", err)
+		return false, fmt.Errorf("compile policy: %w", err)
 	}
 	if d.pipeline != nil {
 		if err := d.pipeline.ApplyPolicyBundle(doc, newEngine); err != nil {
-			return false, nil, fmt.Errorf("apply policy bundle: %w", err)
+			return false, fmt.Errorf("apply policy bundle: %w", err)
 		}
 	} else {
 		d.engine.Swap(newEngine)
@@ -541,22 +495,7 @@ func (d *Daemon) reloadPolicyIfChangedInternal(publish bool) (bool, *fleetPolicy
 		zap.String("source_type", string(policy.SourceFile)),
 		zap.String("source_id", d.cfg.PolicyPath),
 	)
-	event := &fleetPolicyReloadEvent{
-		Action:        fleetPolicyReloadActionName,
-		InstanceID:    d.fleetInstanceID,
-		SourceType:    string(policy.SourceFile),
-		SourceID:      d.cfg.PolicyPath,
-		PolicyVersion: version,
-		PolicyHash:    version,
-		Timestamp:     time.Now().UTC().Format(time.RFC3339),
-	}
-	if raw, readErr := os.ReadFile(d.cfg.PolicyPath); readErr == nil {
-		event.PolicyYAML = string(raw)
-	}
-	if publish {
-		d.publishFleetPolicyReloadEvent(context.Background(), *event)
-	}
-	return true, event, nil
+	return true, nil
 }
 
 // Server returns the SDK server (used by audit tail).
@@ -736,13 +675,9 @@ func (d *Daemon) start() error {
 			return fmt.Errorf("connect redis session backend: %w", err)
 		}
 		d.sessBackend = session.NewRedisBackend(session.RedisConfig{Client: redisClient})
-		d.fleetRedis = redisClient
+		d.redisClient = redisClient
 		sessionManager = session.NewManagerWithStores(d.sessBackend, d.dailyCostStore)
 		d.log.Info("redis session backend enabled")
-	}
-	if d.fleetRedis != nil {
-		_ = d.registerFleetInstance(doc.AgentID)
-		d.startFleetPolicyReloadSubscriber()
 	}
 
 	if doc.Webhooks != nil && doc.Webhooks.URL != "" {
@@ -768,11 +703,11 @@ func (d *Daemon) start() error {
 	wf.SetPagerDutyRoutingKey(d.cfg.PagerDutyRoutingKey)
 	wf.SetApprovalHMACKey(hmacKey)
 	if d.cfg.DeferBackend == "redis" {
-		if d.fleetRedis == nil {
+		if d.redisClient == nil {
 			return fmt.Errorf("redis defer backend requires initialized redis client")
 		}
 		d.deferBackend = deferbackends.NewRedisBackend(deferbackends.RedisConfig{
-			Client: d.fleetRedis,
+			Client: d.redisClient,
 			Prefix: d.cfg.DeferRedisPrefix,
 		})
 		wf.SetBackend(d.deferBackend)
@@ -920,18 +855,6 @@ func (d *Daemon) start() error {
 	d.revocationMgr = revocationMgr
 	d.workloadProvider = workloadProvider
 	principalResolver := buildPrincipalTokenResolver(d.cfg, d.log)
-
-	// Wire up Horizon sync if configured.
-	if d.cfg.HorizonToken != "" {
-		d.syncer = cloud.NewSyncer(cloud.SyncConfig{
-			Token:      d.cfg.HorizonToken,
-			HorizonURL: d.cfg.HorizonURL,
-			OrgID:      d.cfg.HorizonOrgID,
-			AgentID:    doc.AgentID,
-			Log:        d.log,
-		})
-		pipeline.SetHorizonSyncer(&horizonSyncAdapter{s: d.syncer})
-	}
 
 	// Start SDK socket server.
 	server := sdk.NewServer(pipeline, d.log)
@@ -1182,7 +1105,7 @@ func (d *Daemon) handleHealthz(w http.ResponseWriter, _ *http.Request) {
 	backends := []backendStatus{
 		{Name: "sqlite_dpr", Status: backendHealth(d.store != nil)},
 		{Name: "session_backend", Status: backendHealth(d.sessBackend != nil)},
-		{Name: "fleet_redis", Status: backendHealth(d.fleetRedis != nil)},
+		{Name: "redis", Status: backendHealth(d.redisClient != nil)},
 	}
 	resp := healthResponse{
 		PolicyLoaded:  d.engine != nil && d.engine.Get() != nil,
@@ -2052,8 +1975,6 @@ func (d *Daemon) stop() error {
 	if d.server != nil {
 		_ = d.server.Close()
 	}
-	d.stopFleetPolicyReloadSubscriber()
-	d.unregisterFleetInstance()
 	if d.proxy != nil {
 		_ = d.proxy.Close()
 	}
@@ -2099,8 +2020,8 @@ func (d *Daemon) stop() error {
 	if d.webhooks != nil {
 		d.webhooks.Close()
 	}
-	if d.syncer != nil {
-		d.syncer.Close() // flushes remaining records
+	if d.redisClient != nil {
+		_ = d.redisClient.Close()
 	}
 	if d.ebpfAdapter != nil {
 		_ = d.ebpfAdapter.Close()
@@ -2119,235 +2040,6 @@ func coalesceString(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func (d *Daemon) registerFleetInstance(agentID string) error {
-	if d.fleetRedis == nil {
-		return nil
-	}
-	host, _ := os.Hostname()
-	instanceID := strings.TrimSpace(host) + ":" + strconv.Itoa(os.Getpid())
-	now := time.Now().UTC().Format(time.RFC3339)
-	entry := map[string]any{
-		"instance_id": instanceID,
-		"agent_id":    strings.TrimSpace(agentID),
-		"host":        strings.TrimSpace(host),
-		"pid":         os.Getpid(),
-		"socket":      d.cfg.SocketPath,
-		"started_at":  now,
-		"updated_at":  now,
-		"status":      "running",
-	}
-	raw, err := json.Marshal(entry)
-	if err != nil {
-		return err
-	}
-	if err := d.fleetRedis.HSet(context.Background(), fleetRegistryKey, instanceID, raw).Err(); err != nil {
-		return err
-	}
-	d.fleetInstanceID = instanceID
-	return nil
-}
-
-func (d *Daemon) unregisterFleetInstance() {
-	if d.fleetRedis == nil || d.fleetInstanceID == "" {
-		return
-	}
-	_ = d.fleetRedis.HDel(context.Background(), fleetRegistryKey, d.fleetInstanceID).Err()
-}
-
-func (d *Daemon) publishFleetPolicyReloadEvent(ctx context.Context, event fleetPolicyReloadEvent) {
-	if d.fleetRedis == nil || strings.TrimSpace(event.Action) != fleetPolicyReloadActionName {
-		return
-	}
-	payload, err := json.Marshal(event)
-	if err != nil {
-		d.log.Warn("marshal fleet policy reload event failed", zap.Error(err))
-		return
-	}
-	if err := d.fleetRedis.Publish(ctx, fleetPolicyReloadChannel, payload).Err(); err != nil {
-		d.log.Warn("publish fleet policy reload event failed", zap.Error(err))
-	}
-}
-
-func (d *Daemon) startFleetPolicyReloadSubscriber() {
-	if d.fleetRedis == nil || d.fleetPolicySubCancel != nil {
-		return
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	d.fleetPolicySubCancel = cancel
-	sub := d.fleetRedis.Subscribe(ctx, fleetPolicyReloadChannel)
-	if _, err := sub.Receive(ctx); err != nil {
-		d.log.Warn("fleet policy-reload subscribe failed", zap.Error(err))
-		_ = sub.Close()
-		cancel()
-		d.fleetPolicySubCancel = nil
-		return
-	}
-	ch := sub.Channel()
-	go func() {
-		defer func() {
-			_ = sub.Close()
-		}()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case msg, ok := <-ch:
-				if !ok {
-					return
-				}
-				var event fleetPolicyReloadEvent
-				if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
-					d.log.Warn("ignore malformed fleet policy-reload payload", zap.Error(err))
-					continue
-				}
-				if !event.valid() {
-					d.log.Warn("ignore invalid fleet policy-reload event", zap.String("instance_id", event.InstanceID))
-					continue
-				}
-				if event.InstanceID != "" && event.InstanceID == d.fleetInstanceID {
-					continue
-				}
-				handler := d.applyFleetPolicyReloadEvent
-				if d.fleetPolicyApply != nil {
-					handler = d.fleetPolicyApply
-				}
-				applied, err := handler(ctx, event)
-				if err != nil {
-					d.log.Warn("fleet policy-reload apply failed", zap.Error(err))
-					continue
-				}
-				if applied {
-					d.log.Info("fleet policy-reload applied",
-						zap.String("instance_id", event.InstanceID),
-						zap.String("source_type", event.SourceType),
-						zap.String("source_id", event.SourceID),
-						zap.String("policy_hash", event.PolicyHash),
-					)
-				}
-			}
-		}
-	}()
-}
-
-func (d *Daemon) stopFleetPolicyReloadSubscriber() {
-	if d.fleetPolicySubCancel != nil {
-		d.fleetPolicySubCancel()
-		d.fleetPolicySubCancel = nil
-	}
-}
-
-func (e fleetPolicyReloadEvent) valid() bool {
-	if strings.TrimSpace(e.Action) != fleetPolicyReloadActionName {
-		return false
-	}
-	if strings.TrimSpace(e.PolicyYAML) == "" && strings.TrimSpace(e.SourceType) == "" {
-		return false
-	}
-	return true
-}
-
-func (d *Daemon) applyFleetPolicyReloadEvent(ctx context.Context, event fleetPolicyReloadEvent) (bool, error) {
-	if strings.TrimSpace(event.PolicyHash) != "" && event.PolicyHash == d.lastPolicyHash {
-		return false, nil
-	}
-
-	if strings.TrimSpace(event.PolicyYAML) != "" {
-		tmpFile, err := os.CreateTemp("", "faramesh-fleet-policy-*.yaml")
-		if err != nil {
-			return false, fmt.Errorf("create temp policy file: %w", err)
-		}
-		tmpPath := tmpFile.Name()
-		_ = tmpFile.Close()
-		defer os.Remove(tmpPath)
-		if err := os.WriteFile(tmpPath, []byte(event.PolicyYAML), 0o600); err != nil {
-			return false, fmt.Errorf("write temp policy file: %w", err)
-		}
-		doc, version, err := policy.LoadFile(tmpPath)
-		if err != nil {
-			return false, fmt.Errorf("load policy payload: %w", err)
-		}
-		if errs := policy.Validate(doc); len(errs) > 0 {
-			for _, msg := range errs {
-				d.log.Warn("fleet policy payload validation warning", zap.String("error", msg))
-			}
-		}
-		engine, err := policy.NewEngine(doc, version)
-		if err != nil {
-			return false, fmt.Errorf("compile policy payload: %w", err)
-		}
-		if d.pipeline != nil {
-			if err := d.pipeline.ApplyPolicyBundle(doc, engine); err != nil {
-				return false, fmt.Errorf("apply policy payload bundle: %w", err)
-			}
-		} else {
-			d.engine.Swap(engine)
-		}
-		if strings.TrimSpace(event.PolicyHash) != "" {
-			d.lastPolicyHash = event.PolicyHash
-		} else {
-			d.lastPolicyHash = version
-		}
-		return true, nil
-	}
-
-	switch strings.TrimSpace(event.SourceType) {
-	case string(policy.SourceURL):
-		if d.policyLoader == nil {
-			d.policyLoader = policy.NewPolicyLoader()
-		}
-		src, err := d.policyLoader.FromURL(ctx, event.SourceID)
-		if err != nil {
-			return false, fmt.Errorf("load policy from source URL: %w", err)
-		}
-		if errs := policy.Validate(src.Doc); len(errs) > 0 {
-			for _, msg := range errs {
-				d.log.Warn("fleet policy source validation warning", zap.String("error", msg))
-			}
-		}
-		if d.pipeline != nil {
-			if err := d.pipeline.ApplyPolicyBundle(src.Doc, src.Engine); err != nil {
-				return false, fmt.Errorf("apply policy source bundle: %w", err)
-			}
-		} else {
-			if err := d.engine.HotReload(src.Doc, src.Version); err != nil {
-				return false, fmt.Errorf("compile policy source: %w", err)
-			}
-		}
-		d.policyLoader.Activate(src)
-		d.lastPolicyHash = src.Hash
-		return true, nil
-	case string(policy.SourceFile):
-		doc, version, err := policy.LoadFile(event.SourceID)
-		if err != nil {
-			return false, fmt.Errorf("load policy from source file: %w", err)
-		}
-		if errs := policy.Validate(doc); len(errs) > 0 {
-			for _, msg := range errs {
-				d.log.Warn("fleet policy source validation warning", zap.String("error", msg))
-			}
-		}
-		engine, err := policy.NewEngine(doc, version)
-		if err != nil {
-			return false, fmt.Errorf("compile policy source: %w", err)
-		}
-		if d.pipeline != nil {
-			if err := d.pipeline.ApplyPolicyBundle(doc, engine); err != nil {
-				return false, fmt.Errorf("apply policy source bundle: %w", err)
-			}
-		} else {
-			d.engine.Swap(engine)
-		}
-		if strings.TrimSpace(event.PolicyHash) != "" {
-			d.lastPolicyHash = event.PolicyHash
-		} else {
-			d.lastPolicyHash = version
-		}
-		return true, nil
-	default:
-		return false, nil
-	}
 }
 
 func (d *Daemon) loadInitialPolicy() (*policy.Doc, string, error) {
@@ -2554,25 +2246,4 @@ func loadInferenceRoutesFromFile(path string) ([]proxy.InferenceRoute, error) {
 		}
 	}
 	return routes, nil
-}
-
-// horizonSyncAdapter adapts cloud.Syncer to core.DecisionSyncer without
-// importing core from the cloud package (avoids circular imports).
-type horizonSyncAdapter struct {
-	s *cloud.Syncer
-}
-
-func (a *horizonSyncAdapter) Send(d core.Decision) {
-	a.s.SendDecision(
-		string(d.Effect),
-		d.RuleID,
-		d.ReasonCode,
-		d.PolicyVersion,
-		d.Latency,
-		d.AgentID,
-		d.ToolID,
-		d.SessionID,
-		d.DPRRecordID,
-		d.Timestamp,
-	)
 }

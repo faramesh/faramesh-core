@@ -2,8 +2,8 @@
  * Typed policy objects for client-side policy building and validation.
  * 
  * These models allow you to build and test policies in code without needing
- * to write YAML files. The server-side DSL, evaluators, and policy packs
- * remain in Horizon/Nexus.
+ * to write YAML files. Runtime evaluation and policy-pack distribution remain
+ * server-side responsibilities.
  */
 
 export type RiskLevel = "low" | "medium" | "high";

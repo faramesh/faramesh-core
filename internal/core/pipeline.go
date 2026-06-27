@@ -48,8 +48,7 @@ import (
 )
 
 // DecisionSyncer is implemented by any component that wants to receive
-// governance decisions in real time (e.g. the Horizon cloud syncer).
-// Using an interface here keeps core free of imports from the cloud package.
+// governance decisions after the local WAL write.
 type DecisionSyncer interface {
 	Send(Decision)
 }
@@ -86,7 +85,7 @@ type Pipeline struct {
 	defers                    *deferwork.Workflow
 	chainMu                   map[string]string      // agentID -> last record hash (in-memory cache)
 	chainLock                 sync.Mutex             // protects chainMu
-	syncer                    DecisionSyncer         // optional Horizon sync (nil = disabled)
+	syncer                    DecisionSyncer         // optional decision sink (nil = disabled)
 	postScanner               *postcondition.Scanner // post-execution output scanner (nil = disabled)
 	httpClient                *http.Client           // shared HTTP client for context guards
 	webhooks                  *webhook.Sender
@@ -1257,11 +1256,11 @@ routingApproved:
 	case "modify":
 		// MODIFY effect: allow action with constraints/policy lowering (R4-T)
 		d = Decision{
-			Effect:                   EffectModify,
-			RuleID:                   result.RuleID,
-			ReasonCode:               result.ReasonCode,
-			Reason:                   result.Reason,
-			PolicyVersion:            engine.Version(),
+			Effect:        EffectModify,
+			RuleID:        result.RuleID,
+			ReasonCode:    result.ReasonCode,
+			Reason:        result.Reason,
+			PolicyVersion: engine.Version(),
 		}
 		// Extract structured modify data from the matched rule if available
 		if doc != nil && result.RuleID != "" {
@@ -1559,7 +1558,7 @@ func (p *Pipeline) decide(req CanonicalActionRequest, d Decision, sess *session.
 		}
 	}
 
-	// [10] Async: replicate to SQLite, update session history, sync to Horizon.
+	// [10] Async: replicate to SQLite, update session history, notify decision sinks.
 	// For PERMIT decisions: record cost against the session and daily accumulators
 	// using the tool's declared cost_usd from the policy. This closes the gap
 	// where sess.AddCost was never called, making USD budget enforcement inert.
@@ -2542,9 +2541,9 @@ func modelIdentityToMap(identity *ModelIdentity) map[string]any {
 	return out
 }
 
-// SetHorizonSyncer attaches a DecisionSyncer. Every governance decision will
+// SetDecisionSyncer attaches a DecisionSyncer. Every governance decision will
 // be forwarded to it after the WAL write. Safe to call before or after Run().
-func (p *Pipeline) SetHorizonSyncer(s DecisionSyncer) {
+func (p *Pipeline) SetDecisionSyncer(s DecisionSyncer) {
 	p.syncer = s
 }
 

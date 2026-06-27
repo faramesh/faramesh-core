@@ -33,7 +33,6 @@ var commandTierByName = map[string]commandTier{
 	"agent":      commandTierOperator,
 	"bundle":     commandTierOperator,
 	"registry":   commandTierCore,
-	"auth":       commandTierCore,
 	"verify":     commandTierCore,
 	"completion": commandTierCore,
 	"help":       commandTierCore,
@@ -66,7 +65,6 @@ func init() {
 		agentCmd,
 		bundleCmd,
 		registryCmd,
-		authCmd,
 		verifyCmd,
 		serveCmd,
 	} {

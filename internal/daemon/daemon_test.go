@@ -13,8 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -44,89 +42,6 @@ func testDPRRecord(agentID, recordID, prevHash string) *dpr.Record {
 	}
 	rec.ComputeHash()
 	return rec
-}
-
-func TestFleetPolicyReloadPublishConsumeApplyFlow(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("start miniredis: %v", err)
-	}
-	defer mr.Close()
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
-
-	applied := make(chan fleetPolicyReloadEvent, 1)
-	d := &Daemon{
-		log:             zap.NewNop(),
-		fleetRedis:      client,
-		fleetInstanceID: "local-instance",
-		fleetPolicyApply: func(_ context.Context, event fleetPolicyReloadEvent) (bool, error) {
-			applied <- event
-			return true, nil
-		},
-	}
-	d.startFleetPolicyReloadSubscriber()
-	defer d.stopFleetPolicyReloadSubscriber()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	event := fleetPolicyReloadEvent{
-		Action:        fleetPolicyReloadActionName,
-		InstanceID:    "peer-instance",
-		SourceType:    "file",
-		SourceID:      "/tmp/policy.yaml",
-		PolicyVersion: "v1",
-		PolicyHash:    "hash-v1",
-		PolicyYAML:    "faramesh-version: \"1.0\"\nagent-id: \"a\"\nrules: []\ndefault_effect: deny\n",
-		Timestamp:     time.Now().UTC().Format(time.RFC3339),
-	}
-	d.publishFleetPolicyReloadEvent(ctx, event)
-
-	select {
-	case got := <-applied:
-		if got.PolicyHash != "hash-v1" {
-			t.Fatalf("expected hash-v1, got %+v", got)
-		}
-	case <-ctx.Done():
-		t.Fatalf("timed out waiting for applied event")
-	}
-}
-
-func TestFleetPolicyReloadSubscriberIgnoresMalformedEvents(t *testing.T) {
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("start miniredis: %v", err)
-	}
-	defer mr.Close()
-	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	defer client.Close()
-
-	calls := 0
-	d := &Daemon{
-		log:             zap.NewNop(),
-		fleetRedis:      client,
-		fleetInstanceID: "local-instance",
-		fleetPolicyApply: func(_ context.Context, event fleetPolicyReloadEvent) (bool, error) {
-			calls++
-			return true, nil
-		},
-	}
-	d.startFleetPolicyReloadSubscriber()
-	defer d.stopFleetPolicyReloadSubscriber()
-
-	ctx := context.Background()
-	if err := client.Publish(ctx, fleetPolicyReloadChannel, "{not-json").Err(); err != nil {
-		t.Fatalf("publish malformed json: %v", err)
-	}
-	badEvent := fleetPolicyReloadEvent{Action: "other", InstanceID: "peer-instance"}
-	raw, _ := json.Marshal(badEvent)
-	if err := client.Publish(ctx, fleetPolicyReloadChannel, raw).Err(); err != nil {
-		t.Fatalf("publish invalid event: %v", err)
-	}
-	time.Sleep(100 * time.Millisecond)
-	if calls != 0 {
-		t.Fatalf("expected no apply calls for malformed events, got %d", calls)
-	}
 }
 
 func TestLoadInitialPolicyFromURL(t *testing.T) {

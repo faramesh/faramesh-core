@@ -30,44 +30,43 @@ type Document struct {
 }
 
 type Import struct {
-	Ref     string
-	Alias   string
-	Line    int
-	Column  int
+	Ref    string
+	Alias  string
+	Line   int
+	Column int
 }
 
 type Runtime struct {
-	Mode                         string
-	WALDir                       string
-	Backend                      string
-	DSN                          string
-	OTLP                         string
-	Network                      string
-	SessionBackend               string
-	SessionDSN                     string
-	ColdStartDenyWindow          string
-	Socket                       string
-	LogLevel                     string
-	ImmutableConfig              bool
-	RequireGovernanceBeforeNet   bool
-	DeferBackend                 string
-	DeferRedisPrefix             string
-	GRPCPort                     int
-	Admin                        map[string]string
-	Observability                map[string]string
-	TLS                          map[string]string
-	Preflight                    map[string]string
-	Horizon                      map[string]string
-	TenantID                     string
-	DPRSigner                    string
-	DPRKMSProvider               string
-	DPRKMSKeyRef                 string
-	GovernToolResponses          bool
-	OSTier                       bool
-	StripAmbientCredentials      bool
-	AgentEnforceProfile          string
-	SupervisedCommand            string
-	Extra                        map[string]string
+	Mode                       string
+	WALDir                     string
+	Backend                    string
+	DSN                        string
+	OTLP                       string
+	Network                    string
+	SessionBackend             string
+	SessionDSN                 string
+	ColdStartDenyWindow        string
+	Socket                     string
+	LogLevel                   string
+	ImmutableConfig            bool
+	RequireGovernanceBeforeNet bool
+	DeferBackend               string
+	DeferRedisPrefix           string
+	GRPCPort                   int
+	Admin                      map[string]string
+	Observability              map[string]string
+	TLS                        map[string]string
+	Preflight                  map[string]string
+	TenantID                   string
+	DPRSigner                  string
+	DPRKMSProvider             string
+	DPRKMSKeyRef               string
+	GovernToolResponses        bool
+	OSTier                     bool
+	StripAmbientCredentials    bool
+	AgentEnforceProfile        string
+	SupervisedCommand          string
+	Extra                      map[string]string
 }
 
 type Provider struct {
@@ -109,30 +108,30 @@ type TrustInbound struct {
 }
 
 type Agent struct {
-	Name          string
-	WorkloadID    string
-	Default       string
-	Model         string
-	Framework     string
-	Version       string
-	Vars          map[string]string
-	Budgets       []Budget
-	Phases        []Phase
-	Rules         []Rule
-	Delegates     []Delegate
-	Ambients      []Ambient
-	Selectors     []Selector
-	Credentials   []Credential
-	Enforcement   map[string]Value
-	RateLimits    []RateLimit
-	Redactions    []Redact
-	Egress        *Egress
-	ModelPolicy   *ModelPolicy
-	Session       *SessionLimits
-	Spawn         *Spawn
+	Name           string
+	WorkloadID     string
+	Default        string
+	Model          string
+	Framework      string
+	Version        string
+	Vars           map[string]string
+	Budgets        []Budget
+	Phases         []Phase
+	Rules          []Rule
+	Delegates      []Delegate
+	Ambients       []Ambient
+	Selectors      []Selector
+	Credentials    []Credential
+	Enforcement    map[string]Value
+	RateLimits     []RateLimit
+	Redactions     []Redact
+	Egress         *Egress
+	ModelPolicy    *ModelPolicy
+	Session        *SessionLimits
+	Spawn          *Spawn
 	CompletionGate *CompletionGate
-	Alerts        []Alert
-	BudgetPools   []BudgetPool
+	Alerts         []Alert
+	BudgetPools    []BudgetPool
 }
 
 // BudgetPool shares a spend ceiling across peer agents.
@@ -189,10 +188,10 @@ type Credential struct {
 }
 
 type RateLimit struct {
-	Tool    string
-	Limit   int64
-	Window  string
-	Unit    string
+	Tool   string
+	Limit  int64
+	Window string
+	Unit   string
 }
 
 type Redact struct {

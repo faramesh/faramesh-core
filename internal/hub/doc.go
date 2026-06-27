@@ -6,7 +6,7 @@
 // The **official registry web app** (Terraform Registry–style browse for providers, policy packs,
 // and framework profiles) is specified in docs/internal/FARAMESH_REGISTRY_PLATFORM.md and
 // implemented in a **private** repository. This package is the HTTP client used by the CLI.
-// It is **not** the Faramesh cloud platform console (Faramesh-cloud-platform/).
+// It is not a hosted platform console.
 //
 // # Registry API v1 (compatibility contract)
 //

@@ -11,7 +11,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/faramesh/faramesh-core/internal/adapter/sdk"
-	"github.com/faramesh/faramesh-core/internal/cloud"
 	"github.com/faramesh/faramesh-core/internal/core"
 	"github.com/faramesh/faramesh-core/internal/daemon"
 )
@@ -21,12 +20,7 @@ var serveCmd = &cobra.Command{
 	Short: "Start the Faramesh governance runtime service",
 	Long: `faramesh serve starts the governance runtime service. Agents submit tool calls
 and receive PERMIT/DENY/DEFER decisions. The runtime loads policy, writes
-tamper-evident DPR records, and serves governance control APIs.
-
-To stream DPR records to Faramesh Horizon, authenticate first:
-
-  faramesh auth login
-  faramesh serve --policy policy.fpl --sync-horizon`,
+tamper-evident DPR records, and serves governance control APIs.`,
 	RunE: runServe,
 }
 
@@ -38,7 +32,6 @@ var (
 	serveSocket                      string
 	serveSlack                       string
 	serveLogLevel                    string
-	serveSyncHorizon                 bool
 	serveProxyPort                   int
 	serveProxyConnect                bool
 	serveProxyForward                bool
@@ -119,7 +112,6 @@ func init() {
 	serveCmd.Flags().StringVar(&serveSocket, "socket", sdk.SocketPath, "Unix socket path")
 	serveCmd.Flags().StringVar(&serveSlack, "slack-webhook", "", "Slack webhook URL for DEFER notifications")
 	serveCmd.Flags().StringVar(&serveLogLevel, "log-level", "info", "log level: debug|info|warn|error")
-	serveCmd.Flags().BoolVar(&serveSyncHorizon, "sync-horizon", false, "stream DPR records to Faramesh Horizon cloud (requires: faramesh auth login)")
 	serveCmd.Flags().IntVar(&serveProxyPort, "proxy-port", 0, "start HTTP proxy adapter on this port (0 disables)")
 	serveCmd.Flags().BoolVar(&serveProxyConnect, "proxy-connect", false, "with --proxy-port, enable governed HTTP CONNECT only (tool proxy/connect)")
 	serveCmd.Flags().BoolVar(&serveProxyForward, "proxy-forward", false, "with --proxy-port, enable full governed forward proxy: CONNECT + HTTP absolute-form (tools proxy/connect and proxy/http)")
@@ -203,21 +195,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if compiledCfg, ok, loadErr := daemonConfigFromCompiled(log); loadErr != nil {
 		return fmt.Errorf("load compiled stack: %w", loadErr)
 	} else if ok {
-		if serveSyncHorizon {
-			tok, err := cloud.LoadToken()
-			if err != nil {
-				return fmt.Errorf("read Horizon credentials: %w\nRun: faramesh auth login", err)
-			}
-			if tok == nil {
-				return fmt.Errorf("not authenticated with Horizon\nRun: faramesh auth login")
-			}
-			if tok.IsExpired() {
-				return fmt.Errorf("Horizon token expired\nRun: faramesh auth login")
-			}
-			compiledCfg.HorizonToken = tok.Token
-			compiledCfg.HorizonURL = tok.HorizonURL
-			compiledCfg.HorizonOrgID = tok.OrgID
-		}
 		d, err := daemon.New(compiledCfg)
 		if err != nil {
 			return fmt.Errorf("init daemon: %w", err)
@@ -311,27 +288,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		IntegrityBaseDir:            resolveIntegrityBaseDir(),
 		BuildInfoExpectedPath:       resolveBuildinfoExpectedPath(),
 		AllowEnvCredentialFallback:  serveAllowEnvCredFallback,
-	}
-
-	if serveSyncHorizon {
-		tok, err := cloud.LoadToken()
-		if err != nil {
-			return fmt.Errorf("read Horizon credentials: %w\nRun: faramesh auth login", err)
-		}
-		if tok == nil {
-			return fmt.Errorf("not authenticated with Horizon\nRun: faramesh auth login")
-		}
-		if tok.IsExpired() {
-			return fmt.Errorf("Horizon token expired\nRun: faramesh auth login")
-		}
-		cfg.HorizonToken = tok.Token
-		cfg.HorizonURL = tok.HorizonURL
-		cfg.HorizonOrgID = tok.OrgID
-		log.Info("horizon sync enabled",
-			zap.String("org", tok.OrgName),
-			zap.String("user", tok.UserEmail),
-			zap.String("url", tok.HorizonURL),
-		)
 	}
 
 	d, err := daemon.New(cfg)

@@ -166,7 +166,7 @@ Usage:
   bash scripts/faramesh_setup.sh [command] [args]
 
 Commands:
-  flow           One guided flow: install + optional cloud pair + discover/attach/coverage/gaps/suggest + run
+  flow           One guided flow: install + discover/attach/coverage/gaps/suggest + run
   start          Start governance flow
   status         Show flow runtime status
   stop           Stop flow runtime
@@ -179,7 +179,7 @@ Commands:
 
 Examples:
   bash scripts/faramesh_setup.sh flow
-  bash scripts/faramesh_setup.sh flow --agent-cmd "python agent.py" --cloud-pair yes
+  bash scripts/faramesh_setup.sh flow --agent-cmd "python agent.py"
   bash scripts/faramesh_setup.sh
   bash scripts/faramesh_setup.sh start --framework langchain --agent-cmd "python app.py"
   bash scripts/faramesh_setup.sh status
@@ -206,16 +206,14 @@ Usage:
 
 Runs one guided shell flow that can:
   1) install Faramesh,
-  2) optionally pair with Faramesh Horizon cloud,
-  3) run discover/attach/coverage/gaps/suggest,
-  4) optionally execute your agent under governance with faramesh run.
+  2) run discover/attach/coverage/gaps/suggest,
+  3) optionally execute your agent under governance with faramesh run.
 
 Options:
   --project-dir <dir>     Project directory for onboarding commands (default: cwd)
   --data-dir <dir>        Data directory for attach/coverage/gaps/suggest (default: <project>/.faramesh)
   --policy-out <file>     Suggested policy output path (default: <project>/suggested-policy.yaml)
   --agent-cmd <command>   Agent command to run with faramesh run
-  --cloud-pair <mode>     yes|no|auto (default: auto)
   --run-now <mode>        yes|no|auto (default: auto)
   --install <mode>        yes|no|auto (default: auto)
   --yes, -y               Non-interactive mode (accept defaults)
@@ -359,7 +357,6 @@ run_flow() {
   local data_dir=""
   local policy_out=""
   local agent_cmd=""
-  local cloud_pair_mode="auto"
   local run_now_mode="auto"
   local install_mode="auto"
 
@@ -379,10 +376,6 @@ run_flow() {
         ;;
       --agent-cmd)
         agent_cmd="${2:-}"
-        shift
-        ;;
-      --cloud-pair)
-        cloud_pair_mode="${2:-}"
         shift
         ;;
       --run-now)
@@ -423,11 +416,6 @@ run_flow() {
     policy_out="$project_dir/suggested-policy.yaml"
   fi
 
-  cloud_pair_mode="$(normalize_yes_no "$cloud_pair_mode")"
-  if [[ -z "$cloud_pair_mode" ]]; then
-    cloud_pair_mode="auto"
-  fi
-
   run_now_mode="$(normalize_yes_no "$run_now_mode")"
   if [[ -z "$run_now_mode" ]]; then
     run_now_mode="auto"
@@ -458,23 +446,6 @@ run_flow() {
 
   local bin
   bin="$(resolve_faramesh_bin discover)"
-
-  local do_cloud_pair="no"
-  if [[ "$cloud_pair_mode" == "yes" ]]; then
-    do_cloud_pair="yes"
-  elif [[ "$cloud_pair_mode" == "auto" && "$assume_yes" -eq 0 ]]; then
-    local ans=""
-    read -r -p "pair with Faramesh Horizon cloud now? [y/N]: " ans || true
-    ans="$(normalize_yes_no "${ans:-no}")"
-    if [[ "$ans" == "yes" ]]; then
-      do_cloud_pair="yes"
-    fi
-  fi
-
-  if [[ "$do_cloud_pair" == "yes" ]]; then
-    echo "[flow] running cloud auth login"
-    "$bin" auth login || echo "cloud login returned non-zero; continuing local flow"
-  fi
 
   echo "[flow] discover"
   (cd "$project_dir" && "$bin" discover)
