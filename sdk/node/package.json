@@ -34,11 +34,11 @@
     "sdk"
   ],
   "author": "Faramesh Contributors",
-  "license": "MPL-2.0",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/faramesh/Faramesh-Nexus.git",
-    "directory": "faramesh-core/sdk/node"
+    "url": "https://github.com/faramesh/faramesh-core.git",
+    "directory": "sdk/node"
   },
   "dependencies": {
     "axios": "^1.6.0"

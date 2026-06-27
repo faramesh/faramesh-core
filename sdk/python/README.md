@@ -129,14 +129,14 @@ OpenRouter `qwen/qwen3.6-plus:free`.
 source /tmp/faramesh-deepagents-venv313/bin/activate
 
 # 2) Start daemon with strict policy for this harness
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd faramesh-core
 go run ./cmd/faramesh serve \
     --socket /tmp/faramesh.sock \
     --data-dir /tmp/faramesh-data \
     --policy sdk/python/examples/policies/deepagents_openrouter_qwen_production.fpl
 
 # 3) In another shell, run the harness under Faramesh runtime wiring
-cd /Users/xquark_home/Faramesh-Nexus/faramesh-core
+cd faramesh-core
 OPENROUTER_API_KEY=<your_key> \
 go run ./cmd/faramesh run \
     --daemon-socket /tmp/faramesh.sock \

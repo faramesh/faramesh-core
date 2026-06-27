@@ -1,7 +1,7 @@
 class Faramesh < Formula
   desc "Pre-execution governance engine for AI agents"
   homepage "https://docs.faramesh.dev"
-  license "MPL-2.0"
+  license "Apache-2.0"
 
   depends_on "go" => :build
 
