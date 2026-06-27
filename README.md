@@ -7,7 +7,7 @@
 Declare permissions in `governance.fms`. A local daemon permits, defers, or denies each tool call before it runs. Decisions are hash-chained in a WAL. No SDK lock-in. No cloud required.
 
 <p>
-  <a href="LICENSE"><img alt="License: MPL-2.0" src="https://img.shields.io/badge/License-MPL--2.0-0f172a?style=flat-square&logo=mozilla" /></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/License-Apache--2.0-0f172a?style=flat-square&logo=apache" /></a>
   <a href="https://github.com/faramesh/faramesh-core/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/faramesh/faramesh-core?style=flat-square" /></a>
   <a href="https://github.com/faramesh/faramesh-core/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/faramesh/faramesh-core?include_prereleases&sort=semver&style=flat-square&label=Release" /></a>
   <a href="https://github.com/faramesh/faramesh-core/actions"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/faramesh/faramesh-core/ci.yml?style=flat-square&label=CI" /></a>
@@ -91,14 +91,20 @@ Faramesh is the local enforcement daemon for tool-call decisions. It's narrower 
 
 [Slack](https://farameshlabs.slack.com/ssb/redirect) for daily conversation. [GitHub Discussions](https://github.com/faramesh/faramesh-core/discussions) for design proposals. [Contributing guide](https://docs.faramesh.dev/guides/contributing/) for the policy pack registry and framework adapters.
 
+Project governance, maintainer roles, and the public roadmap are documented in
+[GOVERNANCE.md](GOVERNANCE.md), [MAINTAINERS.md](MAINTAINERS.md), and
+[ROADMAP.md](ROADMAP.md). Faramesh follows the project
+[Code of Conduct](CODE_OF_CONDUCT.md) and accepts security reports through
+[SECURITY.md](SECURITY.md).
+
 ## Star this repo if you ship AI agents to production
 
 It helps other engineers find Faramesh.
 
 ## License
 
-[MPL-2.0](LICENSE).
+[Apache-2.0](LICENSE).
 
-## Built by
+## Maintained by
 
-Amjad Fatmi and Brian Hall at [Faramesh Labs](https://faramesh.dev).
+Faramesh is maintained by the Faramesh project maintainers and contributors.

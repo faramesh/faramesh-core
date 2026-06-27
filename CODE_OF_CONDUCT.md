@@ -53,7 +53,7 @@ This Code of Conduct applies within all project spaces, and also applies when an
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project maintainers responsible for enforcement:
 
-- **Email**: support@faramesh.dev 
+- **Email**: support@faramesh.dev
 - **GitHub**: Contact project maintainers via GitHub
 
 All complaints will be reviewed and investigated promptly and fairly. All project maintainers are obligated to respect the privacy and security of the reporter of any incident.
@@ -92,7 +92,7 @@ Project maintainers will follow these Community Impact Guidelines in determining
 
 ## Attribution
 
-This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org/), version 2.1, available at https://www.contributor-covenant.org/version/2/1/code_of_conduct/
+This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org/), version 2.1, and is intended to be compatible with CNCF community expectations.
 
 For answers to common questions about this code of conduct, see https://www.contributor-covenant.org/faq
 

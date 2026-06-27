@@ -6,9 +6,9 @@ We take security seriously. Faramesh is a security-critical system — it govern
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.2.x   | :white_check_mark: |
-| 0.1.x   | :white_check_mark: |
-| < 0.1   | :x:                |
+| main    | :white_check_mark: |
+| latest released minor | :white_check_mark: |
+| older releases | best effort |
 
 ---
 
@@ -60,7 +60,7 @@ Active layers (implemented and tested):
 2. **seccomp-BPF** — restricts system calls at the kernel level
 3. **Landlock LSM** — restricts filesystem access
 4. **Network namespace** — isolates agent network access
-5. **Credential broker** — strips ambient API keys, issues scoped secrets via Vault (AWS/GCP backends are scaffolded, not production-ready)
+5. **Credential broker** — strips ambient API keys and issues scoped secrets through configured providers
 6. **Policy engine** — deterministic rule evaluation, no AI in the loop
 
 Scaffolded layers (interfaces exist, not yet production-ready):

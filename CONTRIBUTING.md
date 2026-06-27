@@ -18,11 +18,11 @@ faramesh-core/
 ├── examples/              # FPL policy examples
 ├── npm/                   # npm package (npx @faramesh/cli)
 ├── tests/                 # Integration and end-to-end tests
-├── Formula/               # Homebrew formula
 └── Makefile               # Build, test, release targets
 ```
 
-The published repo intentionally omits `deploy/`, `docs/`, and `visibility-server/`; keep local copies outside version control if you need them.
+The public documentation lives in `faramesh-docs`, and shared policy packs,
+framework profiles, and provider artifacts live in `faramesh-registry`.
 
 ---
 
@@ -122,7 +122,14 @@ go build -o faramesh ./cmd/faramesh
 
 ```bash
 git add .
-git commit -m "feat: add new feature"
+git commit -s -m "feat: add new feature"
+```
+
+Faramesh uses the Developer Certificate of Origin (DCO). Every commit must
+include a sign-off line:
+
+```text
+Signed-off-by: Your Name <you@example.com>
 ```
 
 **Commit Message Format:**
@@ -153,7 +160,15 @@ Before submitting a pull request, ensure:
 - [ ] Example FPL policies still validate
 - [ ] No hardcoded secrets or credentials
 - [ ] Commit messages follow the format above
+- [ ] Commits include DCO sign-off
 - [ ] Breaking changes documented in the PR description
+
+### AI-Assisted Contributions
+
+AI-assisted contributions are allowed when the contributor understands the
+change, tests it, and takes responsibility for it. Fully automated, low-signal,
+or undisclosed bulk AI-generated pull requests may be closed. Significant AI
+assistance should be disclosed in the pull request body.
 
 ---
 
